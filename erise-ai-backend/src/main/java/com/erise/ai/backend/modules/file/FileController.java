@@ -21,7 +21,7 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
-import java.util.Arrays;
+import java.util.Base64;
 import java.util.List;
 import java.util.Locale;
 import java.util.UUID;
@@ -30,6 +30,17 @@ import lombok.RequiredArgsConstructor;
 import org.apache.pdfbox.Loader;
 import org.apache.pdfbox.pdmodel.PDDocument;
 import org.apache.pdfbox.text.PDFTextStripper;
+import org.apache.poi.xwpf.usermodel.BodyElementType;
+import org.apache.poi.xwpf.usermodel.IBodyElement;
+import org.apache.poi.xwpf.usermodel.UnderlinePatterns;
+import org.apache.poi.xwpf.usermodel.XWPFDocument;
+import org.apache.poi.xwpf.usermodel.XWPFParagraph;
+import org.apache.poi.xwpf.usermodel.XWPFPicture;
+import org.apache.poi.xwpf.usermodel.XWPFPictureData;
+import org.apache.poi.xwpf.usermodel.XWPFRun;
+import org.apache.poi.xwpf.usermodel.XWPFTable;
+import org.apache.poi.xwpf.usermodel.XWPFTableCell;
+import org.apache.poi.xwpf.usermodel.XWPFTableRow;
 import org.springframework.core.io.InputStreamResource;
 import org.springframework.http.ContentDisposition;
 import org.springframework.http.HttpHeaders;
@@ -108,7 +119,7 @@ public class FileController {
 @RequiredArgsConstructor
 class FileService {
 
-    private static final List<String> INDEXABLE_TYPES = List.of("pdf", "md", "markdown", "txt");
+    private static final List<String> INDEXABLE_TYPES = List.of("pdf", "md", "markdown", "txt", "docx");
 
     private final FileMapper fileMapper;
     private final FileParseTaskMapper fileParseTaskMapper;
@@ -177,15 +188,7 @@ class FileService {
         entity.setUpdatedBy(currentUser.userId());
         fileMapper.updateById(entity);
         if (indexable(entity)) {
-            FileParseTaskEntity task = new FileParseTaskEntity();
-            task.setFileId(fileId);
-            task.setOwnerUserId(entity.getOwnerUserId());
-            task.setProjectId(entity.getProjectId());
-            task.setTaskStatus("PENDING");
-            task.setRetryCount(0);
-            task.setCreatedBy(currentUser.userId());
-            task.setUpdatedBy(currentUser.userId());
-            fileParseTaskMapper.insert(task);
+            enqueueParseTask(entity, currentUser.userId());
         }
         return toView(entity);
     }
@@ -198,6 +201,9 @@ class FileService {
         var currentUser = SecurityUtils.currentUser();
         FileEntity entity = requireAccessibleFile(fileId);
         auditLogService.log(currentUser, inline ? "FILE_PREVIEW" : "FILE_DOWNLOAD", "FILE", fileId, null);
+        if (inline && "docx".equalsIgnoreCase(entity.getFileExt())) {
+            return docxPreview(entity);
+        }
         InputStream stream = storageClient.getObject(entity.getStorageKey());
         ContentDisposition disposition = inline
                 ? ContentDisposition.inline().filename(entity.getFileName(), StandardCharsets.UTF_8).build()
@@ -244,8 +250,9 @@ class FileService {
 
     void delete(Long fileId) {
         var currentUser = SecurityUtils.currentUser();
-        requireAccessibleFile(fileId);
+        FileEntity entity = requireAccessibleFile(fileId);
         fileMapper.deleteById(fileId);
+        knowledgeService.deleteForSource(entity.getProjectId(), "FILE", fileId);
         auditLogService.log(currentUser, "FILE_DELETE", "FILE", fileId, null);
     }
 
@@ -276,24 +283,6 @@ class FileService {
                 entity.getCreatedAt(),
                 entity.getUpdatedAt()
         );
-    }
-
-    private boolean indexable(FileEntity entity) {
-        return INDEXABLE_TYPES.contains(entity.getFileExt().toLowerCase(Locale.ROOT));
-    }
-
-    private void validateUpload(MultipartFile file, FileEntity entity) {
-        if (file.isEmpty()) {
-            throw new BizException(ErrorCodes.FILE_ERROR, "File is empty");
-        }
-        if (entity.getFileSize() != null && entity.getFileSize() > 0 && !entity.getFileSize().equals(file.getSize())) {
-            entity.setFileSize(file.getSize());
-        }
-    }
-
-    private String fileExtension(String name) {
-        int index = name.lastIndexOf('.');
-        return index > -1 ? name.substring(index + 1).toLowerCase(Locale.ROOT) : "bin";
     }
 
     void handleParseTask(FileParseTaskEntity task) {
@@ -327,11 +316,64 @@ class FileService {
         }
     }
 
+    private boolean indexable(FileEntity entity) {
+        return entity.getFileExt() != null && INDEXABLE_TYPES.contains(entity.getFileExt().toLowerCase(Locale.ROOT));
+    }
+
+    private void validateUpload(MultipartFile file, FileEntity entity) {
+        if (file.isEmpty()) {
+            throw new BizException(ErrorCodes.FILE_ERROR, "File is empty");
+        }
+        if (entity.getFileSize() != null && entity.getFileSize() > 0 && !entity.getFileSize().equals(file.getSize())) {
+            entity.setFileSize(file.getSize());
+        }
+    }
+
+    private String fileExtension(String name) {
+        int index = name.lastIndexOf('.');
+        return index > -1 ? name.substring(index + 1).toLowerCase(Locale.ROOT) : "bin";
+    }
+
+    private void enqueueParseTask(FileEntity entity, Long operatorUserId) {
+        Long existingCount = fileParseTaskMapper.selectCount(new LambdaQueryWrapper<FileParseTaskEntity>()
+                .eq(FileParseTaskEntity::getFileId, entity.getId())
+                .in(FileParseTaskEntity::getTaskStatus, List.of("PENDING", "SUCCESS")));
+        if (existingCount != null && existingCount > 0) {
+            return;
+        }
+        FileParseTaskEntity task = new FileParseTaskEntity();
+        task.setFileId(entity.getId());
+        task.setOwnerUserId(entity.getOwnerUserId());
+        task.setProjectId(entity.getProjectId());
+        task.setTaskStatus("PENDING");
+        task.setRetryCount(0);
+        task.setCreatedBy(operatorUserId);
+        task.setUpdatedBy(operatorUserId);
+        fileParseTaskMapper.insert(task);
+    }
+
+    private ResponseEntity<InputStreamResource> docxPreview(FileEntity entity) {
+        try (InputStream stream = storageClient.getObject(entity.getStorageKey())) {
+            byte[] bytes = stream.readAllBytes();
+            String html = renderDocxPreview(bytes, entity.getFileName());
+            ContentDisposition disposition = ContentDisposition.inline()
+                    .filename(stripExtension(entity.getFileName()) + ".html", StandardCharsets.UTF_8)
+                    .build();
+            return ResponseEntity.ok()
+                    .header(HttpHeaders.CONTENT_DISPOSITION, disposition.toString())
+                    .contentType(MediaType.TEXT_HTML)
+                    .body(new InputStreamResource(new ByteArrayInputStream(html.getBytes(StandardCharsets.UTF_8))));
+        } catch (IOException exception) {
+            throw new BizException(ErrorCodes.FILE_ERROR, "Docx preview failed: " + exception.getMessage());
+        }
+    }
+
     private List<KnowledgeService.ChunkInput> extractChunks(FileEntity file, InputStream stream) throws IOException {
         return switch (file.getFileExt()) {
             case "txt" -> knowledgeService.splitText(new String(stream.readAllBytes(), StandardCharsets.UTF_8), null);
             case "md", "markdown" -> knowledgeService.splitText(stripMarkdown(new String(stream.readAllBytes(), StandardCharsets.UTF_8)), null);
             case "pdf" -> extractPdf(stream);
+            case "docx" -> extractDocx(stream);
             default -> List.of();
         };
     }
@@ -351,6 +393,194 @@ class FileService {
         }
     }
 
+    private List<KnowledgeService.ChunkInput> extractDocx(InputStream stream) throws IOException {
+        try (XWPFDocument document = new XWPFDocument(stream)) {
+            List<KnowledgeService.ChunkInput> chunks = new ArrayList<>();
+            for (String block : readDocxBlocks(document)) {
+                chunks.addAll(knowledgeService.splitText(block, null));
+            }
+            return chunks;
+        }
+    }
+
+    private List<String> readDocxBlocks(XWPFDocument document) {
+        List<String> blocks = new ArrayList<>();
+        for (IBodyElement element : document.getBodyElements()) {
+            if (element.getElementType() == BodyElementType.PARAGRAPH) {
+                String text = paragraphPlainText((XWPFParagraph) element);
+                if (!text.isBlank()) {
+                    blocks.add(text);
+                }
+                continue;
+            }
+            if (element.getElementType() == BodyElementType.TABLE) {
+                XWPFTable table = (XWPFTable) element;
+                for (XWPFTableRow row : table.getRows()) {
+                    List<String> cells = new ArrayList<>();
+                    for (XWPFTableCell cell : row.getTableCells()) {
+                        String cellText = cell.getText() == null ? "" : cell.getText().replace("\n", " ").trim();
+                        if (!cellText.isBlank()) {
+                            cells.add(cellText);
+                        }
+                    }
+                    if (!cells.isEmpty()) {
+                        blocks.add(String.join(" | ", cells));
+                    }
+                }
+            }
+        }
+        return blocks;
+    }
+
+    private String renderDocxPreview(byte[] bytes, String fileName) throws IOException {
+        try (XWPFDocument document = new XWPFDocument(new ByteArrayInputStream(bytes))) {
+            StringBuilder html = new StringBuilder();
+            html.append("<!DOCTYPE html><html lang=\"zh-CN\"><head><meta charset=\"UTF-8\" />")
+                    .append("<meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\" />")
+                    .append("<title>").append(escapeHtml(stripExtension(fileName))).append("</title>")
+                    .append("<style>")
+                    .append("body{margin:0;background:#f5f1e8;font-family:'Segoe UI','PingFang SC',sans-serif;color:#1c242b;}")
+                    .append("main{max-width:920px;margin:0 auto;padding:32px 20px 56px;}")
+                    .append("article{background:#fff;border:1px solid rgba(34,41,47,.12);border-radius:24px;box-shadow:0 18px 60px rgba(21,31,45,.08);padding:32px;line-height:1.8;}")
+                    .append("h1,h2,h3,h4,h5,h6{margin:1.2em 0 .6em;line-height:1.3;}")
+                    .append("p{margin:0 0 1em;}")
+                    .append("table{width:100%;border-collapse:collapse;margin:1.2em 0;}")
+                    .append("td,th{border:1px solid rgba(34,41,47,.12);padding:10px 12px;vertical-align:top;}")
+                    .append("img{max-width:100%;height:auto;border-radius:12px;margin:12px 0;display:block;}")
+                    .append(".docx-meta{color:#66707a;font-size:14px;margin-bottom:18px;}")
+                    .append(".docx-bullet{display:inline-block;min-width:1.25em;color:#14532d;font-weight:700;}")
+                    .append("</style></head><body><main><article>")
+                    .append("<div class=\"docx-meta\">DOCX 在线预览</div>");
+            for (IBodyElement element : document.getBodyElements()) {
+                if (element.getElementType() == BodyElementType.PARAGRAPH) {
+                    appendParagraphHtml(html, (XWPFParagraph) element);
+                } else if (element.getElementType() == BodyElementType.TABLE) {
+                    appendTableHtml(html, (XWPFTable) element);
+                }
+            }
+            html.append("</article></main></body></html>");
+            return html.toString();
+        }
+    }
+
+    private void appendParagraphHtml(StringBuilder html, XWPFParagraph paragraph) {
+        String content = renderParagraphContent(paragraph);
+        if (content.isBlank()) {
+            return;
+        }
+        String tag = resolveParagraphTag(paragraph);
+        html.append('<').append(tag).append('>');
+        if (paragraph.getNumID() != null) {
+            html.append("<span class=\"docx-bullet\">•</span>");
+        }
+        html.append(content);
+        html.append("</").append(tag).append('>');
+    }
+
+    private void appendTableHtml(StringBuilder html, XWPFTable table) {
+        html.append("<table>");
+        for (XWPFTableRow row : table.getRows()) {
+            html.append("<tr>");
+            for (XWPFTableCell cell : row.getTableCells()) {
+                html.append("<td>");
+                for (XWPFParagraph paragraph : cell.getParagraphs()) {
+                    appendParagraphHtml(html, paragraph);
+                }
+                html.append("</td>");
+            }
+            html.append("</tr>");
+        }
+        html.append("</table>");
+    }
+
+    private String renderParagraphContent(XWPFParagraph paragraph) {
+        StringBuilder content = new StringBuilder();
+        for (XWPFRun run : paragraph.getRuns()) {
+            content.append(renderRunHtml(run));
+        }
+        if (content.isEmpty()) {
+            String fallback = paragraph.getText();
+            return fallback == null ? "" : escapeHtml(fallback);
+        }
+        return content.toString();
+    }
+
+    private String renderRunHtml(XWPFRun run) {
+        StringBuilder chunk = new StringBuilder();
+        String text = run.text();
+        if (text != null && !text.isBlank()) {
+            chunk.append(escapeHtml(text).replace("\n", "<br />"));
+        }
+        for (XWPFPicture picture : run.getEmbeddedPictures()) {
+            XWPFPictureData pictureData = picture.getPictureData();
+            if (pictureData == null) {
+                continue;
+            }
+            chunk.append("<img src=\"")
+                    .append(pictureDataToDataUrl(pictureData))
+                    .append("\" alt=\"")
+                    .append("插图")
+                    .append("\" />");
+        }
+        String content = chunk.toString();
+        if (content.isBlank()) {
+            return "";
+        }
+        if (run.isBold()) {
+            content = "<strong>" + content + "</strong>";
+        }
+        if (run.isItalic()) {
+            content = "<em>" + content + "</em>";
+        }
+        if (run.getUnderline() != UnderlinePatterns.NONE) {
+            content = "<u>" + content + "</u>";
+        }
+        StringBuilder style = new StringBuilder();
+        if (run.getColor() != null && !run.getColor().isBlank()) {
+            style.append("color:#").append(run.getColor()).append(';');
+        }
+        if (run.getFontSize() > 0) {
+            style.append("font-size:").append(run.getFontSize()).append("pt;");
+        }
+        if (run.getFontFamily() != null && !run.getFontFamily().isBlank()) {
+            style.append("font-family:'").append(escapeHtml(run.getFontFamily())).append("';");
+        }
+        if (!style.isEmpty()) {
+            content = "<span style=\"" + style + "\">" + content + "</span>";
+        }
+        return content;
+    }
+
+    private String resolveParagraphTag(XWPFParagraph paragraph) {
+        String style = paragraph.getStyle();
+        if (style != null) {
+            String normalized = style.toLowerCase(Locale.ROOT);
+            if (normalized.startsWith("heading")) {
+                int level = normalized.chars().filter(Character::isDigit).findFirst().orElse('1') - '0';
+                return "h" + Math.max(1, Math.min(level, 6));
+            }
+        }
+        return "p";
+    }
+
+    private String paragraphPlainText(XWPFParagraph paragraph) {
+        String text = paragraph.getText() == null ? "" : paragraph.getText().trim();
+        if (text.isBlank()) {
+            return "";
+        }
+        return paragraph.getNumID() == null ? text : "- " + text;
+    }
+
+    private String pictureDataToDataUrl(XWPFPictureData pictureData) {
+        String contentType = pictureData.getPackagePart().getContentType();
+        return "data:" + contentType + ";base64," + Base64.getEncoder().encodeToString(pictureData.getData());
+    }
+
+    private String stripExtension(String fileName) {
+        int index = fileName.lastIndexOf('.');
+        return index > 0 ? fileName.substring(0, index) : fileName;
+    }
+
     private String stripMarkdown(String markdown) {
         return markdown
                 .replaceAll("```[\\s\\S]*?```", " ")
@@ -360,6 +590,15 @@ class FileService {
                 .replaceAll("\\s+", " ")
                 .trim();
     }
+
+    private String escapeHtml(String raw) {
+        return raw
+                .replace("&", "&amp;")
+                .replace("<", "&lt;")
+                .replace(">", "&gt;")
+                .replace("\"", "&quot;")
+                .replace("'", "&#39;");
+    }
 }
 
 @Component
@@ -368,14 +607,46 @@ class FileParseWorker {
 
     private final FileParseTaskMapper fileParseTaskMapper;
     private final FileService fileService;
+    private final FileMapper fileMapper;
 
     @Scheduled(fixedDelay = 15000)
     public void poll() {
+        queueDocxBackfillTasks();
         List<FileParseTaskEntity> tasks = fileParseTaskMapper.selectList(new LambdaQueryWrapper<FileParseTaskEntity>()
                 .eq(FileParseTaskEntity::getTaskStatus, "PENDING")
                 .orderByAsc(FileParseTaskEntity::getCreatedAt)
                 .last("limit 5"));
         tasks.forEach(fileService::handleParseTask);
+    }
+
+    private void queueDocxBackfillTasks() {
+        List<FileEntity> files = fileMapper.selectList(new LambdaQueryWrapper<FileEntity>()
+                .eq(FileEntity::getUploadStatus, "READY")
+                .eq(FileEntity::getFileExt, "docx")
+                .eq(FileEntity::getParseStatus, "SKIPPED")
+                .orderByAsc(FileEntity::getUpdatedAt)
+                .last("limit 5"));
+        for (FileEntity file : files) {
+            Long existingCount = fileParseTaskMapper.selectCount(new LambdaQueryWrapper<FileParseTaskEntity>()
+                    .eq(FileParseTaskEntity::getFileId, file.getId())
+                    .in(FileParseTaskEntity::getTaskStatus, List.of("PENDING", "SUCCESS")));
+            if (existingCount != null && existingCount > 0) {
+                continue;
+            }
+            file.setParseStatus("PENDING");
+            file.setIndexStatus("PENDING");
+            file.setUpdatedBy(file.getOwnerUserId());
+            fileMapper.updateById(file);
+            FileParseTaskEntity task = new FileParseTaskEntity();
+            task.setFileId(file.getId());
+            task.setOwnerUserId(file.getOwnerUserId());
+            task.setProjectId(file.getProjectId());
+            task.setTaskStatus("PENDING");
+            task.setRetryCount(0);
+            task.setCreatedBy(file.getOwnerUserId());
+            task.setUpdatedBy(file.getOwnerUserId());
+            fileParseTaskMapper.insert(task);
+        }
     }
 }
 
@@ -483,3 +754,5 @@ record TagBindRequest(@NotNull List<String> tags) {
 
 record TagView(Long id, String name, String color) {
 }
+
+

@@ -19,10 +19,7 @@ class KnowledgeService {
     private final KnowledgeChunkMapper knowledgeChunkMapper;
 
     void replaceForSource(Long userId, Long projectId, String sourceType, Long sourceId, String sourceTitle, List<ChunkInput> chunks) {
-        knowledgeChunkMapper.delete(new LambdaQueryWrapper<KnowledgeChunkEntity>()
-                .eq(KnowledgeChunkEntity::getProjectId, projectId)
-                .eq(KnowledgeChunkEntity::getSourceType, sourceType)
-                .eq(KnowledgeChunkEntity::getSourceId, sourceId));
+        deleteForSource(projectId, sourceType, sourceId);
         for (ChunkInput chunk : chunks) {
             KnowledgeChunkEntity entity = new KnowledgeChunkEntity();
             entity.setOwnerUserId(userId);
@@ -39,6 +36,13 @@ class KnowledgeService {
             entity.setUpdatedBy(userId);
             knowledgeChunkMapper.insert(entity);
         }
+    }
+
+    void deleteForSource(Long projectId, String sourceType, Long sourceId) {
+        knowledgeChunkMapper.delete(new LambdaQueryWrapper<KnowledgeChunkEntity>()
+                .eq(KnowledgeChunkEntity::getProjectId, projectId)
+                .eq(KnowledgeChunkEntity::getSourceType, sourceType)
+                .eq(KnowledgeChunkEntity::getSourceId, sourceId));
     }
 
     List<KnowledgeChunkEntity> queryProjectChunks(Long userId, Long projectId, String keyword, int limit) {

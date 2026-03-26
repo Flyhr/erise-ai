@@ -120,7 +120,7 @@ class DocumentService {
         DocumentContentEntity content = new DocumentContentEntity();
         content.setDocumentId(document.getId());
         content.setContentJson("{}");
-        content.setContentHtmlSnapshot("");
+        content.setContentHtmlSnapshot("<p></p>");
         content.setPlainText("");
         content.setCreatedBy(currentUser.userId());
         content.setUpdatedBy(currentUser.userId());
@@ -151,6 +151,14 @@ class DocumentService {
         content.setUpdatedBy(currentUser.userId());
         documentContentMapper.updateById(content);
 
+        knowledgeService.replaceForSource(
+                document.getOwnerUserId(),
+                document.getProjectId(),
+                "DOCUMENT",
+                document.getId(),
+                document.getTitle(),
+                knowledgeService.splitText(request.plainText(), null)
+        );
         auditLogService.log(currentUser, "DOCUMENT_SAVE", "DOCUMENT", id, request);
         return toDetail(document, content);
     }
@@ -213,9 +221,11 @@ class DocumentService {
 
     void delete(Long id) {
         var currentUser = SecurityUtils.currentUser();
-        requireAccessibleDocument(id);
+        DocumentEntity document = requireAccessibleDocument(id);
         documentMapper.deleteById(id);
         documentContentMapper.delete(new LambdaQueryWrapper<DocumentContentEntity>().eq(DocumentContentEntity::getDocumentId, id));
+        documentVersionMapper.delete(new LambdaQueryWrapper<DocumentVersionEntity>().eq(DocumentVersionEntity::getDocumentId, id));
+        knowledgeService.deleteForSource(document.getProjectId(), "DOCUMENT", id);
         auditLogService.log(currentUser, "DOCUMENT_DELETE", "DOCUMENT", id, null);
     }
 

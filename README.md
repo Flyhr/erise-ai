@@ -1,4 +1,4 @@
-# Erise-AI
+# Erise-AI（开发中）
 
 - Erise-AI 是基于 V1 版本规划的单仓多模块项目实现：包含 Vue 3 前端、Spring Boot 业务后端、Spring Boot AI 云服务，以及基于 Docker Compose 的本地基础环境。
 - Erise-AI is a monorepo implementation of the V1 plan: Vue 3 frontend, Spring Boot business backend, Spring Boot AI cloud service, and Docker Compose based local infrastructure.

@@ -9,7 +9,10 @@ import com.erise.ai.backend.common.util.SecurityUtils;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -62,10 +65,11 @@ class SearchService {
             projectService.requireAccessibleProject(projectId);
         }
         String projectSql = projectScopeSql(currentUser.userId(), currentUser.isAdmin(), projectId);
-        List<SearchResultView> results = new ArrayList<>();
-        results.addAll(searchFiles(keyword, projectSql));
-        results.addAll(searchDocuments(keyword, projectSql));
-        results.addAll(searchChunks(keyword, projectSql));
+        List<SearchResultView> rawResults = new ArrayList<>();
+        rawResults.addAll(searchFiles(keyword, projectSql));
+        rawResults.addAll(searchDocuments(keyword, projectSql));
+        rawResults.addAll(searchChunks(keyword, projectSql));
+        List<SearchResultView> results = uniqueResults(rawResults);
         recordHistory(currentUser.userId(), keyword, projectId);
         int from = (int) Math.max(0, (pageNum - 1) * pageSize);
         int to = Math.min(results.size(), from + (int) pageSize);
@@ -105,14 +109,17 @@ class SearchService {
     }
 
     List<SearchResultView> retrieveKnowledge(Long userId, Long projectId, String keyword, int limit) {
-        String sql = """
-                select id, source_type, source_id, source_title, chunk_text, page_no, project_id
+        List<SearchResultView> chunks = jdbcTemplate.query("""
+                select source_type, source_id, source_title, chunk_text, page_no, project_id
                 from ea_knowledge_chunk
                 where deleted = 0 and owner_user_id = ? and project_id = ? and chunk_text like ?
                 order by updated_at desc
                 limit ?
-                """;
-        return jdbcTemplate.query(sql, (rs, rowNum) -> mapChunk(rs), userId, projectId, "%" + keyword + "%", limit);
+                """, (rs, rowNum) -> mapChunk(rs), userId, projectId, "%" + keyword + "%", Math.max(limit, 1));
+        if (!chunks.isEmpty()) {
+            return chunks;
+        }
+        return searchDocumentKnowledge(userId, projectId, keyword, limit);
     }
 
     private List<SearchResultView> searchFiles(String keyword, String projectSql) {
@@ -144,15 +151,29 @@ class SearchService {
 
     private List<SearchResultView> searchChunks(String keyword, String projectSql) {
         return jdbcTemplate.query("""
-                        select id, project_id, source_title, left(chunk_text, 200) as snippet, updated_at
+                        select source_type, source_id, project_id, source_title, left(chunk_text, 200) as snippet, updated_at
                         from ea_knowledge_chunk
                         where deleted = 0 and project_id in (%s) and chunk_text like ?
                         order by updated_at desc
                         limit 20
                         """.formatted(projectSql),
-                (rs, rowNum) -> new SearchResultView("KNOWLEDGE", rs.getLong("id"), rs.getLong("project_id"),
+                (rs, rowNum) -> new SearchResultView(rs.getString("source_type"), rs.getLong("source_id"), rs.getLong("project_id"),
                         rs.getString("source_title"), "KNOWLEDGE", rs.getString("snippet"), rs.getTimestamp("updated_at").toLocalDateTime()),
                 "%" + keyword + "%");
+    }
+
+    private List<SearchResultView> searchDocumentKnowledge(Long userId, Long projectId, String keyword, int limit) {
+        return jdbcTemplate.query("""
+                        select d.id, d.project_id, d.title, left(c.plain_text, 300) as snippet, d.updated_at
+                        from ea_document d
+                        join ea_document_content c on c.document_id = d.id and c.deleted = 0
+                        where d.deleted = 0 and d.owner_user_id = ? and d.project_id = ? and (d.title like ? or c.plain_text like ?)
+                        order by d.updated_at desc
+                        limit ?
+                        """,
+                (rs, rowNum) -> new SearchResultView("DOCUMENT", rs.getLong("id"), rs.getLong("project_id"),
+                        rs.getString("title"), "DOCUMENT", rs.getString("snippet"), rs.getTimestamp("updated_at").toLocalDateTime()),
+                userId, projectId, "%" + keyword + "%", "%" + keyword + "%", Math.max(limit, 1));
     }
 
     private SearchResultView mapChunk(ResultSet rs) throws SQLException {
@@ -165,6 +186,26 @@ class SearchService {
                 rs.getString("chunk_text"),
                 null
         );
+    }
+
+    private List<SearchResultView> uniqueResults(List<SearchResultView> rawResults) {
+        Comparator<SearchResultView> comparator = Comparator.comparing(SearchResultView::updatedAt,
+                Comparator.nullsLast(Comparator.reverseOrder()));
+        Map<String, SearchResultView> deduplicated = new LinkedHashMap<>();
+        rawResults.stream().sorted(comparator).forEach(result -> {
+            String key = result.sourceType() + ":" + result.sourceId();
+            SearchResultView existing = deduplicated.get(key);
+            if (existing == null || shouldReplace(existing, result)) {
+                deduplicated.put(key, result);
+            }
+        });
+        return new ArrayList<>(deduplicated.values());
+    }
+
+    private boolean shouldReplace(SearchResultView existing, SearchResultView candidate) {
+        return (existing.snippet() == null || existing.snippet().isBlank())
+                && candidate.snippet() != null
+                && !candidate.snippet().isBlank();
     }
 
     private void recordHistory(Long userId, String keyword, Long projectId) {
