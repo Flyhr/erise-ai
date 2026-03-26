@@ -1,0 +1,25 @@
+server:
+  port: 8081
+
+spring:
+  application:
+    name: erise-ai-cloud
+  jackson:
+    default-property-inclusion: non_null
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+
+erise:
+  internal:
+    api-key: ${INTERNAL_API_KEY:change-this-in-production}
+  backend:
+    base-url: ${BACKEND_INTERNAL_BASE_URL:http://localhost:8080}
+  provider:
+    api-key: ${OPENAI_API_KEY:}
+    base-url: ${OPENAI_BASE_URL:https://api.openai.com/v1}
+    chat-model: ${CHAT_MODEL:gpt-4.1-mini}
+    embedding-model: ${EMBEDDING_MODEL:text-embedding-3-small}

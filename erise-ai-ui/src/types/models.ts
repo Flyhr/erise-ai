@@ -1,0 +1,137 @@
+export interface ApiResponse<T> {
+  code: number
+  message: string
+  data: T
+}
+
+export interface PageResponse<T> {
+  records: T[]
+  pageNum: number
+  pageSize: number
+  total: number
+  totalPages: number
+}
+
+export interface UserView {
+  id: number
+  username: string
+  displayName: string
+  email: string
+  roleCode: string
+}
+
+export interface AuthTokenResponse {
+  accessToken: string
+  refreshToken: string
+  user: UserView
+}
+
+export interface ProjectDetailView {
+  id: number
+  ownerUserId: number
+  name: string
+  description?: string
+  projectStatus: string
+  archived: number
+  fileCount: number
+  documentCount: number
+  createdAt: string
+  updatedAt: string
+}
+
+export interface FileView {
+  id: number
+  projectId: number
+  fileName: string
+  fileExt: string
+  mimeType: string
+  fileSize: number
+  uploadStatus: string
+  parseStatus: string
+  indexStatus: string
+  createdAt: string
+  updatedAt: string
+}
+
+export interface DocumentSummaryView {
+  id: number
+  projectId: number
+  title: string
+  summary?: string
+  docStatus: string
+  latestVersionNo: number
+  updatedAt: string
+}
+
+export interface DocumentDetailView {
+  id: number
+  projectId: number
+  title: string
+  summary?: string
+  docStatus: string
+  latestVersionNo: number
+  contentJson: string
+  contentHtmlSnapshot: string
+  plainText: string
+  createdAt: string
+  updatedAt: string
+}
+
+export interface SearchResultView {
+  sourceType: string
+  sourceId: number
+  projectId: number
+  title: string
+  mimeType: string
+  snippet?: string
+  updatedAt?: string
+}
+
+export interface AiCitationView {
+  sourceType: string
+  sourceId: number
+  sourceTitle: string
+  snippet?: string
+  pageNo?: number
+}
+
+export interface AiChatResponse {
+  sessionId: number
+  messageId: number
+  answer: string
+  citations: AiCitationView[]
+  usedTools: string[]
+  confidence?: number
+  refusedReason?: string
+}
+
+export interface AiSessionSummaryView {
+  id: number
+  projectId: number
+  title: string
+  lastMessageAt?: string
+  createdAt: string
+}
+
+export interface AiMessageView {
+  id: number
+  roleCode: string
+  content: string
+  confidence?: number
+  refusedReason?: string
+  citations: AiCitationView[]
+  createdAt: string
+}
+
+export interface AiSessionDetailView {
+  id: number
+  projectId: number
+  title: string
+  messages: AiMessageView[]
+}
+
+export interface SearchHistoryView {
+  keyword: string
+  projectId?: number
+  createdAt: string
+}
