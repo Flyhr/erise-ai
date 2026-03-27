@@ -1,4 +1,4 @@
-export interface ApiResponse<T> {
+﻿export interface ApiResponse<T> {
   code: number
   message: string
   data: T
@@ -18,6 +18,8 @@ export interface UserView {
   displayName: string
   email: string
   roleCode: string
+  avatarUrl?: string
+  bio?: string
 }
 
 export interface AuthTokenResponse {
@@ -53,6 +55,17 @@ export interface FileView {
   updatedAt: string
 }
 
+export interface EditableOfficeFileView {
+  id: number
+  projectId: number
+  fileName: string
+  fileExt: string
+  editorType: string
+  contentHtmlSnapshot: string
+  plainText: string
+  updatedAt: string
+}
+
 export interface DocumentSummaryView {
   id: number
   projectId: number
@@ -73,6 +86,28 @@ export interface DocumentDetailView {
   contentJson: string
   contentHtmlSnapshot: string
   plainText: string
+  createdAt: string
+  updatedAt: string
+}
+
+export interface ContentItemSummaryView {
+  id: number
+  projectId: number
+  itemType: 'SHEET' | 'BOARD' | 'DATA_TABLE'
+  title: string
+  summary?: string
+  updatedAt: string
+}
+
+export interface ContentItemDetailView {
+  id: number
+  projectId: number
+  itemType: 'SHEET' | 'BOARD' | 'DATA_TABLE'
+  title: string
+  summary?: string
+  contentJson: string
+  plainText: string
+  coverMetaJson?: string
   createdAt: string
   updatedAt: string
 }
@@ -107,7 +142,7 @@ export interface AiChatResponse {
 
 export interface AiSessionSummaryView {
   id: number
-  projectId: number
+  projectId?: number
   title: string
   lastMessageAt?: string
   createdAt: string
@@ -125,7 +160,7 @@ export interface AiMessageView {
 
 export interface AiSessionDetailView {
   id: number
-  projectId: number
+  projectId?: number
   title: string
   messages: AiMessageView[]
 }
@@ -135,3 +170,4 @@ export interface SearchHistoryView {
   projectId?: number
   createdAt: string
 }
+

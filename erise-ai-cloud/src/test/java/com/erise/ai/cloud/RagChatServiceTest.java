@@ -2,70 +2,99 @@ package com.erise.ai.cloud;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-import com.erise.ai.cloud.integration.BackendInternalClient;
-import com.erise.ai.cloud.provider.OpenAiCompatClient;
+import com.erise.ai.cloud.provider.DeepSeekClient;
 import com.erise.ai.cloud.service.RagChatService;
 import java.util.List;
 import org.junit.jupiter.api.Test;
+import reactor.core.publisher.Flux;
 
 class RagChatServiceTest {
 
     @Test
-    void refusesWhenNoKnowledge() {
-        RagChatService service = new RagChatService(
-                new EmptyBackendClient(),
-                new FakeOpenAiClient()
-        );
+    void supportsGeneralChatWithoutProjectContext() {
+        RagChatService service = new RagChatService(new WorkingDeepSeekClient());
 
-        RagChatService.ChatResult result = service.chat(new RagChatService.ChatRequest(1L, "u", "USER", null, 1L, "问题"));
+        RagChatService.ChatResult result = service.chat(new RagChatService.ChatRequest(
+                1L, "u", "USER", null, null, "问题", List.of(new RagChatService.PromptMessage("user", "问题"))
+        ));
 
-        assertThat(result.refusedReason()).isEqualTo("NO_EVIDENCE");
+        assertThat(result.refusedReason()).isNull();
         assertThat(result.citations()).isEmpty();
+        assertThat(result.usedTools()).contains("DEEPSEEK_CHAT");
     }
 
     @Test
-    void returnsCitationsWhenKnowledgeExists() {
-        RagChatService service = new RagChatService(
-                new FixedBackendClient(),
-                new FakeOpenAiClient()
-        );
+    void preservesConversationHistoryWhenCallingDeepSeek() {
+        WorkingDeepSeekClient client = new WorkingDeepSeekClient();
+        RagChatService service = new RagChatService(client);
 
-        RagChatService.ChatResult result = service.chat(new RagChatService.ChatRequest(1L, "u", "USER", null, 1L, "问题"));
+        service.chat(new RagChatService.ChatRequest(
+                1L,
+                "u",
+                "USER",
+                99L,
+                null,
+                "继续",
+                List.of(
+                        new RagChatService.PromptMessage("user", "第一句"),
+                        new RagChatService.PromptMessage("assistant", "第一条回答"),
+                        new RagChatService.PromptMessage("user", "继续")
+                )
+        ));
 
-        assertThat(result.refusedReason()).isNull();
-        assertThat(result.citations()).hasSize(1);
+        assertThat(client.lastMessages()).extracting(DeepSeekClient.ChatMessage::content)
+                .contains("第一句", "第一条回答", "继续");
     }
 
-    static class EmptyBackendClient extends BackendInternalClient {
-        EmptyBackendClient() {
+    @Test
+    void returnsProviderUnavailableWhenDeepSeekMissing() {
+        RagChatService service = new RagChatService(new BrokenDeepSeekClient());
+
+        RagChatService.ChatResult result = service.chat(new RagChatService.ChatRequest(
+                1L, "u", "USER", null, null, "问题", List.of(new RagChatService.PromptMessage("user", "问题"))
+        ));
+
+        assertThat(result.refusedReason()).isEqualTo("PROVIDER_UNAVAILABLE");
+        assertThat(result.answer()).contains("DEEPSEEK_API_KEY");
+    }
+
+    static class WorkingDeepSeekClient extends DeepSeekClient {
+        private List<ChatMessage> lastMessages = List.of();
+
+        WorkingDeepSeekClient() {
             super(null, null, null);
         }
 
         @Override
-        public List<KnowledgeChunk> retrieveKnowledge(Long userId, Long projectId, String keyword, int limit) {
-            return List.of();
+        public boolean isConfigured() {
+            return true;
+        }
+
+        @Override
+        public String chat(List<ChatMessage> messages) {
+            lastMessages = messages;
+            return "基于当前上下文的回答";
+        }
+
+        @Override
+        public Flux<String> stream(List<ChatMessage> messages) {
+            lastMessages = messages;
+            return Flux.just("基于", "当前", "上下文的回答");
+        }
+
+        List<ChatMessage> lastMessages() {
+            return lastMessages;
         }
     }
 
-    static class FixedBackendClient extends BackendInternalClient {
-        FixedBackendClient() {
+    static class BrokenDeepSeekClient extends DeepSeekClient {
+        BrokenDeepSeekClient() {
             super(null, null, null);
         }
 
         @Override
-        public List<KnowledgeChunk> retrieveKnowledge(Long userId, Long projectId, String keyword, int limit) {
-            return List.of(new KnowledgeChunk("DOCUMENT", 2L, projectId, "设计文档", "DOCUMENT", "这里是证据片段", null));
-        }
-    }
-
-    static class FakeOpenAiClient extends OpenAiCompatClient {
-        FakeOpenAiClient() {
-            super(null, null, null);
-        }
-
-        @Override
-        public String chat(String systemPrompt, String userPrompt) {
-            return "基于知识库的回答";
+        public boolean isConfigured() {
+            return false;
         }
     }
 }

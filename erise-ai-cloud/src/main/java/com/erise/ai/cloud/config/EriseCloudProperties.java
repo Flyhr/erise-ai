@@ -11,7 +11,7 @@ public class EriseCloudProperties {
 
     private final Internal internal = new Internal();
     private final Backend backend = new Backend();
-    private final Provider provider = new Provider();
+    private final DeepSeek deepseek = new DeepSeek();
 
     @Getter
     @Setter
@@ -27,7 +27,7 @@ public class EriseCloudProperties {
 
     @Getter
     @Setter
-    public static class Provider {
+    public static class DeepSeek {
         private String apiKey;
         private String baseUrl;
         private String chatModel;

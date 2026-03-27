@@ -2,8 +2,11 @@ import axios from 'axios'
 import { ElMessage } from 'element-plus'
 import type { ApiResponse } from '@/types/models'
 
+const apiBase = import.meta.env.VITE_API_BASE_URL || '/api'
+const normalizedApiBase = apiBase.endsWith('/') ? apiBase.slice(0, -1) : apiBase
+
 const http = axios.create({
-  baseURL: import.meta.env.VITE_API_BASE_URL,
+  baseURL: normalizedApiBase,
   timeout: 30000,
 })
 
@@ -30,5 +33,10 @@ http.interceptors.response.use(
     return Promise.reject(error)
   },
 )
+
+export const resolveApiUrl = (path: string) => {
+  const normalizedPath = path.startsWith('/') ? path : `/${path}`
+  return `${normalizedApiBase}${normalizedPath}`
+}
 
 export default http

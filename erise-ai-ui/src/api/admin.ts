@@ -8,6 +8,49 @@ export interface AdminOverviewView {
   documentCount: number
 }
 
+export interface AdminOperationalMetricsView {
+  aiSessionCount: number
+  searchCount: number
+  activeUsersToday: number
+  failedLogins24h: number
+  downloads24h: number
+  aiChats24h: number
+}
+
+export interface AdminTrendPointView {
+  label: string
+  value: number
+}
+
+export interface AdminSecurityLogView {
+  username?: string
+  loginIp?: string
+  userAgent?: string
+  createdAt: string
+}
+
+export interface AdminDownloadLogView {
+  operatorUsername?: string
+  resourceId?: number
+  detailJson?: string
+  createdAt: string
+}
+
+export interface AdminActionMetricView {
+  actionCode: string
+  total: number
+}
+
+export interface AdminDashboardView {
+  overview: AdminOverviewView
+  metrics: AdminOperationalMetricsView
+  visitTrend: AdminTrendPointView[]
+  downloadTrend: AdminTrendPointView[]
+  securityLogs: AdminSecurityLogView[]
+  downloadLogs: AdminDownloadLogView[]
+  topActions: AdminActionMetricView[]
+}
+
 export interface AdminUserView {
   id: number
   username: string
@@ -48,6 +91,8 @@ export interface ModelConfigView {
 }
 
 export const getAdminOverview = () => http.get<never, AdminOverviewView>('/v1/admin/overview')
+
+export const getAdminDashboard = () => http.get<never, AdminDashboardView>('/v1/admin/dashboard')
 
 export const getAdminUsers = (params: { pageNum?: number; pageSize?: number }) =>
   http.get<never, PageResponse<AdminUserView>>('/v1/admin/users', { params })

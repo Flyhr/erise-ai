@@ -30,6 +30,8 @@ import lombok.RequiredArgsConstructor;
 import org.apache.pdfbox.Loader;
 import org.apache.pdfbox.pdmodel.PDDocument;
 import org.apache.pdfbox.text.PDFTextStripper;
+import org.apache.poi.hwpf.HWPFDocument;
+import org.apache.poi.hwpf.extractor.WordExtractor;
 import org.apache.poi.xwpf.usermodel.BodyElementType;
 import org.apache.poi.xwpf.usermodel.IBodyElement;
 import org.apache.poi.xwpf.usermodel.UnderlinePatterns;
@@ -119,7 +121,7 @@ public class FileController {
 @RequiredArgsConstructor
 class FileService {
 
-    private static final List<String> INDEXABLE_TYPES = List.of("pdf", "md", "markdown", "txt", "docx");
+    private static final List<String> INDEXABLE_TYPES = List.of("pdf", "md", "markdown", "txt", "doc", "docx");
 
     private final FileMapper fileMapper;
     private final FileParseTaskMapper fileParseTaskMapper;
@@ -390,6 +392,12 @@ class FileService {
                 chunks.addAll(knowledgeService.splitText(text, page));
             }
             return chunks;
+        }
+    }
+
+    private List<KnowledgeService.ChunkInput> extractDoc(InputStream stream) throws IOException {
+        try (HWPFDocument document = new HWPFDocument(stream); WordExtractor extractor = new WordExtractor(document)) {
+            return knowledgeService.splitText(extractor.getText(), null);
         }
     }
 

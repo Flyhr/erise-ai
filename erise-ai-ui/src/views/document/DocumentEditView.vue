@@ -1,17 +1,29 @@
-<template>
-  <div class="section-stack">
+﻿<template>
+  <div class="document-editor-page section-stack">
     <div class="page-header">
       <div>
         <h1>{{ form.title || (isPreview ? '文档预览' : '文档编辑') }}</h1>
         <div class="page-subtitle">
           {{
             isPreview
-              ? '当前为只读预览模式，可从这里直接切回编辑。'
-              : '支持标题、字号、文字颜色、超链接、本地图片与列表编辑，保存后会同步项目知识。'
+              ? '当前为只读预览模式。'
+              : '支持 Office 风格编辑、右侧目录导航，以及 doc/pdf/Markdown/jpg 导出。'
           }}
         </div>
       </div>
-      <div class="editor-header-actions">
+      <div class="table-actions">
+        <el-button plain @click="toggleToc">{{ tocVisible ? '隐藏目录' : '显示目录' }}</el-button>
+        <el-dropdown trigger="click" @command="handleExportCommand">
+          <el-button plain>导出文档</el-button>
+          <template #dropdown>
+            <el-dropdown-menu>
+              <el-dropdown-item command="doc">导出为 .doc</el-dropdown-item>
+              <el-dropdown-item command="pdf">导出为 .pdf</el-dropdown-item>
+              <el-dropdown-item command="markdown">导出为 .md</el-dropdown-item>
+              <el-dropdown-item command="jpg">导出为 .jpg</el-dropdown-item>
+            </el-dropdown-menu>
+          </template>
+        </el-dropdown>
         <el-button v-if="isPreview" type="primary" @click="openEditMode">进入编辑</el-button>
         <template v-else>
           <el-button :loading="saving" @click="save">保存草稿</el-button>
@@ -21,77 +33,60 @@
       </div>
     </div>
 
-    <el-card class="glass-card" shadow="never">
-      <el-form :model="form" label-position="top">
-        <el-form-item label="标题">
-          <el-input v-model="form.title" :disabled="isPreview" />
-        </el-form-item>
-        <el-form-item label="摘要">
-          <el-input v-model="form.summary" type="textarea" :rows="3" :disabled="isPreview" />
-        </el-form-item>
-      </el-form>
+    <div class="document-editor-grid" :class="{ 'is-toc-hidden': !tocVisible }">
+      <section class="section-stack document-editor-main">
+        <el-card class="glass-card" shadow="never">
+          <el-form :model="form" label-position="top">
+            <el-form-item label="标题">
+              <el-input v-model="form.title" :disabled="isPreview" />
+            </el-form-item>
+            <el-form-item label="摘要">
+              <el-input v-model="form.summary" type="textarea" :rows="3" :disabled="isPreview" />
+            </el-form-item>
+          </el-form>
+        </el-card>
 
-      <div class="rich-editor">
-        <div v-if="!isPreview" class="rich-toolbar">
-          <div class="rich-toolbar__group">
-            <label class="toolbar-label" for="heading-select">标题</label>
-            <select id="heading-select" class="toolbar-select" @change="handleBlockChange">
-              <option value="p">正文</option>
-              <option value="h1">标题 1</option>
-              <option value="h2">标题 2</option>
-              <option value="h3">标题 3</option>
-              <option value="blockquote">引用</option>
-            </select>
-          </div>
+        <div class="document-editor-panel glass-card">
+          <OfficeEditor
+            ref="officeEditorRef"
+            v-model="contentHtml"
+            :readonly="isPreview"
+            :height="760"
+            toolbar-locale="zh"
+            placeholder="开始撰写文档内容"
+          />
+        </div>
+      </section>
 
-          <div class="rich-toolbar__group">
-            <label class="toolbar-label" for="size-select">字号</label>
-            <select id="size-select" class="toolbar-select" v-model="fontSize" @change="applyFontSize">
-              <option value="14px">14</option>
-              <option value="16px">16</option>
-              <option value="18px">18</option>
-              <option value="24px">24</option>
-              <option value="32px">32</option>
-            </select>
+      <aside v-if="tocVisible" class="document-toc glass-card">
+        <div class="document-toc__header">
+          <div>
+            <div class="document-toc__eyebrow">TABLE OF CONTENTS</div>
+            <div class="document-toc__title">文档目录</div>
           </div>
-
-          <div class="rich-toolbar__group">
-            <button type="button" class="toolbar-button" @mousedown.prevent="exec('bold')">加粗</button>
-            <button type="button" class="toolbar-button" @mousedown.prevent="exec('italic')">斜体</button>
-            <button type="button" class="toolbar-button" @mousedown.prevent="exec('underline')">下划线</button>
-          </div>
-
-          <div class="rich-toolbar__group">
-            <button type="button" class="toolbar-button" @mousedown.prevent="exec('insertUnorderedList')">无序列表</button>
-            <button type="button" class="toolbar-button" @mousedown.prevent="exec('insertOrderedList')">有序列表</button>
-          </div>
-
-          <div class="rich-toolbar__group toolbar-color">
-            <label class="toolbar-label" for="color-input">颜色</label>
-            <input id="color-input" v-model="textColor" type="color" @input="applyTextColor" />
-          </div>
-
-          <div class="rich-toolbar__group">
-            <button type="button" class="toolbar-button" @mousedown.prevent="insertLink">插入链接</button>
-            <button type="button" class="toolbar-button" @mousedown.prevent="pickImage">插入图片</button>
-            <button type="button" class="toolbar-button" @mousedown.prevent="clearFormatting">清除格式</button>
-          </div>
+          <el-button text @click="toggleToc">关闭</el-button>
         </div>
 
-        <input ref="imageInputRef" class="hidden-input" type="file" accept="image/*" @change="handleImageChange" />
+        <div v-if="tocItems.length" class="document-toc__list">
+          <button
+            v-for="item in tocItems"
+            :key="`${item.index}-${item.text}`"
+            type="button"
+            class="document-toc__item"
+            :style="{ paddingLeft: `${16 + (item.level - 1) * 14}px` }"
+            @click="focusHeading(item.index)"
+          >
+            <span>{{ item.text }}</span>
+            <small>{{ item.tagName.toUpperCase() }}</small>
+          </button>
+        </div>
+        <div v-else class="empty-box">当前内容还没有标题结构。添加 H1-H4 标题后，这里会自动生成目录。</div>
+      </aside>
+    </div>
 
-        <div
-          ref="editorRef"
-          class="rich-content"
-          :class="{ 'is-preview': isPreview }"
-          :contenteditable="!isPreview"
-          @input="syncEditorState"
-          @blur="syncEditorState"
-          @mouseup="saveSelection"
-          @keyup="saveSelection"
-        />
-      </div>
-    </el-card>
+    <div class="document-export-surface" aria-hidden="true">
+      <div ref="exportSurfaceRef" class="document-export-surface__canvas" v-html="exportHtml" />
+    </div>
   </div>
 </template>
 
@@ -100,165 +95,49 @@ import { computed, nextTick, onMounted, reactive, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { useRoute, useRouter } from 'vue-router'
 import { getDocument, publishDocument, updateDocument } from '@/api/document'
+import OfficeEditor from '@/components/editor/OfficeEditor.vue'
+import {
+  buildTocFromHtml,
+  exportDocumentAsDoc,
+  exportDocumentAsMarkdown,
+  exportElementAsJpg,
+  exportElementAsPdf,
+  renderDocumentHtml,
+} from '@/utils/documentExport'
 
 const props = defineProps<{ id: string }>()
 const route = useRoute()
 const router = useRouter()
-const form = reactive({ title: '', summary: '' })
+const documentId = Number(props.id)
 const saving = ref(false)
 const publishing = ref(false)
-const editorRef = ref<HTMLDivElement>()
-const imageInputRef = ref<HTMLInputElement>()
-const fontSize = ref('16px')
-const textColor = ref('#14532d')
-const editorHtml = ref('<p></p>')
-const plainText = ref('')
-const savedRange = ref<Range | null>(null)
-const documentId = Number(props.id)
+const tocVisible = ref(true)
+const contentHtml = ref('<p></p>')
+const exportSurfaceRef = ref<HTMLDivElement | null>(null)
+const officeEditorRef = ref<{ focusHeading: (index: number) => void } | null>(null)
+const form = reactive({ title: '', summary: '' })
+
 const isPreview = computed(() => route.query.mode === 'preview')
+const tocItems = computed(() => buildTocFromHtml(contentHtml.value))
+const exportFileName = computed(() => form.title.trim() || 'untitled-document')
+const exportHtml = computed(() => renderDocumentHtml(form.title.trim() || 'Untitled document', form.summary, contentHtml.value))
 
-const syncEditorDom = async () => {
-  await nextTick()
-  if (editorRef.value) {
-    editorRef.value.innerHTML = editorHtml.value || '<p></p>'
-  }
-}
-
-const syncEditorState = () => {
-  if (!editorRef.value) return
-  editorHtml.value = editorRef.value.innerHTML || '<p></p>'
-  plainText.value = editorRef.value.innerText.trim()
-}
-
-const saveSelection = () => {
-  if (isPreview.value || !editorRef.value) return
-  const selection = window.getSelection()
-  if (!selection || selection.rangeCount === 0) return
-  const range = selection.getRangeAt(0)
-  if (!editorRef.value.contains(range.commonAncestorContainer)) return
-  savedRange.value = range.cloneRange()
-}
-
-const restoreSelection = () => {
-  if (!savedRange.value) return
-  const selection = window.getSelection()
-  if (!selection) return
-  selection.removeAllRanges()
-  selection.addRange(savedRange.value)
-}
-
-const focusEditor = () => {
-  if (!editorRef.value) return false
-  editorRef.value.focus()
-  restoreSelection()
-  return true
-}
-
-const exec = (command: string, value?: string) => {
-  if (isPreview.value || !focusEditor()) return
-  document.execCommand('styleWithCSS', false, 'true')
-  document.execCommand(command, false, value)
-  syncEditorState()
-  saveSelection()
-}
-
-const applyBlock = (block: string) => {
-  exec('formatBlock', block)
-}
-
-const handleBlockChange = (event: Event) => {
-  const target = event.target as HTMLSelectElement | null
-  if (!target) return
-  applyBlock(target.value)
-}
-
-const applyInlineStyle = (styleText: string) => {
-  if (isPreview.value || !focusEditor()) return
-  const selection = window.getSelection()
-  if (!selection || selection.rangeCount === 0) {
-    ElMessage.warning('请先选中文本')
-    return
-  }
-  const range = selection.getRangeAt(0)
-  if (range.collapsed) {
-    ElMessage.warning('请先选中文本')
-    return
-  }
-  const span = document.createElement('span')
-  span.setAttribute('style', styleText)
-  span.appendChild(range.extractContents())
-  range.insertNode(span)
-  selection.removeAllRanges()
-  const newRange = document.createRange()
-  newRange.selectNodeContents(span)
-  selection.addRange(newRange)
-  savedRange.value = newRange.cloneRange()
-  syncEditorState()
-}
-
-const applyFontSize = () => {
-  applyInlineStyle(`font-size: ${fontSize.value};`)
-}
-
-const applyTextColor = () => {
-  exec('foreColor', textColor.value)
-}
-
-const insertLink = () => {
-  if (isPreview.value || !focusEditor()) return
-  const url = window.prompt('请输入链接地址')?.trim()
-  if (!url) return
-  const selection = window.getSelection()
-  const selectedText = selection?.toString().trim()
-  if (selectedText) {
-    exec('createLink', url)
-    return
-  }
-  const label = window.prompt('请输入链接文字', url)?.trim() || url
-  document.execCommand(
-    'insertHTML',
-    false,
-    `<a href="${escapeAttribute(url)}" target="_blank" rel="noreferrer">${escapeHtml(label)}</a>`,
-  )
-  syncEditorState()
-}
-
-const pickImage = () => {
-  if (isPreview.value) return
-  imageInputRef.value?.click()
-}
-
-const handleImageChange = async (event: Event) => {
-  const input = event.target as HTMLInputElement
-  const file = input.files?.[0]
-  if (!file) return
-  const reader = new FileReader()
-  reader.onload = () => {
-    if (!focusEditor()) return
-    document.execCommand('insertImage', false, String(reader.result))
-    syncEditorState()
-  }
-  reader.readAsDataURL(file)
-  input.value = ''
-}
-
-const clearFormatting = () => {
-  exec('removeFormat')
-  exec('unlink')
+const htmlToText = (html: string) => {
+  const parser = new DOMParser()
+  const doc = parser.parseFromString(html, 'text/html')
+  return doc.body.textContent?.trim() || ''
 }
 
 const save = async () => {
-  if (!editorRef.value) return
-  syncEditorState()
   saving.value = true
   try {
     form.title = form.title.trim() || '未命名文档'
     await updateDocument(documentId, {
       title: form.title,
       summary: form.summary,
-      contentJson: JSON.stringify({ type: 'html', html: editorHtml.value }),
-      contentHtmlSnapshot: editorHtml.value,
-      plainText: plainText.value,
+      contentJson: JSON.stringify({ type: 'TINYMCE', html: contentHtml.value }),
+      contentHtmlSnapshot: contentHtml.value,
+      plainText: htmlToText(contentHtml.value),
     })
     ElMessage.success('草稿已保存')
   } finally {
@@ -277,128 +156,165 @@ const publish = async () => {
   }
 }
 
-const openPreviewMode = () => {
-  router.push({ path: `/documents/${documentId}/edit`, query: { mode: 'preview' } })
+const openPreviewMode = () => router.push({ path: `/documents/${documentId}/edit`, query: { mode: 'preview' } })
+const openEditMode = () => router.push(`/documents/${documentId}/edit`)
+const toggleToc = () => {
+  tocVisible.value = !tocVisible.value
 }
 
-const openEditMode = () => {
-  router.push(`/documents/${documentId}/edit`)
+const focusHeading = (headingIndex: number) => {
+  officeEditorRef.value?.focusHeading(headingIndex)
 }
 
-const escapeHtml = (value: string) =>
-  value.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('"', '&quot;')
+const handleExportCommand = async (command: string | number | object) => {
+  const exportType = String(command)
+  await nextTick()
 
-const escapeAttribute = (value: string) => escapeHtml(value).replaceAll("'", '&#39;')
+  if (!exportSurfaceRef.value) {
+    ElMessage.error('导出区域尚未准备完成')
+    return
+  }
+
+  if (exportType === 'doc') {
+    await exportDocumentAsDoc({
+      fileName: exportFileName.value,
+      title: form.title.trim() || 'Untitled document',
+      summary: form.summary,
+      bodyHtml: contentHtml.value,
+    })
+    ElMessage.success('已导出 .doc 文件')
+    return
+  }
+
+  if (exportType === 'markdown') {
+    await exportDocumentAsMarkdown({
+      fileName: exportFileName.value,
+      title: form.title.trim() || 'Untitled document',
+      summary: form.summary,
+      bodyHtml: contentHtml.value,
+    })
+    ElMessage.success('已导出 Markdown 文件')
+    return
+  }
+
+  if (exportType === 'pdf') {
+    await exportElementAsPdf(exportSurfaceRef.value, exportFileName.value)
+    ElMessage.success('已导出 .pdf 文件')
+    return
+  }
+
+  if (exportType === 'jpg') {
+    await exportElementAsJpg(exportSurfaceRef.value, exportFileName.value)
+    ElMessage.success('已导出 .jpg 文件')
+  }
+}
 
 onMounted(async () => {
   const detail = await getDocument(documentId)
   form.title = detail.title
   form.summary = detail.summary || ''
-  editorHtml.value = detail.contentHtmlSnapshot || '<p></p>'
-  plainText.value = detail.plainText || ''
-  await syncEditorDom()
+  contentHtml.value = detail.contentHtmlSnapshot || '<p></p>'
 })
 </script>
 
 <style scoped>
-.editor-header-actions {
+.document-editor-page {
+  gap: 20px;
+}
+
+.document-editor-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 320px;
+  gap: 18px;
+  align-items: start;
+}
+
+.document-editor-grid.is-toc-hidden {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.document-editor-main {
+  min-width: 0;
+}
+
+.document-editor-panel {
+  padding: 18px;
+}
+
+.document-toc {
+  position: sticky;
+  top: 16px;
   display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 20px;
+}
+
+.document-toc__header {
+  display: flex;
+  justify-content: space-between;
   gap: 12px;
-  flex-wrap: wrap;
+  align-items: flex-start;
 }
 
-.rich-editor {
-  border: 1px solid var(--line);
-  border-radius: 22px;
-  overflow: hidden;
-  background: rgba(255, 255, 255, 0.92);
-}
-
-.rich-toolbar {
-  display: flex;
-  gap: 12px;
-  flex-wrap: wrap;
-  align-items: end;
-  padding: 14px;
-  border-bottom: 1px solid var(--line);
-  background: linear-gradient(180deg, rgba(249, 250, 244, 0.9), rgba(255, 255, 255, 0.95));
-}
-
-.rich-toolbar__group {
-  display: flex;
-  gap: 8px;
-  align-items: center;
-  flex-wrap: wrap;
-}
-
-.toolbar-label {
-  font-size: 12px;
+.document-toc__eyebrow {
+  font-size: 11px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
   color: var(--muted);
 }
 
-.toolbar-select,
-.toolbar-button,
-.toolbar-color input {
+.document-toc__title {
+  margin-top: 8px;
+  font-size: 18px;
+  font-weight: 700;
+}
+
+.document-toc__list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.document-toc__item {
+  width: 100%;
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: center;
+  padding: 12px 14px;
   border: 1px solid var(--line);
-  border-radius: 12px;
-  background: #fff;
-}
-
-.toolbar-select {
-  min-width: 92px;
-  padding: 8px 12px;
-  color: var(--text);
-}
-
-.toolbar-button {
-  padding: 8px 12px;
-  cursor: pointer;
-  color: var(--text);
-}
-
-.toolbar-button:hover,
-.toolbar-select:hover {
-  border-color: rgba(20, 83, 45, 0.35);
-}
-
-.toolbar-color input {
-  width: 40px;
-  height: 40px;
-  padding: 4px;
+  border-radius: 16px;
+  background: var(--surface-strong);
+  color: inherit;
+  text-align: left;
   cursor: pointer;
 }
 
-.rich-content {
-  min-height: 420px;
-  padding: 20px;
-  line-height: 1.8;
-  outline: none;
+.document-toc__item small {
+  color: var(--muted);
+  letter-spacing: 0.08em;
 }
 
-.rich-content.is-preview {
-  background: rgba(248, 246, 241, 0.6);
+.document-export-surface {
+  position: fixed;
+  inset: auto auto 0 -200vw;
+  pointer-events: none;
+  opacity: 0;
 }
 
-.rich-content :deep(img) {
-  max-width: 100%;
-  height: auto;
-  border-radius: 14px;
-  margin: 16px 0;
+.document-export-surface__canvas {
+  width: 794px;
+  background: #ffffff;
 }
 
-.hidden-input {
-  display: none;
-}
-
-@media (max-width: 900px) {
-  .rich-toolbar {
-    align-items: stretch;
+@media (max-width: 1180px) {
+  .document-editor-grid {
+    grid-template-columns: minmax(0, 1fr);
   }
 
-  .rich-toolbar__group {
-    width: 100%;
+  .document-toc {
+    position: static;
   }
 }
 </style>
-
-

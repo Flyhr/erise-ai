@@ -129,7 +129,7 @@ class AuthService {
 
         CurrentUser currentUser = new CurrentUser(entity.getId(), entity.getUsername(), entity.getRoleCode());
         auditLogService.log(currentUser, "AUTH_REGISTER", "USER", entity.getId(), Map.of("username", entity.getUsername()));
-        return buildAuthResponse(currentUser, profile.getDisplayName(), entity.getEmail());
+        return buildAuthResponse(currentUser, profile.getDisplayName(), entity.getEmail(), profile.getAvatarUrl(), profile.getBio());
     }
 
     AuthTokenResponse login(LoginRequest request, String ip, String userAgent) {
@@ -148,7 +148,7 @@ class AuthService {
         CurrentUser currentUser = new CurrentUser(user.getId(), user.getUsername(), user.getRoleCode());
         insertLoginLog(user.getId(), user.getUsername(), ip, userAgent, true);
         auditLogService.log(currentUser, "AUTH_LOGIN", "USER", user.getId(), Map.of("ip", ip));
-        return buildAuthResponse(currentUser, profile.getDisplayName(), user.getEmail());
+        return buildAuthResponse(currentUser, profile.getDisplayName(), user.getEmail(), profile.getAvatarUrl(), profile.getBio());
     }
 
     AuthTokenResponse refresh(String refreshToken) {
@@ -163,7 +163,7 @@ class AuthService {
         UserEntity entity = activeUserById(user.userId());
         UserProfileEntity profile = profileByUserId(entity.getId());
         return buildAuthResponse(new CurrentUser(entity.getId(), entity.getUsername(), entity.getRoleCode()),
-                profile.getDisplayName(), entity.getEmail());
+                profile.getDisplayName(), entity.getEmail(), profile.getAvatarUrl(), profile.getBio());
     }
 
     void logout(String refreshToken) {
@@ -195,7 +195,7 @@ class AuthService {
         return profile;
     }
 
-    private AuthTokenResponse buildAuthResponse(CurrentUser currentUser, String displayName, String email) {
+    private AuthTokenResponse buildAuthResponse(CurrentUser currentUser, String displayName, String email, String avatarUrl, String bio) {
         String accessToken = jwtTokenProvider.createAccessToken(currentUser);
         String refreshToken = jwtTokenProvider.createRefreshToken(currentUser);
         redisTemplate.opsForValue().set(
@@ -206,7 +206,7 @@ class AuthService {
         return new AuthTokenResponse(
                 accessToken,
                 refreshToken,
-                new UserView(currentUser.userId(), currentUser.username(), displayName, email, currentUser.roleCode())
+                new UserView(currentUser.userId(), currentUser.username(), displayName, email, currentUser.roleCode(), avatarUrl, bio)
         );
     }
 
@@ -352,5 +352,5 @@ record CaptchaResponse(String captchaId, String captchaImage) {
 record AuthTokenResponse(String accessToken, String refreshToken, UserView user) {
 }
 
-record UserView(Long id, String username, String displayName, String email, String roleCode) {
+record UserView(Long id, String username, String displayName, String email, String roleCode, String avatarUrl, String bio) {
 }
