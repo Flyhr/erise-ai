@@ -9,8 +9,11 @@ import ProjectsView from '@/views/project/ProjectsView.vue'
 import ProjectDetailView from '@/views/project/ProjectDetailView.vue'
 import FilesView from '@/views/file/FilesView.vue'
 import FileDetailView from '@/views/file/FileDetailView.vue'
+import OfficeFileEditView from '@/views/file/OfficeFileEditView.vue'
 import DocumentsView from '@/views/document/DocumentsView.vue'
 import DocumentEditView from '@/views/document/DocumentEditView.vue'
+import ContentItemsView from '@/views/content/ContentItemsView.vue'
+import ContentItemEditView from '@/views/content/ContentItemEditView.vue'
 import SearchView from '@/views/search/SearchView.vue'
 import AiView from '@/views/ai/AiView.vue'
 import ProfileView from '@/views/settings/ProfileView.vue'
@@ -40,9 +43,12 @@ const router = createRouter({
         { path: 'projects/:id', component: ProjectDetailView, props: true },
         { path: 'projects/:id/files', component: FilesView, props: true },
         { path: 'projects/:id/documents', component: DocumentsView, props: true },
+        { path: 'projects/:id/contents/:type', component: ContentItemsView, props: true },
         { path: 'projects/:id/ai', component: AiView, props: true },
         { path: 'files/:id', component: FileDetailView, props: true },
+        { path: 'files/:id/edit', component: OfficeFileEditView, props: true },
         { path: 'documents/:id/edit', component: DocumentEditView, props: true },
+        { path: 'contents/:id/edit', component: ContentItemEditView, props: true },
         { path: 'search', component: SearchView },
         { path: 'ai', component: AiView },
         { path: 'settings/profile', component: ProfileView },
@@ -79,7 +85,7 @@ router.beforeEach(async (to) => {
   }
 
   if (to.path === '/login' && authStore.isAuthenticated) {
-    return authStore.isAdmin ? '/admin' : '/workspace'
+    return '/workspace'
   }
 
   return true

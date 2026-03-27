@@ -3,7 +3,7 @@
     <div class="page-header">
       <div>
         <h1>{{ file?.fileName }}</h1>
-        <div class="page-subtitle">查看文件元数据、解析状态，并执行在线预览或下载。</div>
+        <div class="page-subtitle">查看文件元数据、索引状态，并执行预览、下载或在线编辑。</div>
       </div>
     </div>
 
@@ -18,26 +18,26 @@
 
       <div class="file-actions">
         <el-button type="primary" @click="handlePreview">在线预览</el-button>
+        <el-button v-if="isOfficeFile" plain @click="$router.push(`/files/${file.id}/edit`)">在线编辑</el-button>
         <el-button plain @click="handleDownload">下载</el-button>
       </div>
 
-      <div v-if="file.fileExt === 'docx'" class="page-subtitle">
-        DOCX 文件会以在线 HTML 预览方式打开，不再直接走下载。
-      </div>
+      <div v-if="isOfficeFile" class="page-subtitle">当前文件支持在线 Office 风格编辑，保存后会同步项目知识索引。</div>
     </el-card>
   </div>
 </template>
 
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { ElMessage } from 'element-plus'
-import { downloadFileContent, getFile, previewFileBinary } from '@/api/file'
+import { downloadFileContent, getFile, previewFileBinary, previewOfficeFile } from '@/api/file'
 import type { FileView } from '@/types/models'
 import { useProjectDirectory } from '@/composables/useProjectDirectory'
 
 const props = defineProps<{ id: string }>()
 const file = ref<FileView>()
 const { loadProjects, projectLabel } = useProjectDirectory()
+const isOfficeFile = computed(() => ['doc', 'docx'].includes((file.value?.fileExt || '').toLowerCase()))
 
 onMounted(async () => {
   await loadProjects()
@@ -47,7 +47,11 @@ onMounted(async () => {
 const handlePreview = async () => {
   if (!file.value) return
   try {
-    await previewFileBinary(file.value.id)
+    if (isOfficeFile.value) {
+      await previewOfficeFile(file.value.id)
+    } else {
+      await previewFileBinary(file.value.id)
+    }
   } catch (error) {
     ElMessage.error(error instanceof Error ? error.message : '文件预览失败')
   }

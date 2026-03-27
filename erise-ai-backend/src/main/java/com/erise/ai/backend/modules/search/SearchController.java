@@ -68,6 +68,7 @@ class SearchService {
         List<SearchResultView> rawResults = new ArrayList<>();
         rawResults.addAll(searchFiles(keyword, projectSql));
         rawResults.addAll(searchDocuments(keyword, projectSql));
+        rawResults.addAll(searchContentItems(keyword, projectSql));
         rawResults.addAll(searchChunks(keyword, projectSql));
         List<SearchResultView> results = uniqueResults(rawResults);
         recordHistory(currentUser.userId(), keyword, projectId);
@@ -92,8 +93,13 @@ class SearchService {
                 String.class,
                 like
         ));
+        values.addAll(jdbcTemplate.queryForList(
+                "select distinct title from ea_content_item where deleted = 0 and title like ? and project_id in (" + baseSql + ") limit 5",
+                String.class,
+                like
+        ));
         values.addAll(history().stream().map(SearchHistoryView::keyword).limit(5).toList());
-        return values.stream().distinct().limit(10).toList();
+        return values.stream().filter(item -> item != null && !item.isBlank()).distinct().limit(12).toList();
     }
 
     List<SearchHistoryView> history() {
@@ -119,7 +125,10 @@ class SearchService {
         if (!chunks.isEmpty()) {
             return chunks;
         }
-        return searchDocumentKnowledge(userId, projectId, keyword, limit);
+        List<SearchResultView> fallbacks = new ArrayList<>();
+        fallbacks.addAll(searchDocumentKnowledge(userId, projectId, keyword, Math.max(limit, 1)));
+        fallbacks.addAll(searchContentKnowledge(userId, projectId, keyword, Math.max(limit, 1)));
+        return uniqueResults(fallbacks).stream().limit(Math.max(limit, 1)).toList();
     }
 
     private List<SearchResultView> searchFiles(String keyword, String projectSql) {
@@ -149,6 +158,19 @@ class SearchService {
                 "%" + keyword + "%", "%" + keyword + "%");
     }
 
+    private List<SearchResultView> searchContentItems(String keyword, String projectSql) {
+        return jdbcTemplate.query("""
+                        select id, project_id, item_type, title, left(coalesce(nullif(plain_text, ''), summary), 220) as snippet, updated_at
+                        from ea_content_item
+                        where deleted = 0 and project_id in (%s) and (title like ? or summary like ? or plain_text like ?)
+                        order by updated_at desc
+                        limit 20
+                        """.formatted(projectSql),
+                (rs, rowNum) -> new SearchResultView(rs.getString("item_type"), rs.getLong("id"), rs.getLong("project_id"),
+                        rs.getString("title"), rs.getString("item_type"), rs.getString("snippet"), rs.getTimestamp("updated_at").toLocalDateTime()),
+                "%" + keyword + "%", "%" + keyword + "%", "%" + keyword + "%");
+    }
+
     private List<SearchResultView> searchChunks(String keyword, String projectSql) {
         return jdbcTemplate.query("""
                         select source_type, source_id, project_id, source_title, left(chunk_text, 200) as snippet, updated_at
@@ -174,6 +196,19 @@ class SearchService {
                 (rs, rowNum) -> new SearchResultView("DOCUMENT", rs.getLong("id"), rs.getLong("project_id"),
                         rs.getString("title"), "DOCUMENT", rs.getString("snippet"), rs.getTimestamp("updated_at").toLocalDateTime()),
                 userId, projectId, "%" + keyword + "%", "%" + keyword + "%", Math.max(limit, 1));
+    }
+
+    private List<SearchResultView> searchContentKnowledge(Long userId, Long projectId, String keyword, int limit) {
+        return jdbcTemplate.query("""
+                        select id, project_id, item_type, title, left(coalesce(nullif(plain_text, ''), summary), 300) as snippet, updated_at
+                        from ea_content_item
+                        where deleted = 0 and owner_user_id = ? and project_id = ? and (title like ? or summary like ? or plain_text like ?)
+                        order by updated_at desc
+                        limit ?
+                        """,
+                (rs, rowNum) -> new SearchResultView(rs.getString("item_type"), rs.getLong("id"), rs.getLong("project_id"),
+                        rs.getString("title"), rs.getString("item_type"), rs.getString("snippet"), rs.getTimestamp("updated_at").toLocalDateTime()),
+                userId, projectId, "%" + keyword + "%", "%" + keyword + "%", "%" + keyword + "%", Math.max(limit, 1));
     }
 
     private SearchResultView mapChunk(ResultSet rs) throws SQLException {

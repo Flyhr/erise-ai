@@ -4,6 +4,7 @@ import com.erise.ai.backend.common.config.EriseProperties;
 import com.erise.ai.backend.common.exception.BizException;
 import com.erise.ai.backend.common.exception.ErrorCodes;
 import java.time.Duration;
+import java.util.List;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpHeaders;
@@ -59,8 +60,12 @@ public class CloudAiClient {
             String roleCode,
             Long sessionId,
             Long projectId,
-            String question
+            String question,
+            List<PromptMessage> messages
     ) {
+    }
+
+    public record PromptMessage(String role, String content) {
     }
 
     public record ChatResponse(

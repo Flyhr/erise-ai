@@ -12,9 +12,15 @@ import com.erise.ai.backend.common.entity.AuditableEntity;
 import com.erise.ai.backend.common.util.SecurityUtils;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
+import java.sql.Timestamp;
+import java.time.LocalDate;
+import java.time.LocalDateTime;
+import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import lombok.Data;
 import lombok.RequiredArgsConstructor;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -34,6 +40,11 @@ public class AdminController {
     @GetMapping("/overview")
     public ApiResponse<AdminOverviewView> overview() {
         return ApiResponse.success(adminService.overview());
+    }
+
+    @GetMapping("/dashboard")
+    public ApiResponse<AdminDashboardView> dashboard() {
+        return ApiResponse.success(adminService.dashboard());
     }
 
     @GetMapping("/users")
@@ -75,7 +86,7 @@ class AdminService {
     private final FileParseTaskMapper fileParseTaskMapper;
     private final AuditLogMapper auditLogMapper;
     private final ModelConfigMapper modelConfigMapper;
-    private final org.springframework.jdbc.core.JdbcTemplate jdbcTemplate;
+    private final JdbcTemplate jdbcTemplate;
     private final AuditLogService auditLogService;
 
     AdminOverviewView overview() {
@@ -84,6 +95,27 @@ class AdminService {
         long fileCount = count("ea_file");
         long documentCount = count("ea_document");
         return new AdminOverviewView(userCount, projectCount, fileCount, documentCount);
+    }
+
+    AdminDashboardView dashboard() {
+        AdminOverviewView overview = overview();
+        AdminOperationalMetricsView metrics = new AdminOperationalMetricsView(
+                count("ea_ai_session"),
+                count("ea_search_history"),
+                scalar("select count(distinct user_id) from ea_user_login_log where deleted = 0 and success = 1 and date(created_at) = curdate()"),
+                scalar("select count(*) from ea_user_login_log where deleted = 0 and success = 0 and created_at >= date_sub(now(), interval 24 hour)"),
+                scalar("select count(*) from ea_audit_log where deleted = 0 and action_code = 'FILE_DOWNLOAD' and created_at >= date_sub(now(), interval 24 hour)"),
+                scalar("select count(*) from ea_audit_log where deleted = 0 and action_code = 'AI_CHAT' and created_at >= date_sub(now(), interval 24 hour)")
+        );
+        return new AdminDashboardView(
+                overview,
+                metrics,
+                loginTrend(7),
+                downloadTrend(7),
+                securityLogs(),
+                downloadLogs(),
+                topActions()
+        );
     }
 
     PageResponse<AdminUserView> users(long pageNum, long pageSize) {
@@ -141,9 +173,100 @@ class AdminService {
                 .toList();
     }
 
+    private List<AdminTrendPointView> loginTrend(int days) {
+        return fillDailyTrend(days, jdbcTemplate.queryForList("""
+                select date(created_at) as point_date, count(*) as total
+                from ea_user_login_log
+                where deleted = 0 and success = 1 and created_at >= date_sub(curdate(), interval ? day)
+                group by date(created_at)
+                order by point_date asc
+                """, days, days));
+    }
+
+    private List<AdminTrendPointView> downloadTrend(int days) {
+        return fillDailyTrend(days, jdbcTemplate.queryForList("""
+                select date(created_at) as point_date, count(*) as total
+                from ea_audit_log
+                where deleted = 0 and action_code = 'FILE_DOWNLOAD' and created_at >= date_sub(curdate(), interval ? day)
+                group by date(created_at)
+                order by point_date asc
+                """, days, days));
+    }
+
+    private List<AdminTrendPointView> fillDailyTrend(int days, List<Map<String, Object>> rows) {
+        Map<LocalDate, Long> values = new java.util.HashMap<>();
+        for (Map<String, Object> row : rows) {
+            Object pointDate = row.get("point_date");
+            LocalDate date = pointDate instanceof java.sql.Date sqlDate
+                    ? sqlDate.toLocalDate()
+                    : LocalDate.parse(String.valueOf(pointDate));
+            values.put(date, ((Number) row.get("total")).longValue());
+        }
+        List<AdminTrendPointView> trend = new ArrayList<>();
+        LocalDate start = LocalDate.now().minusDays(days - 1L);
+        for (int i = 0; i < days; i++) {
+            LocalDate date = start.plusDays(i);
+            trend.add(new AdminTrendPointView(date.toString(), values.getOrDefault(date, 0L)));
+        }
+        return trend;
+    }
+
+    private List<AdminSecurityLogView> securityLogs() {
+        return jdbcTemplate.query("""
+                        select username, login_ip, user_agent, created_at
+                        from ea_user_login_log
+                        where deleted = 0 and success = 0
+                        order by created_at desc
+                        limit 20
+                        """,
+                (rs, rowNum) -> new AdminSecurityLogView(
+                        rs.getString("username"),
+                        rs.getString("login_ip"),
+                        rs.getString("user_agent"),
+                        toLocalDateTime(rs.getTimestamp("created_at"))
+                ));
+    }
+
+    private List<AdminDownloadLogView> downloadLogs() {
+        return jdbcTemplate.query("""
+                        select operator_username, resource_id, detail_json, created_at
+                        from ea_audit_log
+                        where deleted = 0 and action_code = 'FILE_DOWNLOAD'
+                        order by created_at desc
+                        limit 20
+                        """,
+                (rs, rowNum) -> new AdminDownloadLogView(
+                        rs.getString("operator_username"),
+                        rs.getLong("resource_id"),
+                        rs.getString("detail_json"),
+                        toLocalDateTime(rs.getTimestamp("created_at"))
+                ));
+    }
+
+    private List<AdminActionMetricView> topActions() {
+        return jdbcTemplate.query("""
+                        select action_code, count(*) as total
+                        from ea_audit_log
+                        where deleted = 0 and created_at >= date_sub(now(), interval 7 day)
+                        group by action_code
+                        order by total desc
+                        limit 8
+                        """,
+                (rs, rowNum) -> new AdminActionMetricView(rs.getString("action_code"), rs.getLong("total")));
+    }
+
     private long count(String table) {
         Long value = jdbcTemplate.queryForObject("select count(*) from " + table + " where deleted = 0", Long.class);
         return value == null ? 0 : value;
+    }
+
+    private long scalar(String sql) {
+        Long value = jdbcTemplate.queryForObject(sql, Long.class);
+        return value == null ? 0 : value;
+    }
+
+    private LocalDateTime toLocalDateTime(Timestamp timestamp) {
+        return timestamp == null ? null : timestamp.toLocalDateTime();
     }
 }
 
@@ -166,6 +289,39 @@ class ModelConfigEntity extends AuditableEntity {
 record AdminOverviewView(long userCount, long projectCount, long fileCount, long documentCount) {
 }
 
+record AdminOperationalMetricsView(
+        long aiSessionCount,
+        long searchCount,
+        long activeUsersToday,
+        long failedLogins24h,
+        long downloads24h,
+        long aiChats24h
+) {
+}
+
+record AdminDashboardView(
+        AdminOverviewView overview,
+        AdminOperationalMetricsView metrics,
+        List<AdminTrendPointView> visitTrend,
+        List<AdminTrendPointView> downloadTrend,
+        List<AdminSecurityLogView> securityLogs,
+        List<AdminDownloadLogView> downloadLogs,
+        List<AdminActionMetricView> topActions
+) {
+}
+
+record AdminTrendPointView(String label, long value) {
+}
+
+record AdminSecurityLogView(String username, String loginIp, String userAgent, LocalDateTime createdAt) {
+}
+
+record AdminDownloadLogView(String operatorUsername, Long resourceId, String detailJson, LocalDateTime createdAt) {
+}
+
+record AdminActionMetricView(String actionCode, long total) {
+}
+
 record AdminUserView(
         Long id,
         String username,
@@ -174,7 +330,7 @@ record AdminUserView(
         String roleCode,
         String status,
         Integer enabled,
-        java.time.LocalDateTime createdAt
+        LocalDateTime createdAt
 ) {
 }
 
@@ -182,7 +338,7 @@ record AdminUserStatusRequest(@NotBlank String status) {
 }
 
 record AdminTaskView(Long id, String taskType, String taskStatus, Integer retryCount, String lastError,
-                     java.time.LocalDateTime createdAt) {
+                     LocalDateTime createdAt) {
 }
 
 record AdminAuditLogView(
@@ -192,7 +348,7 @@ record AdminAuditLogView(
         String resourceType,
         Long resourceId,
         String detailJson,
-        java.time.LocalDateTime createdAt
+        LocalDateTime createdAt
 ) {
 }
 

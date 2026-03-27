@@ -13,9 +13,9 @@ import com.erise.ai.backend.common.util.SecurityUtils;
 import com.erise.ai.backend.integration.ai.CloudAiClient;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
-import jakarta.validation.constraints.NotNull;
 import java.io.IOException;
 import java.time.LocalDateTime;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicReference;
@@ -80,16 +80,18 @@ class AiService {
 
     AiChatResponse chat(AiChatRequest request) {
         var currentUser = SecurityUtils.currentUser();
-        projectService.requireAccessibleProject(request.projectId());
         AiSessionEntity session = ensureSession(currentUser.userId(), request.sessionId(), request.projectId(), request.question());
+        Long effectiveProjectId = request.sessionId() != null ? session.getProjectId() : request.projectId();
+        List<CloudAiClient.PromptMessage> promptMessages = buildPromptMessages(session.getId(), request.question());
         Long userMessageId = saveMessage(session.getId(), currentUser.userId(), "USER", request.question(), null, null);
         CloudAiClient.ChatResponse response = cloudAiClient.chat(new CloudAiClient.ChatRequest(
                 currentUser.userId(),
                 currentUser.username(),
                 currentUser.roleCode(),
                 session.getId(),
-                request.projectId(),
-                request.question()
+                effectiveProjectId,
+                request.question(),
+                promptMessages
         ));
         Long assistantMessageId = saveMessage(session.getId(), currentUser.userId(), "ASSISTANT",
                 response.answer(), response.confidence(), response.refusedReason());
@@ -103,8 +105,9 @@ class AiService {
 
     SseEmitter stream(AiChatRequest request) {
         var currentUser = SecurityUtils.currentUser();
-        projectService.requireAccessibleProject(request.projectId());
         AiSessionEntity session = ensureSession(currentUser.userId(), request.sessionId(), request.projectId(), request.question());
+        Long effectiveProjectId = request.sessionId() != null ? session.getProjectId() : request.projectId();
+        List<CloudAiClient.PromptMessage> promptMessages = buildPromptMessages(session.getId(), request.question());
         saveMessage(session.getId(), currentUser.userId(), "USER", request.question(), null, null);
         SseEmitter emitter = new SseEmitter(0L);
         AtomicReference<StringBuilder> answerBuilder = new AtomicReference<>(new StringBuilder());
@@ -113,8 +116,9 @@ class AiService {
                         currentUser.username(),
                         currentUser.roleCode(),
                         session.getId(),
-                        request.projectId(),
-                        request.question()
+                        effectiveProjectId,
+                        request.question(),
+                        promptMessages
                 ))
                 .doOnNext(chunk -> {
                     answerBuilder.get().append(chunk);
@@ -194,6 +198,9 @@ class AiService {
         if (sessionId != null) {
             return requireSession(sessionId, userId);
         }
+        if (projectId != null) {
+            projectService.requireAccessibleProject(projectId);
+        }
         AiSessionEntity entity = new AiSessionEntity();
         entity.setOwnerUserId(userId);
         entity.setProjectId(projectId);
@@ -213,7 +220,23 @@ class AiService {
         return session;
     }
 
+    private List<CloudAiClient.PromptMessage> buildPromptMessages(Long sessionId, String question) {
+        List<AiMessageEntity> history = aiMessageMapper.selectList(new LambdaQueryWrapper<AiMessageEntity>()
+                .eq(AiMessageEntity::getSessionId, sessionId)
+                .orderByAsc(AiMessageEntity::getCreatedAt));
+        List<CloudAiClient.PromptMessage> promptMessages = new ArrayList<>();
+        for (AiMessageEntity item : history) {
+            if (item.getContent() == null || item.getContent().isBlank()) {
+                continue;
+            }
+            String role = "USER".equals(item.getRoleCode()) ? "user" : "assistant";
+            promptMessages.add(new CloudAiClient.PromptMessage(role, item.getContent()));
+        }
+        promptMessages.add(new CloudAiClient.PromptMessage("user", question));
+        return promptMessages;
+    }
     private Long saveMessage(Long sessionId, Long userId, String role, String content, Double confidence, String refusedReason) {
+
         AiMessageEntity entity = new AiMessageEntity();
         entity.setSessionId(sessionId);
         entity.setOwnerUserId(userId);
@@ -303,7 +326,7 @@ class AiCitationEntity extends AuditableEntity {
     private Integer pageNo;
 }
 
-record AiChatRequest(@NotNull Long projectId, Long sessionId, @NotBlank String question) {
+record AiChatRequest(Long projectId, Long sessionId, @NotBlank String question) {
 }
 
 record AiCitationView(String sourceType, Long sourceId, String sourceTitle, String snippet, Integer pageNo) {
@@ -346,3 +369,5 @@ record InternalPersistMessageRequest(
         String refusedReason
 ) {
 }
+
+

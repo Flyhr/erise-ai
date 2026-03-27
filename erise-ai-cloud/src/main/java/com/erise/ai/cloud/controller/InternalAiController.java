@@ -23,8 +23,17 @@ public class InternalAiController {
     @PostMapping("/chat")
     public ChatResponse chat(@Valid @RequestBody ChatRequest request) {
         RagChatService.ChatResult result = ragChatService.chat(
-                new RagChatService.ChatRequest(request.userId(), request.username(), request.roleCode(),
-                        request.sessionId(), request.projectId(), request.question())
+                new RagChatService.ChatRequest(
+                        request.userId(),
+                        request.username(),
+                        request.roleCode(),
+                        request.sessionId(),
+                        request.projectId(),
+                        request.question(),
+                        request.messages() == null ? List.of() : request.messages().stream()
+                                .map(message -> new RagChatService.PromptMessage(message.role(), message.content()))
+                                .toList()
+                )
         );
         return new ChatResponse(result.answer(), result.citations().stream()
                 .map(item -> new Citation(item.sourceType(), item.sourceId(), item.sourceTitle(), item.snippet(), item.pageNo()))
@@ -34,7 +43,15 @@ public class InternalAiController {
     @PostMapping(value = "/chat/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
     public Flux<String> stream(@Valid @RequestBody ChatRequest request) {
         return ragChatService.stream(new RagChatService.ChatRequest(
-                request.userId(), request.username(), request.roleCode(), request.sessionId(), request.projectId(), request.question()
+                request.userId(),
+                request.username(),
+                request.roleCode(),
+                request.sessionId(),
+                request.projectId(),
+                request.question(),
+                request.messages() == null ? List.of() : request.messages().stream()
+                        .map(message -> new RagChatService.PromptMessage(message.role(), message.content()))
+                        .toList()
         ));
     }
 
@@ -43,9 +60,13 @@ public class InternalAiController {
             @NotBlank String username,
             @NotBlank String roleCode,
             Long sessionId,
-            @NotNull Long projectId,
-            @NotBlank String question
+            Long projectId,
+            @NotBlank String question,
+            List<PromptMessage> messages
     ) {
+    }
+
+    public record PromptMessage(String role, String content) {
     }
 
     public record ChatResponse(

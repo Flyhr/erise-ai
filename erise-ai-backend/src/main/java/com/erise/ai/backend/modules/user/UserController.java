@@ -53,7 +53,7 @@ class UserService {
         var currentUser = SecurityUtils.currentUser();
         UserEntity user = authService.activeUserById(currentUser.userId());
         UserProfileEntity profile = authService.profileByUserId(currentUser.userId());
-        return new UserView(user.getId(), user.getUsername(), profile.getDisplayName(), user.getEmail(), user.getRoleCode());
+        return new UserView(user.getId(), user.getUsername(), profile.getDisplayName(), user.getEmail(), user.getRoleCode(), profile.getAvatarUrl(), profile.getBio());
     }
 
     UserView updateProfile(UpdateProfileRequest request) {
