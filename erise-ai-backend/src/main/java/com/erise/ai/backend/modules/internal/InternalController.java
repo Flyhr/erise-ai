@@ -4,7 +4,6 @@ import com.erise.ai.backend.common.api.ApiResponse;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
-import java.util.List;
 import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -20,10 +19,11 @@ public class InternalController {
 
     private final SearchService searchService;
     private final ProjectService projectService;
-    private final AiService aiService;
+    private final DocumentService documentService;
+    private final FileService fileService;
 
     @PostMapping("/knowledge/retrieve")
-    public ApiResponse<List<SearchResultView>> retrieveKnowledge(@Valid @RequestBody InternalKnowledgeRequest request) {
+    public ApiResponse<java.util.List<SearchResultView>> retrieveKnowledge(@Valid @RequestBody InternalKnowledgeRequest request) {
         return ApiResponse.success(searchService.retrieveKnowledge(request.userId(), request.projectId(), request.keyword(), request.limit()));
     }
 
@@ -32,12 +32,25 @@ public class InternalController {
         return ApiResponse.success(projectService.internalDetail(id));
     }
 
-    @PostMapping("/ai/messages/persist")
-    public ApiResponse<Void> persist(@Valid @RequestBody InternalPersistMessageRequest request) {
-        aiService.persistAssistantMessage(request);
-        return ApiResponse.success("success", null);
+    @GetMapping("/documents/{id}/context")
+    public ApiResponse<InternalDocumentContextView> documentContext(@PathVariable Long id) {
+        return ApiResponse.success(documentService.internalContext(id));
+    }
+
+    @PostMapping("/documents/{id}/title")
+    public ApiResponse<InternalDocumentContextView> updateDocumentTitle(@PathVariable Long id,
+                                                                        @Valid @RequestBody InternalDocumentTitleUpdateRequest request) {
+        return ApiResponse.success(documentService.internalUpdateTitle(id, request.title()));
+    }
+
+    @GetMapping("/files/{id}/context")
+    public ApiResponse<InternalFileContextView> fileContext(@PathVariable Long id) {
+        return ApiResponse.success(fileService.internalContext(id));
     }
 }
 
 record InternalKnowledgeRequest(@NotNull Long userId, @NotNull Long projectId, @NotBlank String keyword, int limit) {
+}
+
+record InternalDocumentTitleUpdateRequest(@NotBlank String title) {
 }

@@ -1,10 +1,19 @@
-import pytest
-from fastapi.testclient import TestClient
-from src.main import app
+from __future__ import annotations
+
+import subprocess
+import sys
+from pathlib import Path
 
 
-def test_health():
-    client = TestClient(app)
-    resp = client.get("/")
-    assert resp.status_code == 200
-    assert resp.json().get("status") == "ok"
+ROOT = Path(__file__).resolve().parents[1]
+
+
+def test_smoke_script() -> None:
+    result = subprocess.run(
+        [sys.executable, 'scripts/smoke_test.py'],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, f"stdout:\n{result.stdout}\n\nstderr:\n{result.stderr}"

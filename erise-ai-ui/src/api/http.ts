@@ -1,4 +1,4 @@
-import axios from 'axios'
+﻿import axios from 'axios'
 import { ElMessage } from 'element-plus'
 import type { ApiResponse } from '@/types/models'
 
@@ -22,13 +22,14 @@ http.interceptors.response.use(
   (response): any => {
     const payload = response.data as ApiResponse<unknown>
     if (payload.code !== 0) {
-      ElMessage.error(payload.message)
-      return Promise.reject(new Error(payload.message))
+      const message = payload.message ?? payload.msg ?? 'Request failed'
+      ElMessage.error(message)
+      return Promise.reject(new Error(message))
     }
     return payload.data
   },
   (error) => {
-    const message = error.response?.data?.message ?? error.message ?? 'Request failed'
+    const message = error.response?.data?.message ?? error.response?.data?.msg ?? error.message ?? 'Request failed'
     ElMessage.error(message)
     return Promise.reject(error)
   },

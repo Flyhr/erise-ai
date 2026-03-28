@@ -1,6 +1,7 @@
-﻿export interface ApiResponse<T> {
+export interface ApiResponse<T> {
   code: number
-  message: string
+  message?: string
+  msg?: string
   data: T
 }
 
@@ -138,6 +139,27 @@ export interface AiChatResponse {
   usedTools: string[]
   confidence?: number
   refusedReason?: string
+  requestId?: string
+  messageStatus?: string
+  modelCode?: string
+  providerCode?: string
+}
+
+export type AiAttachmentType = 'DOCUMENT' | 'FILE'
+
+export interface AiAttachmentPayload {
+  attachmentType: AiAttachmentType
+  sourceId: number
+  projectId?: number
+  title?: string
+}
+
+export interface AiModelView {
+  providerCode: string
+  modelCode: string
+  modelName: string
+  supportStream: boolean
+  maxContextTokens?: number
 }
 
 export interface AiSessionSummaryView {
@@ -156,6 +178,9 @@ export interface AiMessageView {
   refusedReason?: string
   citations: AiCitationView[]
   createdAt: string
+  status?: string
+  errorMessage?: string
+  requestId?: string
 }
 
 export interface AiSessionDetailView {
@@ -170,4 +195,3 @@ export interface SearchHistoryView {
   projectId?: number
   createdAt: string
 }
-

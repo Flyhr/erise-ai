@@ -13,8 +13,13 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestTemplate;
 
-@Component
+/**
+ * Legacy backend integration client kept only for reference.
+ * Runtime retrieval/project-context calls are now made by the Python AI service.
+ */
+// @Component
 @RequiredArgsConstructor
+@Deprecated(forRemoval = false)
 public class BackendInternalClient {
 
     private final RestTemplate restTemplate;

@@ -7,7 +7,12 @@ import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
 import reactor.core.publisher.Flux;
 
-@Service
+/**
+ * Legacy Java AI service kept only for rollback/reference.
+ * The active chat runtime now lives in the Python AI service.
+ */
+// @Service
+@Deprecated(forRemoval = false)
 public class RagChatService {
 
     private static final String PROVIDER_UNAVAILABLE_MESSAGE = "当前未配置可用的 DeepSeek 服务，请先设置 DEEPSEEK_API_KEY 后再发起聊天。";

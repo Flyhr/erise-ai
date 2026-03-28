@@ -13,8 +13,8 @@ public class HttpClientConfig {
     @Bean
     public RestTemplate restTemplate(RestTemplateBuilder builder) {
         return builder
-                .setConnectTimeout(Duration.ofSeconds(10))
-                .setReadTimeout(Duration.ofSeconds(60))
+                .setConnectTimeout(Duration.ofSeconds(10))// 连接超时10秒
+                .setReadTimeout(Duration.ofSeconds(60))// 读取超时60秒
                 .build();
     }
 

@@ -127,6 +127,7 @@ class FileService {
     private final FileParseTaskMapper fileParseTaskMapper;
     private final TagMapper tagMapper;
     private final FileTagRelMapper fileTagRelMapper;
+    private final FileEditContentMapper fileEditContentMapper;
     private final ProjectService projectService;
     private final MinioStorageClient storageClient;
     private final AuditLogService auditLogService;
@@ -199,6 +200,20 @@ class FileService {
         return toView(requireAccessibleFile(fileId));
     }
 
+    InternalFileContextView internalContext(Long fileId) {
+        FileEntity entity = requireExistingFile(fileId);
+        return new InternalFileContextView(
+                entity.getId(),
+                entity.getProjectId(),
+                entity.getFileName(),
+                entity.getFileExt(),
+                entity.getMimeType(),
+                loadPlainTextForContext(fileId, entity),
+                entity.getParseStatus(),
+                entity.getUpdatedAt()
+        );
+    }
+
     ResponseEntity<InputStreamResource> stream(Long fileId, boolean inline) {
         var currentUser = SecurityUtils.currentUser();
         FileEntity entity = requireAccessibleFile(fileId);
@@ -258,12 +273,17 @@ class FileService {
         auditLogService.log(currentUser, "FILE_DELETE", "FILE", fileId, null);
     }
 
-    FileEntity requireAccessibleFile(Long fileId) {
-        var currentUser = SecurityUtils.currentUser();
+    FileEntity requireExistingFile(Long fileId) {
         FileEntity entity = fileMapper.selectById(fileId);
         if (entity == null) {
             throw new BizException(ErrorCodes.NOT_FOUND, "File not found");
         }
+        return entity;
+    }
+
+    FileEntity requireAccessibleFile(Long fileId) {
+        var currentUser = SecurityUtils.currentUser();
+        FileEntity entity = requireExistingFile(fileId);
         projectService.requireAccessibleProject(entity.getProjectId());
         if (!currentUser.isAdmin() && !currentUser.userId().equals(entity.getOwnerUserId())) {
             throw new BizException(ErrorCodes.FORBIDDEN, "No permission");
@@ -285,6 +305,27 @@ class FileService {
                 entity.getCreatedAt(),
                 entity.getUpdatedAt()
         );
+    }
+
+    private String loadPlainTextForContext(Long fileId, FileEntity entity) {
+        FileEditContentEntity stored = fileEditContentMapper.selectOne(new LambdaQueryWrapper<FileEditContentEntity>()
+                .eq(FileEditContentEntity::getFileId, fileId)
+                .last("limit 1"));
+        if (stored != null && stored.getPlainText() != null && !stored.getPlainText().isBlank()) {
+            return stored.getPlainText();
+        }
+        try (InputStream stream = storageClient.getObject(entity.getStorageKey())) {
+            return switch (entity.getFileExt() == null ? "" : entity.getFileExt().toLowerCase(Locale.ROOT)) {
+                case "txt" -> new String(stream.readAllBytes(), StandardCharsets.UTF_8);
+                case "md", "markdown" -> stripMarkdown(new String(stream.readAllBytes(), StandardCharsets.UTF_8));
+                case "pdf" -> extractPdfText(stream);
+                case "doc" -> extractDocText(stream);
+                case "docx" -> extractDocxText(stream);
+                default -> "";
+            };
+        } catch (IOException exception) {
+            throw new BizException(ErrorCodes.FILE_ERROR, "File context load failed: " + exception.getMessage());
+        }
     }
 
     void handleParseTask(FileParseTaskEntity task) {
@@ -375,6 +416,7 @@ class FileService {
             case "txt" -> knowledgeService.splitText(new String(stream.readAllBytes(), StandardCharsets.UTF_8), null);
             case "md", "markdown" -> knowledgeService.splitText(stripMarkdown(new String(stream.readAllBytes(), StandardCharsets.UTF_8)), null);
             case "pdf" -> extractPdf(stream);
+            case "doc" -> extractDoc(stream);
             case "docx" -> extractDocx(stream);
             default -> List.of();
         };
@@ -440,6 +482,38 @@ class FileService {
         return blocks;
     }
 
+    private String extractPdfText(InputStream stream) throws IOException {
+        byte[] bytes = stream.readAllBytes();
+        try (PDDocument document = Loader.loadPDF(bytes)) {
+            PDFTextStripper stripper = new PDFTextStripper();
+            StringBuilder content = new StringBuilder();
+            for (int page = 1; page <= document.getNumberOfPages(); page++) {
+                stripper.setStartPage(page);
+                stripper.setEndPage(page);
+                String text = stripper.getText(document).trim();
+                if (!text.isBlank()) {
+                    if (!content.isEmpty()) {
+                        content.append("\n\n");
+                    }
+                    content.append(text);
+                }
+            }
+            return content.toString();
+        }
+    }
+
+    private String extractDocText(InputStream stream) throws IOException {
+        try (HWPFDocument document = new HWPFDocument(stream); WordExtractor extractor = new WordExtractor(document)) {
+            return extractor.getText();
+        }
+    }
+
+    private String extractDocxText(InputStream stream) throws IOException {
+        try (XWPFDocument document = new XWPFDocument(stream)) {
+            return String.join("\n\n", readDocxBlocks(document));
+        }
+    }
+
     private String renderDocxPreview(byte[] bytes, String fileName) throws IOException {
         try (XWPFDocument document = new XWPFDocument(new ByteArrayInputStream(bytes))) {
             StringBuilder html = new StringBuilder();
@@ -458,7 +532,7 @@ class FileService {
                     .append(".docx-meta{color:#66707a;font-size:14px;margin-bottom:18px;}")
                     .append(".docx-bullet{display:inline-block;min-width:1.25em;color:#14532d;font-weight:700;}")
                     .append("</style></head><body><main><article>")
-                    .append("<div class=\"docx-meta\">DOCX 在线预览</div>");
+                    .append("<div class=\"docx-meta\">DOCX 鍦ㄧ嚎棰勮</div>");
             for (IBodyElement element : document.getBodyElements()) {
                 if (element.getElementType() == BodyElementType.PARAGRAPH) {
                     appendParagraphHtml(html, (XWPFParagraph) element);
@@ -479,7 +553,7 @@ class FileService {
         String tag = resolveParagraphTag(paragraph);
         html.append('<').append(tag).append('>');
         if (paragraph.getNumID() != null) {
-            html.append("<span class=\"docx-bullet\">•</span>");
+            html.append("<span class=\"docx-bullet\">鈥?/span>");
         }
         html.append(content);
         html.append("</").append(tag).append('>');
@@ -527,7 +601,7 @@ class FileService {
             chunk.append("<img src=\"")
                     .append(pictureDataToDataUrl(pictureData))
                     .append("\" alt=\"")
-                    .append("插图")
+                    .append("鎻掑浘")
                     .append("\" />");
         }
         String content = chunk.toString();
@@ -761,6 +835,18 @@ record TagBindRequest(@NotNull List<String> tags) {
 }
 
 record TagView(Long id, String name, String color) {
+}
+
+record InternalFileContextView(
+        Long id,
+        Long projectId,
+        String fileName,
+        String fileExt,
+        String mimeType,
+        String plainText,
+        String parseStatus,
+        java.time.LocalDateTime updatedAt
+) {
 }
 
 

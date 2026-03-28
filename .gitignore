@@ -4,28 +4,40 @@
 *.log
 *.tmp
 *.swp
-# 环境配置（密码、密钥绝不上传
-.env
-# 系统文件
 .DS_Store
-# Node 前端
+.env
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+AiAssistant/*.db
+AiAssistant/.coverage
+AiAssistant/.venv/
+
+# Node
 node_modules/
 dist/
 coverage/
 playwright-report/
 test-results/
-# Java 构建文件
-target/
+
+# Java
 .mvn/
 .m2/
-
-
 .gradle/
 build/
-# Docker
+target/
+erise-ai-backend/target/
+erise-ai-cloud/target/
+
+# Docker / local runtime
 data/
 docker-data/
 
+# Frontend
 erise-ai-ui/.vite/
 erise-ai-ui/node_modules/
 erise-ai-ui/dist/
@@ -33,7 +45,5 @@ erise-ai-ui/coverage/
 erise-ai-ui/playwright-report/
 erise-ai-ui/test-results/
 
-erise-ai-backend/target/
-erise-ai-cloud/target/
-
+# Deployment
 deploy/env/*.local

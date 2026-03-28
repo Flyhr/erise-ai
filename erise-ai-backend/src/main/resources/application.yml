@@ -5,7 +5,7 @@ spring:
   application:
     name: erise-ai-backend
   datasource:
-    url: jdbc:mysql://${MYSQL_HOST:localhost}:${MYSQL_PORT:3306}/${MYSQL_DB:erise_ai}?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai&useSSL=false&allowPublicKeyRetrieval=true
+    url: jdbc:mysql://${MYSQL_HOST:localhost}:${MYSQL_PORT:3306}/${MYSQL_DATABASE:${MYSQL_DB:erise_ai}}?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai&useSSL=false&allowPublicKeyRetrieval=true
     username: ${MYSQL_USER:root}
     password: ${MYSQL_PASSWORD:root}
     driver-class-name: com.mysql.cj.jdbc.Driver
@@ -62,7 +62,9 @@ erise:
   internal:
     api-key: ${INTERNAL_API_KEY:change-this-in-production}
   cloud:
+    # Legacy property name retained for compatibility. The target service is AiAssistant (Python).
     base-url: ${CLOUD_BASE_URL:http://localhost:8081}
+    default-model-code: ${DEFAULT_MODEL_CODE:deepseek-chat}
   bootstrap:
     admin-username: ${ADMIN_USERNAME:admin}
     admin-password: ${ADMIN_PASSWORD:Admin123!}

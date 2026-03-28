@@ -15,6 +15,7 @@ services:
       - "${MYSQL_HOST_PORT:-3306}:3306"
     volumes:
       - mysql-data:/var/lib/mysql
+      - ./AiAssistant/sql/mysql:/docker-entrypoint-initdb.d:ro
     healthcheck:
       test: ["CMD-SHELL", "mysqladmin ping -h localhost -uroot -p${MYSQL_ROOT_PASSWORD}"]
       interval: 10s
@@ -72,22 +73,34 @@ services:
         condition: service_healthy
       minio:
         condition: service_started
+      cloud:
+        condition: service_healthy
     ports:
       - "${BACKEND_PORT:-8080}:8080"
 
   cloud:
     build:
-      context: ./erise-ai-cloud
-    container_name: erise-ai-cloud
+      context: ./AiAssistant
+    container_name: erise-ai-chat-service
     restart: unless-stopped
     env_file:
       - .env
     environment:
-      SPRING_PROFILES_ACTIVE: docker
-      BACKEND_INTERNAL_BASE_URL: http://backend:8080
+      MYSQL_DSN: mysql+pymysql://${MYSQL_USER}:${MYSQL_PASSWORD}@mysql:3306/${MYSQL_DATABASE}?charset=utf8mb4
+      REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379/0
+      INTERNAL_SERVICE_TOKEN: ${INTERNAL_API_KEY}
+      JAVA_INTERNAL_BASE_URL: http://backend:8080/internal/v1
+      JAVA_INTERNAL_API_KEY: ${INTERNAL_API_KEY}
+      OPENAI_API_KEY: ${OPENAI_API_KEY}
+      OPENAI_BASE_URL: ${OPENAI_BASE_URL}
+      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY}
+      DEEPSEEK_BASE_URL: ${DEEPSEEK_BASE_URL}
+      DEFAULT_MODEL_CODE: ${DEFAULT_MODEL_CODE}
     depends_on:
-      backend:
-        condition: service_started
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
     ports:
       - "${CLOUD_PORT:-8081}:8081"
 

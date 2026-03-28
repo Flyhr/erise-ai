@@ -8,6 +8,7 @@ import com.baomidou.mybatisplus.core.mapper.BaseMapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.erise.ai.backend.common.api.ApiResponse;
 import com.erise.ai.backend.common.api.PageResponse;
+import com.erise.ai.backend.common.config.EriseProperties;
 import com.erise.ai.backend.common.entity.AuditableEntity;
 import com.erise.ai.backend.common.util.SecurityUtils;
 import jakarta.validation.Valid;
@@ -85,9 +86,9 @@ class AdminService {
     private final UserProfileMapper userProfileMapper;
     private final FileParseTaskMapper fileParseTaskMapper;
     private final AuditLogMapper auditLogMapper;
-    private final ModelConfigMapper modelConfigMapper;
     private final JdbcTemplate jdbcTemplate;
     private final AuditLogService auditLogService;
+    private final EriseProperties eriseProperties;
 
     AdminOverviewView overview() {
         long userCount = count("ea_user");
@@ -100,7 +101,7 @@ class AdminService {
     AdminDashboardView dashboard() {
         AdminOverviewView overview = overview();
         AdminOperationalMetricsView metrics = new AdminOperationalMetricsView(
-                count("ea_ai_session"),
+                scalar("select count(*) from ai_chat_session where status <> 'deleted'"),
                 count("ea_search_history"),
                 scalar("select count(distinct user_id) from ea_user_login_log where deleted = 0 and success = 1 and date(created_at) = curdate()"),
                 scalar("select count(*) from ea_user_login_log where deleted = 0 and success = 0 and created_at >= date_sub(now(), interval 24 hour)"),
@@ -166,11 +167,26 @@ class AdminService {
     }
 
     List<ModelConfigView> aiModels() {
-        return modelConfigMapper.selectList(new LambdaQueryWrapper<ModelConfigEntity>().orderByDesc(ModelConfigEntity::getIsDefault))
-                .stream()
-                .map(model -> new ModelConfigView(model.getId(), model.getModelName(), model.getProviderCode(),
-                        model.getEnabled(), model.getIsDefault(), model.getConfigJson()))
-                .toList();
+        String defaultModelCode = eriseProperties.getCloud().getDefaultModelCode();
+        return jdbcTemplate.query("""
+                        select id, model_code, model_name, provider_code, enabled, support_stream,
+                               max_context_tokens, priority_no, base_url, api_key_ref
+                        from ai_model_config
+                        order by priority_no asc, id asc
+                        """,
+                (rs, rowNum) -> new ModelConfigView(
+                        rs.getLong("id"),
+                        rs.getString("model_code"),
+                        rs.getString("model_name"),
+                        rs.getString("provider_code"),
+                        rs.getBoolean("enabled"),
+                        defaultModelCode.equals(rs.getString("model_code")),
+                        rs.getBoolean("support_stream"),
+                        rs.getObject("max_context_tokens", Integer.class),
+                        rs.getObject("priority_no", Integer.class),
+                        rs.getString("base_url"),
+                        rs.getString("api_key_ref")
+                ));
     }
 
     private List<AdminTrendPointView> loginTrend(int days) {
@@ -270,6 +286,9 @@ class AdminService {
     }
 }
 
+/*
+ * Legacy Java AI model mapping kept for reference after moving runtime/model management
+ * to the Python AI chat service.
 interface ModelConfigMapper extends BaseMapper<ModelConfigEntity> {
 }
 
@@ -285,6 +304,7 @@ class ModelConfigEntity extends AuditableEntity {
     private Integer isDefault;
     private String configJson;
 }
+ */
 
 record AdminOverviewView(long userCount, long projectCount, long fileCount, long documentCount) {
 }
@@ -352,6 +372,17 @@ record AdminAuditLogView(
 ) {
 }
 
-record ModelConfigView(Long id, String modelName, String providerCode, Integer enabled, Integer isDefault,
-                       String configJson) {
+record ModelConfigView(
+        Long id,
+        String modelCode,
+        String modelName,
+        String providerCode,
+        Boolean enabled,
+        Boolean isDefault,
+        Boolean supportStream,
+        Integer maxContextTokens,
+        Integer priorityNo,
+        String baseUrl,
+        String apiKeyRef
+) {
 }

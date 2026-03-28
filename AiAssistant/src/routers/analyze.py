@@ -1,19 +1,20 @@
-from __future__ import annotations
+锘縡rom __future__ import annotations
 
 from fastapi import APIRouter, Query
 from pydantic import BaseModel
 
 from src.services.summarizer import Summarizer
 
-router = APIRouter(prefix="/analyze", tags=["analyze"])
+router = APIRouter(prefix='/analyze', tags=['analyze'])
 
 
 class AnalyzeResponse(BaseModel):
     summary: str
+    focus: str | None = None
 
 
-@router.get("", response_model=AnalyzeResponse)
-def analyze(focus: str | None = Query(default=None, description="可选关注点，如 backend/frontend/infra")):
+@router.get('', response_model=AnalyzeResponse)
+def analyze(focus: str | None = Query(default=None, description='鍙�夊叧娉ㄧ偣')):
     summarizer = Summarizer()
-    summary = summarizer.summarize_project(focus)
-    return AnalyzeResponse(summary=summary)
+    result = summarizer.analyze_project(focus)
+    return AnalyzeResponse(summary=result.summary, focus=result.focus)

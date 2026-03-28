@@ -1,69 +1,79 @@
-# Erise-AI（开发中）
+# Erise-AI
 
-- Erise-AI 是基于 V1 版本规划的单仓多模块项目实现：包含 Vue 3 前端、Spring Boot 业务后端、Spring Boot AI 云服务，以及基于 Docker Compose 的本地基础环境。
-- Erise-AI is a monorepo implementation of the V1 plan: Vue 3 frontend, Spring Boot business backend, Spring Boot AI cloud service, and Docker Compose based local infrastructure.
+Erise-AI 当前默认运行架构已经切换为：
 
-## 项目结构/Structure
+- `erise-ai-ui`：Vue 3 + Vite 前端
+- `erise-ai-backend`：Spring Boot 业务后端与 AI 网关
+- `AiAssistant`：Python AI 聊天服务
+- `erise-ai-cloud`：旧 Java AI 服务，保留代码但不参与默认运行
+
+## 仓库结构
 
 ```text
-erise-ai-ui/        Vue 3 + Vite + TypeScript frontend
-erise-ai-backend/   Spring Boot business backend
-erise-ai-cloud/     Spring Boot AI cloud service
-deploy/             Nginx and environment examples
-docker-compose.yml  Local development stack
+AiAssistant/        Python AI chat service
+erise-ai-backend/  Spring Boot business backend
+erise-ai-cloud/    Legacy Java AI service kept for reference
+erise-ai-ui/       Vue 3 frontend
+deploy/            Nginx and deployment assets
+docs/              Integration and deployment notes
+docker-compose.yml Local development stack
 ```
 
-## 本地开发/Local development
+## AI 聊天运行链路
 
-1. 将 `.env.example `复制为 `.env`，并填写兼容 OpenAI 规范的配置信息。
+正式链路：
 
-2. 使用 Docker Compose 启动基础环境和应用服务；也可通过 Vite 本地运行前端，在 IDE 中运行 Java 服务。
-3. 后端启动时会通过环境变量自动初始化管理员账号。
+`UI -> /api/v1/ai -> Java Backend -> Python AiAssistant -> Model Provider`
 
-4. Copy `.env.example` to `.env` and fill in the OpenAI-compatible configuration.
-5. Start infrastructure and applications with Docker Compose, or run the frontend locally with Vite and the Java services from the IDE.
-6. The backend seeds the initial admin account from environment variables on startup.
+其中：
 
-详细本地部署指南/Detailed local deployment guide:
+- Java 负责鉴权、项目权限、公共 API 与 SSE 转发
+- Python 负责会话、消息、模型调用、取消生成、项目上下文拼装
+- 旧的 `erise-ai-cloud` 只保留源码，不再承接正式流量
 
-- [docs/Erise-AI 本地部署指南.md](docs/Erise-AI%20本地部署指南.md)
+## 快速开始
 
-## V1 版本核心功能Main capabilities in this V1
+1. 复制 `.env.example` 为 `.env`
+2. 填写 `INTERNAL_API_KEY` 与至少一个模型 provider key
+3. 启动整套环境：
 
-- 基于 JWT 访问令牌 + Redis 刷新令牌的身份认证
-- 项目管理
-- PDF/Markdown/TXT 文件的上传、下载与解析
-- 文档草稿编辑 + 发布版本管理
-- 带数据权限过滤的关键词搜索
-- 经由业务后端转发、带引用溯源的 AI 对话
-- 用户、任务、审计日志基础管理页面
+```bash
+docker compose up --build
+```
 
-- Authentication with JWT access token and Redis-backed refresh token
-- Project management
-- File upload/download and parsing for PDF/Markdown/TXT
-- Document draft editing and publish versioning
-- Keyword search with ownership filtering
-- AI chat with citations routed through the business backend
-- Basic admin pages for users, tasks, and audit logs
+4. 打开以下地址检查状态：
 
-## 服务访问地址/Services
+- Nginx: `http://localhost:8088`
+- Backend health: `http://localhost:8080/actuator/health`
+- Python AI health: `http://localhost:8081/internal/ai/chat/health`
 
-- Nginx 统一入口：默认 http://localhost:8088，可通过 NGINX_HTTP_PORT 配置
-- 业务后端健康检查：http://localhost:8080/actuator/health
-- AI 云服务健康检查：http://localhost:8081/actuator/health
-- 前端容器服务：http://localhost:5173
+## `docker compose up --build` 检查清单
 
-- Unified Nginx entry: `http://localhost:8088` by default, configurable with `NGINX_HTTP_PORT`
-- Business backend health: `http://localhost:8080/actuator/health`
-- AI cloud health: `http://localhost:8081/actuator/health`
+1. 运行 `docker compose ps`，确认 `mysql`、`redis`、`cloud` 已健康，`backend`、`ui`、`nginx` 已启动。
+2. 运行 `docker compose logs cloud --tail=100`，确认 Python AI 服务没有启动期异常。
+3. 运行 `docker compose logs backend --tail=100`，确认 Java 后端没有代理 Python AI 的连接错误。
+4. 访问 `http://localhost:8088` 登录系统并进入 AI 页面。
+5. 确认 AI 页侧边栏显示的是后端真实返回的模型列表。
+6. 发送消息、停止生成、刷新页面，确认完整聊天链路可用。
 
-[//]: # "- Frontend dev server: `http://localhost:5173`"
+完整版本见 `docs/AI_CHAT_INTEGRATION.md`。
 
-- Frontend container: `http://localhost:5173`
+## Python AI 单独启动
 
-## 备注/Notes
+```bash
+cd AiAssistant
+pip install -r requirements.txt
+python scripts/init_db.py
+python scripts/smoke_test.py
+uvicorn src.app.main:app --host 0.0.0.0 --port 8081 --reload
+```
 
-- 向量检索、MCP（模型上下文协议）、SQL 工具、协同编辑仅作为扩展点预留，暂未实现。
-- 仓库架构支持：前端可脱离 Docker 独立运行，MySQL、Redis、MinIO 保留在容器编排中。
-- Vector retrieval, MCP, SQL tools, and collaborative editing are intentionally left as extension points only.
-- The repository is structured so the frontend can run outside Docker while MySQL, Redis, and MinIO stay in Compose.
+## 关键文档
+
+- `docs/AI_CHAT_INTEGRATION.md`
+- `AiAssistant/README.md`
+- `AiAssistant/INTEGRATION_NOTES.md`
+
+## 说明
+
+`erise-ai-cloud` 里的旧 Java AI 代码没有删除，但已通过注释停用 Spring 注册注解，默认不会参与当前部署链路。

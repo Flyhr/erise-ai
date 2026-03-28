@@ -41,7 +41,9 @@ public class EriseProperties {
     @Getter
     @Setter
     public static class Cloud {
+        // Legacy property name retained for compatibility. Points to the Python AI chat service.
         private String baseUrl;
+        private String defaultModelCode = "deepseek-chat";
     }
 
     @Getter

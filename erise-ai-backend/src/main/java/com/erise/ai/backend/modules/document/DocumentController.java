@@ -136,6 +136,35 @@ class DocumentService {
         return toDetail(document, content);
     }
 
+    DocumentDetailView internalDetail(Long id) {
+        DocumentEntity document = requireExistingDocument(id);
+        DocumentContentEntity content = contentByDocumentId(document.getId());
+        return toDetail(document, content);
+    }
+
+    InternalDocumentContextView internalContext(Long id) {
+        DocumentEntity document = requireExistingDocument(id);
+        DocumentContentEntity content = contentByDocumentId(document.getId());
+        return toInternalContext(document, content);
+    }
+
+    InternalDocumentContextView internalUpdateTitle(Long id, String title) {
+        DocumentEntity document = requireExistingDocument(id);
+        DocumentContentEntity content = contentByDocumentId(document.getId());
+        document.setTitle(title);
+        document.setUpdatedBy(document.getOwnerUserId());
+        documentMapper.updateById(document);
+        knowledgeService.replaceForSource(
+                document.getOwnerUserId(),
+                document.getProjectId(),
+                "DOCUMENT",
+                document.getId(),
+                document.getTitle(),
+                knowledgeService.splitText(content.getPlainText(), null)
+        );
+        return toInternalContext(document, content);
+    }
+
     DocumentDetailView update(Long id, DocumentUpdateRequest request) {
         var currentUser = SecurityUtils.currentUser();
         DocumentEntity document = requireAccessibleDocument(id);
@@ -229,11 +258,16 @@ class DocumentService {
         auditLogService.log(currentUser, "DOCUMENT_DELETE", "DOCUMENT", id, null);
     }
 
-    DocumentEntity requireAccessibleDocument(Long id) {
+    DocumentEntity requireExistingDocument(Long id) {
         DocumentEntity document = documentMapper.selectById(id);
         if (document == null) {
             throw new BizException(ErrorCodes.NOT_FOUND, "Document not found", HttpStatus.NOT_FOUND);
         }
+        return document;
+    }
+
+    DocumentEntity requireAccessibleDocument(Long id) {
+        DocumentEntity document = requireExistingDocument(id);
         projectService.requireAccessibleProject(document.getProjectId());
         return document;
     }
@@ -265,6 +299,17 @@ class DocumentService {
                 content.getContentHtmlSnapshot(),
                 content.getPlainText(),
                 document.getCreatedAt(),
+                document.getUpdatedAt()
+        );
+    }
+
+    private InternalDocumentContextView toInternalContext(DocumentEntity document, DocumentContentEntity content) {
+        return new InternalDocumentContextView(
+                document.getId(),
+                document.getProjectId(),
+                document.getTitle(),
+                document.getSummary(),
+                content.getPlainText(),
                 document.getUpdatedAt()
         );
     }
@@ -360,6 +405,16 @@ record DocumentDetailView(
         String contentHtmlSnapshot,
         String plainText,
         java.time.LocalDateTime createdAt,
+        java.time.LocalDateTime updatedAt
+) {
+}
+
+record InternalDocumentContextView(
+        Long id,
+        Long projectId,
+        String title,
+        String summary,
+        String plainText,
         java.time.LocalDateTime updatedAt
 ) {
 }

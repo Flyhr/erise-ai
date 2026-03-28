@@ -13,9 +13,14 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 import reactor.core.publisher.Flux;
 
-@RestController
-@RequestMapping("/internal/v1/ai")
+/**
+ * Legacy Java AI controller kept only for reference.
+ * Active runtime traffic has moved to the Python AI chat service in {@code AiAssistant/}.
+ */
+// @RestController
+// @RequestMapping("/internal/v1/ai")
 @RequiredArgsConstructor
+@Deprecated(forRemoval = false)
 public class InternalAiController {
 
     private final RagChatService ragChatService;

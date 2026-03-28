@@ -65,7 +65,7 @@ export interface AdminUserView {
 export interface AdminTaskView {
   id: number
   taskType: string
-  taskStatus: string
+  taskStatus: number
   retryCount: number
   lastError?: string
   createdAt: string
@@ -83,11 +83,16 @@ export interface AdminAuditLogView {
 
 export interface ModelConfigView {
   id: number
+  modelCode: string
   modelName: string
   providerCode: string
-  enabled: number
-  isDefault: number
-  configJson?: string
+  enabled: boolean
+  isDefault: boolean
+  supportStream: boolean
+  maxContextTokens?: number
+  priorityNo?: number
+  baseUrl?: string
+  apiKeyRef?: string
 }
 
 export const getAdminOverview = () => http.get<never, AdminOverviewView>('/v1/admin/overview')

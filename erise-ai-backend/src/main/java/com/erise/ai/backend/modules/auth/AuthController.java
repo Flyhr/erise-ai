@@ -54,18 +54,44 @@ public class AuthController {
         return ApiResponse.success(authService.register(request));
     }
 
+    /**
+     * 登录接口：验证验证码 → 验证用户名密码 → 生成访问令牌和刷新令牌 → 记录登录日志 → 返回认证信息
+     *
+     * @param request
+     * @param userAgent
+     * @param ip
+     * @param User-Agent      客户端设备信息（浏览器型号、手机系统、APP 版本）
+     * @param X-Forwarded-For 客户端真实 IP 地址
+     * @return
+     */
     @PostMapping("/login")
-    public ApiResponse<AuthTokenResponse> login(@Valid @RequestBody LoginRequest request,
-                                                @RequestHeader(value = "User-Agent", required = false) String userAgent,
-                                                @RequestHeader(value = "X-Forwarded-For", required = false) String ip) {
+    public ApiResponse<AuthTokenResponse> login(
+            // 1. 接收前端JSON参数 + 开启参数校验
+            @Valid @RequestBody LoginRequest request,
+            // 2. 获取请求头：客户端设备信息（浏览器/APP型号）
+            @RequestHeader(value = "User-Agent", required = false) String userAgent,
+            // 3. 获取请求头：客户端真实IP地址
+            @RequestHeader(value = "X-Forwarded-For", required = false) String ip) {
         return ApiResponse.success(authService.login(request, ip, userAgent));
     }
 
+    /**
+     * 刷新令牌接口：验证刷新令牌 → 生成新的访问令牌和刷新令牌 → 返回认证信息
+     *
+     * @param request
+     * @return
+     */
     @PostMapping("/refresh")
     public ApiResponse<AuthTokenResponse> refresh(@Valid @RequestBody RefreshRequest request) {
         return ApiResponse.success(authService.refresh(request.refreshToken()));
     }
 
+    /**
+     * 退出登录接口：验证刷新令牌 → 删除刷新令牌 → 记录退出日志
+     *
+     * @param request
+     * @return
+     */
     @PostMapping("/logout")
     public ApiResponse<Void> logout(@Valid @RequestBody LogoutRequest request) {
         authService.logout(request.refreshToken());
@@ -73,25 +99,33 @@ public class AuthController {
     }
 }
 
-@RequiredArgsConstructor
+@RequiredArgsConstructor // @RequiredArgsConstructor：Lombok 注解，自动生成含所有 final 字段的构造方法，配合 Spring 完成依赖注入；
 @Service
 class AuthService {
 
-    private static final String CAPTCHA_PREFIX = "auth:captcha:";
-    private static final String REFRESH_PREFIX = "auth:refresh:";
-    private static final char[] CAPTCHA_CHARS = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789".toCharArray();
+    private static final String CAPTCHA_PREFIX = "auth:captcha:";// 验证码Redis键前缀
+    private static final String REFRESH_PREFIX = "auth:refresh:";// 刷新令牌Redis键前缀
+    private static final char[] CAPTCHA_CHARS = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789".toCharArray(); // 验证码字符集（排除0/O、1/I等易混淆字符）
 
-    private final UserMapper userMapper;
-    private final UserProfileMapper userProfileMapper;
-    private final UserLoginLogMapper userLoginLogMapper;
-    private final PasswordEncoder passwordEncoder;
-    private final JwtTokenProvider jwtTokenProvider;
-    private final StringRedisTemplate redisTemplate;
-    private final AuditLogService auditLogService;
-    private final EriseProperties properties;
+    // 依赖注入的核心组件
+    private final UserMapper userMapper; // 用户数据操作
+    private final UserProfileMapper userProfileMapper; // 用户资料数据操作
+    private final UserLoginLogMapper userLoginLogMapper; // 登录日志数据操作
+    private final PasswordEncoder passwordEncoder; // 密码加密器（Spring Security）
+    private final JwtTokenProvider jwtTokenProvider; // JWT令牌生成/解析工具
+    private final StringRedisTemplate redisTemplate; // Redis缓存操作
+    private final AuditLogService auditLogService; // 审计日志服务
+    private final EriseProperties properties; // 系统配置（如JWT过期时间）
 
+    // 生成图形验证码：生成随机验证码 → 存储到Redis（5分钟过期） → 生成SVG图像 → Base64编码 → 返回验证码ID和图像数据
+    /**
+     *
+     * @return
+     */
     CaptchaResponse generateCaptcha() {
+        // 1. 生成4位随机验证码（从指定字符集里选，排除0/O/1/I易混淆字符）
         String code = randomCode();
+        // 2. 生成唯一的验证码ID（UUID全球唯一，防止重复）s
         String captchaId = UUID.randomUUID().toString();
         redisTemplate.opsForValue().set(CAPTCHA_PREFIX + captchaId, code.toLowerCase(), Duration.ofMinutes(5));
         String svg = """
@@ -101,12 +135,15 @@ class AuthService {
                 </svg>
                 """.formatted(code);
         String encoded = Base64.getEncoder().encodeToString(svg.getBytes(StandardCharsets.UTF_8));
+
         return new CaptchaResponse(captchaId, "data:image/svg+xml;base64," + encoded);
     }
 
+    // 处理用户注册：验证验证码 → 检查用户名唯一性 → 创建用户记录 → 创建用户资料记录 → 记录注册审计日志 → 返回认证信息
     AuthTokenResponse register(RegisterRequest request) {
         ensureCaptcha(request.captchaId(), request.captchaCode());
-        if (userMapper.selectOne(new LambdaQueryWrapper<UserEntity>().eq(UserEntity::getUsername, request.username())) != null) {
+        if (userMapper.selectOne(
+                new LambdaQueryWrapper<UserEntity>().eq(UserEntity::getUsername, request.username())) != null) {
             throw new BizException(ErrorCodes.CONFLICT, "Username already exists", HttpStatus.CONFLICT);
         }
         UserEntity entity = new UserEntity();
@@ -128,10 +165,13 @@ class AuthService {
         userProfileMapper.insert(profile);
 
         CurrentUser currentUser = new CurrentUser(entity.getId(), entity.getUsername(), entity.getRoleCode());
-        auditLogService.log(currentUser, "AUTH_REGISTER", "USER", entity.getId(), Map.of("username", entity.getUsername()));
-        return buildAuthResponse(currentUser, profile.getDisplayName(), entity.getEmail(), profile.getAvatarUrl(), profile.getBio());
+        auditLogService.log(currentUser, "AUTH_REGISTER", "USER", entity.getId(),
+                Map.of("username", entity.getUsername()));
+        return buildAuthResponse(currentUser, profile.getDisplayName(), entity.getEmail(), profile.getAvatarUrl(),
+                profile.getBio());
     }
 
+    // 处理用户登录：验证验证码 → 验证用户名密码 → 生成访问令牌和刷新令牌 → 记录登录日志 → 返回认证信息
     AuthTokenResponse login(LoginRequest request, String ip, String userAgent) {
         ensureCaptcha(request.captchaId(), request.captchaCode());
         UserEntity user = userMapper.selectOne(new LambdaQueryWrapper<UserEntity>()
@@ -148,9 +188,15 @@ class AuthService {
         CurrentUser currentUser = new CurrentUser(user.getId(), user.getUsername(), user.getRoleCode());
         insertLoginLog(user.getId(), user.getUsername(), ip, userAgent, true);
         auditLogService.log(currentUser, "AUTH_LOGIN", "USER", user.getId(), Map.of("ip", ip));
-        return buildAuthResponse(currentUser, profile.getDisplayName(), user.getEmail(), profile.getAvatarUrl(), profile.getBio());
+        return buildAuthResponse(currentUser, profile.getDisplayName(), user.getEmail(), profile.getAvatarUrl(),
+                profile.getBio());
     }
 
+    /**
+     *
+     * @param refreshToken
+     * @return
+     */
     AuthTokenResponse refresh(String refreshToken) {
         if (!jwtTokenProvider.isRefreshToken(refreshToken)) {
             throw new BizException(ErrorCodes.UNAUTHORIZED, "Invalid refresh token", HttpStatus.UNAUTHORIZED);
@@ -195,19 +241,19 @@ class AuthService {
         return profile;
     }
 
-    private AuthTokenResponse buildAuthResponse(CurrentUser currentUser, String displayName, String email, String avatarUrl, String bio) {
+    private AuthTokenResponse buildAuthResponse(CurrentUser currentUser, String displayName, String email,
+            String avatarUrl, String bio) {
         String accessToken = jwtTokenProvider.createAccessToken(currentUser);
         String refreshToken = jwtTokenProvider.createRefreshToken(currentUser);
         redisTemplate.opsForValue().set(
                 REFRESH_PREFIX + currentUser.userId(),
                 refreshToken,
-                Duration.ofDays(properties.getJwt().getRefreshTokenExpireDays())
-        );
+                Duration.ofDays(properties.getJwt().getRefreshTokenExpireDays()));
         return new AuthTokenResponse(
                 accessToken,
                 refreshToken,
-                new UserView(currentUser.userId(), currentUser.username(), displayName, email, currentUser.roleCode(), avatarUrl, bio)
-        );
+                new UserView(currentUser.userId(), currentUser.username(), displayName, email, currentUser.roleCode(),
+                        avatarUrl, bio));
     }
 
     private void ensureCaptcha(String captchaId, String captchaCode) {
@@ -218,8 +264,12 @@ class AuthService {
         redisTemplate.delete(CAPTCHA_PREFIX + captchaId);
     }
 
+    /**
+     * 生成4位随机验证码（字符集：大写字母+数字，排除易混淆字符）
+     */
     private String randomCode() {
         StringBuilder builder = new StringBuilder();
+        // 循环4次，生成4个字符
         for (int i = 0; i < 4; i++) {
             builder.append(CAPTCHA_CHARS[(int) (Math.random() * CAPTCHA_CHARS.length)]);
         }
@@ -328,16 +378,14 @@ record RegisterRequest(
         @NotBlank String password,
         String displayName,
         @NotBlank String captchaId,
-        @NotBlank String captchaCode
-) {
+        @NotBlank String captchaCode) {
 }
 
 record LoginRequest(
         @NotBlank String username,
         @NotBlank String password,
         @NotBlank String captchaId,
-        @NotBlank String captchaCode
-) {
+        @NotBlank String captchaCode) {
 }
 
 record RefreshRequest(@NotBlank String refreshToken) {
@@ -352,5 +400,6 @@ record CaptchaResponse(String captchaId, String captchaImage) {
 record AuthTokenResponse(String accessToken, String refreshToken, UserView user) {
 }
 
-record UserView(Long id, String username, String displayName, String email, String roleCode, String avatarUrl, String bio) {
+record UserView(Long id, String username, String displayName, String email, String roleCode, String avatarUrl,
+        String bio) {
 }

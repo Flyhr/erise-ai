@@ -13,6 +13,8 @@ management:
       exposure:
         include: health,info
 
+# Legacy Java AI service configuration kept only for rollback/reference.
+# Active runtime traffic has moved to the Python AiAssistant service.
 erise:
   internal:
     api-key: ${INTERNAL_API_KEY:change-this-in-production}

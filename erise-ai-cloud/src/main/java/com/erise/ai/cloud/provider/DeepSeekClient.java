@@ -18,8 +18,13 @@ import org.springframework.web.client.RestTemplate;
 import org.springframework.web.reactive.function.client.WebClient;
 import reactor.core.publisher.Flux;
 
-@Component
+/**
+ * Legacy Java provider client kept only for reference.
+ * Do not register it in production; the Python AI service owns provider access now.
+ */
+// @Component
 @RequiredArgsConstructor
+@Deprecated(forRemoval = false)
 public class DeepSeekClient {
 
     private static final ParameterizedTypeReference<ServerSentEvent<String>> SSE_TYPE =
