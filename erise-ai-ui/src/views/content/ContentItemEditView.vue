@@ -1,21 +1,25 @@
-<template>
-  <div class="section-stack">
-    <div class="page-header">
-      <div>
-        <h1>{{ form.title || `${typeLabel}编辑` }}</h1>
-        <div class="page-subtitle">{{ isPreview ? `当前为 ${typeLabel} 预览模式。` : `对 ${typeLabel} 的改动会立即保存为独立内容实体。` }}</div>
-      </div>
-      <div class="table-actions">
-        <el-button plain @click="goBack">返回列表</el-button>
+﻿<template>
+  <div class="page-shell">
+    <AppPageHeader
+      :title="form.title || `${typeLabel}编辑`"
+      eyebrow="结构化内容"
+      :subtitle="pageSubtitle"
+      show-back
+      back-label="返回列表"
+      :back-to="backTarget"
+    >
+      <template #actions>
         <el-button v-if="isPreview" type="primary" @click="openEditMode">进入编辑</el-button>
         <template v-else>
-          <el-button @click="save" :loading="saving">保存</el-button>
-          <el-button type="primary" plain @click="openPreviewMode">预览</el-button>
+          <el-button :loading="saving" @click="save">保存</el-button>
+          <el-button type="primary" plain @click="openPreviewMode">浏览</el-button>
         </template>
-      </div>
-    </div>
+      </template>
+    </AppPageHeader>
 
-    <el-card class="glass-card" shadow="never">
+    <ProjectSubnav v-if="projectId" :project-id="projectId" />
+
+    <AppSectionCard title="基础信息" description="结构化内容会作为独立实体保存，供搜索与 AI 使用。">
       <el-form :model="form" label-position="top">
         <el-form-item label="标题">
           <el-input v-model="form.title" :disabled="isPreview" />
@@ -24,11 +28,11 @@
           <el-input v-model="form.summary" type="textarea" :rows="3" :disabled="isPreview" />
         </el-form-item>
       </el-form>
-    </el-card>
+    </AppSectionCard>
 
-    <el-card class="glass-card" shadow="never">
+    <AppSectionCard :title="`${typeLabel}内容`" description="编辑器和浏览态沿用同一套页面框架，保证项目内体验一致。">
       <component :is="editorComponent" v-model="contentModel" :readonly="isPreview" />
-    </el-card>
+    </AppSectionCard>
   </div>
 </template>
 
@@ -37,6 +41,9 @@ import { computed, onMounted, reactive, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { useRoute, useRouter } from 'vue-router'
 import { getContentItem, updateContentItem } from '@/api/content'
+import AppPageHeader from '@/components/common/AppPageHeader.vue'
+import AppSectionCard from '@/components/common/AppSectionCard.vue'
+import ProjectSubnav from '@/components/common/ProjectSubnav.vue'
 import BoardCanvasEditor from '@/components/content/BoardCanvasEditor.vue'
 import DataTableEditor from '@/components/content/DataTableEditor.vue'
 import SheetGridEditor from '@/components/content/SheetGridEditor.vue'
@@ -54,6 +61,16 @@ const contentModel = ref<any>({ columns: 6, rows: [] })
 const isPreview = computed(() => route.query.mode === 'preview')
 const typeLabel = computed(() => ({ SHEET: '表格', BOARD: '画板', DATA_TABLE: '数据表' })[itemType.value])
 const editorComponent = computed(() => ({ SHEET: SheetGridEditor, BOARD: BoardCanvasEditor, DATA_TABLE: DataTableEditor })[itemType.value])
+const pageSubtitle = computed(() =>
+  isPreview.value ? `当前为${typeLabel.value}浏览模式。` : `对${typeLabel.value}的修改会保存为项目内独立内容实体。`,
+)
+const backTarget = computed(() => {
+  if (!projectId.value) {
+    return '/projects'
+  }
+  const routeType = itemType.value === 'DATA_TABLE' ? 'data-table' : itemType.value.toLowerCase()
+  return `/projects/${projectId.value}/contents/${routeType}`
+})
 
 const defaultSheet = () => ({ columns: 6, rows: Array.from({ length: 8 }, () => Array.from({ length: 6 }, () => '')) })
 const defaultBoard = () => ({ width: 960, height: 540, background: '#ffffff', strokes: [] })
@@ -123,15 +140,6 @@ const save = async () => {
   } finally {
     saving.value = false
   }
-}
-
-const goBack = () => {
-  if (!projectId.value) {
-    router.push('/projects')
-    return
-  }
-  const routeType = itemType.value === 'DATA_TABLE' ? 'data-table' : itemType.value.toLowerCase()
-  router.push(`/projects/${projectId.value}/contents/${routeType}`)
 }
 
 const openPreviewMode = () => router.push({ path: `/contents/${itemId}/edit`, query: { mode: 'preview' } })

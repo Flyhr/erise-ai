@@ -17,7 +17,11 @@ services:
       - mysql-data:/var/lib/mysql
       - ./AiAssistant/sql/mysql:/docker-entrypoint-initdb.d:ro
     healthcheck:
-      test: ["CMD-SHELL", "mysqladmin ping -h localhost -uroot -p${MYSQL_ROOT_PASSWORD}"]
+      test:
+        [
+          "CMD-SHELL",
+          "mysqladmin ping -h localhost -uroot -p${MYSQL_ROOT_PASSWORD}",
+        ]
       interval: 10s
       timeout: 5s
       retries: 10
@@ -55,6 +59,7 @@ services:
     build:
       context: ./erise-ai-backend
     container_name: erise-ai-backend
+    dockerfile: Dockerfile # 生产专用
     restart: unless-stopped
     env_file:
       - .env

@@ -5,11 +5,10 @@
 - `erise-ai-ui`：前端页面与流式会话 UI
 - `erise-ai-backend`：统一鉴权、项目权限校验、AI 网关
 - `AiAssistant`：Python AI 聊天服务，负责模型调用与会话持久化
-- `erise-ai-cloud`：旧 Java AI 服务，保留代码，不参与默认部署
 
-## 推荐启动方式
+## 启动方式
 
-### 方式一：Docker Compose
+### 方式一：Docker Compose（推荐）
 
 在仓库根目录执行：
 
@@ -109,7 +108,7 @@ curl http://localhost:8088
 - `POST /api/v1/ai/chat/stream`
 - `POST /api/v1/ai/chat/{requestId}/cancel`
 
-### 方式二：本地分服务启动
+### 方式二：本地分服务启动（不推荐）
 
 1. 启动 MySQL / Redis / MinIO
 2. 进入 `AiAssistant/`
@@ -167,13 +166,3 @@ curl http://localhost:8088
 - `JAVA_INTERNAL_BASE_URL`
 - `JAVA_INTERNAL_API_KEY`
 - `erise-ai-backend` 的 `/internal/v1/projects/{id}/context` 是否可访问
-
-## 旧 Java AI 代码说明
-
-旧 Java AI 代码没有删除，但已经处于停用状态，主要用于：
-
-- 回滚参考
-- 协议对照
-- 迁移历史留档
-
-默认运行时不应再把任何生产或联调流量指向 `erise-ai-cloud`。

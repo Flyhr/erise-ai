@@ -37,10 +37,11 @@ public class DocumentController {
     private final DocumentService documentService;
 
     @GetMapping
-    public ApiResponse<PageResponse<DocumentSummaryView>> page(@RequestParam Long projectId,
+    public ApiResponse<PageResponse<DocumentSummaryView>> page(@RequestParam(required = false) Long projectId,
+                                                               @RequestParam(required = false) String q,
                                                                @RequestParam(defaultValue = "1") long pageNum,
                                                                @RequestParam(defaultValue = "10") long pageSize) {
-        return ApiResponse.success(documentService.page(projectId, pageNum, pageSize));
+        return ApiResponse.success(documentService.page(projectId, q, pageNum, pageSize));
     }
 
     @PostMapping
@@ -93,12 +94,20 @@ class DocumentService {
     private final KnowledgeService knowledgeService;
     private final AuditLogService auditLogService;
 
-    PageResponse<DocumentSummaryView> page(Long projectId, long pageNum, long pageSize) {
-        projectService.requireAccessibleProject(projectId);
-        Page<DocumentEntity> page = documentMapper.selectPage(Page.of(pageNum, pageSize),
-                new LambdaQueryWrapper<DocumentEntity>()
-                        .eq(DocumentEntity::getProjectId, projectId)
-                        .orderByDesc(DocumentEntity::getUpdatedAt));
+    PageResponse<DocumentSummaryView> page(Long projectId, String keyword, long pageNum, long pageSize) {
+        var currentUser = SecurityUtils.currentUser();
+        if (projectId != null) {
+            projectService.requireAccessibleProject(projectId);
+        }
+        LambdaQueryWrapper<DocumentEntity> wrapper = new LambdaQueryWrapper<DocumentEntity>()
+                .eq(projectId != null, DocumentEntity::getProjectId, projectId)
+                .eq(!currentUser.isAdmin(), DocumentEntity::getOwnerUserId, currentUser.userId())
+                .and(keyword != null && !keyword.isBlank(), query -> query
+                        .like(DocumentEntity::getTitle, keyword.trim())
+                        .or()
+                        .like(DocumentEntity::getSummary, keyword.trim()))
+                .orderByDesc(DocumentEntity::getUpdatedAt);
+        Page<DocumentEntity> page = documentMapper.selectPage(Page.of(pageNum, pageSize), wrapper);
         return PageResponse.of(page.getRecords().stream().map(this::toSummary).toList(), pageNum, pageSize, page.getTotal());
     }
 
@@ -284,7 +293,7 @@ class DocumentService {
 
     private DocumentSummaryView toSummary(DocumentEntity document) {
         return new DocumentSummaryView(document.getId(), document.getProjectId(), document.getTitle(), document.getSummary(),
-                document.getDocStatus(), document.getLatestVersionNo(), document.getUpdatedAt());
+                document.getDocStatus(), document.getLatestVersionNo(), document.getCreatedAt(), document.getUpdatedAt());
     }
 
     private DocumentDetailView toDetail(DocumentEntity document, DocumentContentEntity content) {
@@ -390,6 +399,7 @@ record DocumentSummaryView(
         String summary,
         String docStatus,
         Integer latestVersionNo,
+        java.time.LocalDateTime createdAt,
         java.time.LocalDateTime updatedAt
 ) {
 }

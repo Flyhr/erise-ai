@@ -1,0 +1,303 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta content="width=device-width, initial-scale=1.0" name="viewport" />
+    <title>Photo Library</title>
+    <link
+      href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css"
+      rel="stylesheet"
+    />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&amp;display=swap"
+      rel="stylesheet"
+    />
+    <link
+      href="https://fonts.googleapis.com/icon?family=Material+Icons"
+      rel="stylesheet"
+    />
+    <style>
+      body {
+        font-family: "Inter", sans-serif;
+      }
+      .material-icons {
+        font-family: "Material Icons";
+        font-weight: normal;
+        font-style: normal;
+        font-size: 24px;
+        display: inline-block;
+        line-height: 1;
+        text-transform: none;
+        letter-spacing: normal;
+        word-wrap: normal;
+        white-space: nowrap;
+        direction: ltr;
+        -webkit-font-smoothing: antialiased;
+        text-rendering: optimizeLegibility;
+        -moz-osx-font-smoothing: grayscale;
+        font-feature-settings: "liga";
+      }
+    </style>
+  </head>
+  <body class="bg-gray-100">
+    <div class="flex h-screen">
+      <aside class="w-64 bg-gray-50 p-6 border-r border-gray-200">
+        <h1 class="text-xl font-semibold text-gray-800 mb-6">Photo Library</h1>
+        <div class="relative mb-6">
+          <input
+            class="w-full pl-10 pr-4 py-2 rounded-lg border border-gray-300 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+            placeholder="Search"
+            type="text"
+          />
+          <span
+            class="material-icons absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400"
+            >search</span
+          >
+        </div>
+        <nav>
+          <ul>
+            <li class="mb-2">
+              <a
+                class="flex items-center text-gray-700 hover:bg-gray-200 py-2 px-3 rounded-lg"
+                href="#"
+              >
+                Album 01
+              </a>
+            </li>
+            <li class="mb-2">
+              <a
+                class="flex items-center text-gray-700 hover:bg-gray-200 py-2 px-3 rounded-lg"
+                href="#"
+              >
+                Album 02
+              </a>
+            </li>
+            <li class="mb-2">
+              <a
+                class="flex items-center text-gray-700 hover:bg-gray-200 py-2 px-3 rounded-lg"
+                href="#"
+              >
+                Album 03
+              </a>
+            </li>
+            <li class="mb-2">
+              <a
+                class="flex items-center text-blue-600 bg-blue-100 py-2 px-3 rounded-lg font-medium"
+                href="#"
+              >
+                Squirrels
+              </a>
+            </li>
+            <li class="mb-2">
+              <a
+                class="flex items-center text-gray-700 hover:bg-gray-200 py-2 px-3 rounded-lg"
+                href="#"
+              >
+                Acorns
+              </a>
+            </li>
+            <li class="mb-2">
+              <a
+                class="flex items-center text-gray-700 hover:bg-gray-200 py-2 px-3 rounded-lg"
+                href="#"
+              >
+                The Beach
+              </a>
+            </li>
+          </ul>
+        </nav>
+      </aside>
+      <main class="flex-1 flex">
+        <section class="flex-1 p-6 overflow-y-auto">
+          <div class="flex justify-end items-center mb-6">
+            <span
+              class="material-icons text-gray-600 mr-4 cursor-pointer hover:text-blue-500"
+              >apps</span
+            >
+            <span
+              class="material-icons text-gray-600 mr-4 cursor-pointer hover:text-blue-500"
+              >list</span
+            >
+            <span
+              class="material-icons text-gray-600 cursor-pointer hover:text-blue-500"
+              >grid_view</span
+            >
+          </div>
+          <div
+            class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4"
+          >
+            <img
+              alt="Icon of a horse"
+              class="rounded-lg shadow-md object-cover aspect-square cursor-pointer hover:shadow-lg transition-shadow"
+              src="https://lh3.googleusercontent.com/aida-public/AB6AXuCHOSSJ-QJEJ-A3l6_CFCnhfuVkuXSbOnVsrqai-jpkiMmpeNsrc22iDh-cKlVtNHh_qWhV7IeGRzTfrSWvuEdom0WeZFzFZdVaRit2y2MKIZI1RFmzX4LnMZfmbhWZYKN53I4DbnWbIM_Xmhkk2WOz2TViPJFGiRHMUKyGHo67IwcZtd1Wka0H4smvST-JErLfbUH08T_yz--roRMJbZ0Q923r1lJhdPh4Ncz8t7PLPII5-rW-UUV4N1zSmAIliTAhdeUUrCqENTM"
+            />
+            <img
+              alt="Icon of a tent"
+              class="rounded-lg shadow-md object-cover aspect-square cursor-pointer hover:shadow-lg transition-shadow"
+              src="https://lh3.googleusercontent.com/aida-public/AB6AXuDDbdFoQm01128buyL1InSN7PefQqY3l8I3pI8pNvc9Vh1cW-9fjuVw0BoIKuI25VWMb0rsVnqIUIK3IHMGzToOgPfdTEE4Bt7w33JrryD7HglTu9vGfgWC0cWkiMPNhvWOYqI0SsLT0K9EGRvTEpLcoeUS_4MRsMGmcY_aWrxr8flu4m9JfgHHbUr-mV6Ouhu2XIcl8PfO-qVz_w6Du706rgd9u5O1tnYPUi-oJxSQJGEBzssiVEFRcRs63UiYBzVdaZEtEFxrRJY"
+            />
+            <img
+              alt="Icon of a mountain"
+              class="rounded-lg shadow-md object-cover aspect-square cursor-pointer hover:shadow-lg transition-shadow"
+              src="https://lh3.googleusercontent.com/aida-public/AB6AXuAO8PcCZSbJSVmZYdroqqTTtsJsVBiXg0DZT3s4YZKpCbcopXalfjpcp2G8CCm3NmptHnsZJwBddwZ8qQ63EQaWWEUjrq-Pe-LDlMTuXsNfYUmIERA9DUyv65EBiNmtQ0lqK17-bfAMGLsBnkxV8OzXJjWDf70rfMOSxuWgFTXHMHrpCMzRCxjGq9PToP-2kxpUvjrGY8FjRHXFxBpGrWxkWpmbwrxv6uEB8NmjsKDXMZsAMHVVdm4h5PIhOU7X7fdTT5UWmlvBQuU"
+            />
+            <img
+              alt="Icon of a squirrel, selected"
+              class="rounded-lg shadow-md object-cover aspect-square cursor-pointer hover:shadow-lg transition-shadow border-4 border-blue-500"
+              src="https://lh3.googleusercontent.com/aida-public/AB6AXuDKZXtDN6cWrlQGRIqX7z8DdaJ7i68CyZFKkdqVqs4-ESqFa5hsQ8G4nLJH7-rjaxG0UJWs40XvsuwFQcniD71C4ZpZTEMSHuy1VMFmgqQaohqNJ6G6Uyn-K9hakRpSYjOjzSf7v5vwfBK4r-OQX3V7wOEbYhGHEb2eAQ1x1QZTy76yfK-rVxZZWjKRJ0QWrosnFiUp-7TrXFqJcvieERRwUPVUkOPP-0_-bDx-wSjdBf-WRB65dYggmdf3uhrKynw4Gf0USd6Sw6g"
+            />
+            <img
+              alt="Icon of wavy lines"
+              class="rounded-lg shadow-md object-cover aspect-square cursor-pointer hover:shadow-lg transition-shadow"
+              src="https://lh3.googleusercontent.com/aida-public/AB6AXuDlVVEnXwuvf4WdqCD7AwnBfQ9iPYx54teTtr86jKP5lC1ZDsrAa5WQx1VhXY0od06FjOpLrdBqTQCghJsl9wPf8Sd2t8R_q7ksv9Fw2CoETGWcVrKXcs1I8Q2nSVrFGJoAZmmBxY2P-mkC2TvXg0mdrCzgT2B75mIkSP8BPgOZmUjPkMbQxY3x_k5Px5CqPMS2GrU8_VAA0b7lKEpBXBeTzIkx74Mdr989exwkRVKuYGoPc6uJdrvJ0CxT42r05cAqQIinVyFAbb0"
+            />
+            <img
+              alt="Icon of a bird"
+              class="rounded-lg shadow-md object-cover aspect-square cursor-pointer hover:shadow-lg transition-shadow"
+              src="https://lh3.googleusercontent.com/aida-public/AB6AXuBDqeRNw1gZ7_p_w5vgim0tsUK37pYzgVA2mSEfU4WOIEmYYE6GWQ8x_EaeSQxztMzmMx2g53Uh5HKP-YFbFnBInpz_zZft09Jz3btU9AYyQ3UnJZjpwPMA1S9EUCLRMjf7Wj0Qj8ce0J0mfCeshfRoHT9rAHEa9hLblK0XXxXYqJIlnqsV6BTuXfCZmxsdSOIU-0JkZBSG4nyBMch9ILJUdT0V0NR89s2WfhK1yE2pLPMC7T-fjCuQPOM4QmC0BTTsDjBTs77VaoI"
+            />
+            <img
+              alt="Icon of a tree"
+              class="rounded-lg shadow-md object-cover aspect-square cursor-pointer hover:shadow-lg transition-shadow"
+              src="https://lh3.googleusercontent.com/aida-public/AB6AXuCfaWa9U-A_Z14KmJew4dheiNv1ZhU8ma7XQdA3bCUxMOtrZsCVjKvIS6pwVYK_74esVWWUJc4Leki7kPjvDk_B9heFKRbfr3vQyMcUjsscx5t6XOLALY6FXjC_xLadmun4JJ8kH7HCSz7UboNzLy9r6u-aUECxTHVdNJubjDGJSngli4T4wrf2vzpGHXBaLxl-01odSciDbaXuDOu65jmG9BN1KPA4HbskTZSkekhYn7LkuwkE0kprKkMfxu8MSsO5mDzCAELTzSA"
+            />
+            <img
+              alt="Icon of swirls"
+              class="rounded-lg shadow-md object-cover aspect-square cursor-pointer hover:shadow-lg transition-shadow"
+              src="https://lh3.googleusercontent.com/aida-public/AB6AXuCUhy5QRZJCLieVxrfnA6oKqj9XEeEBRyjM-wtHTQnlAzrDZH3i1EKRF_nDLOBOkJ8IuvSQJE5l2TzmzpjqLHYnDKtUwJ0HqsEP4uMlStSouOgNM9VyYD_hQe-jV9UnhyjfjCeqzNqTLpvN0vEyZ9U5RFKXMvFZZ4u-KyUh6GETabVgkZdJJxz7h007h7YzxWcJuWk0MSZTl7UfbuY6wtpnMDntds5ZnJKkUAuCZtbrhZD13QmbE6Ler7ZANaCIP9beaFu20-O3T8E"
+            />
+            <img
+              alt="Icon of wavy lines"
+              class="rounded-lg shadow-md object-cover aspect-square cursor-pointer hover:shadow-lg transition-shadow"
+              src="https://lh3.googleusercontent.com/aida-public/AB6AXuDpVRE-hWobfMe8S-fE2CIOoMx8Cq8ZEEcuPeZd1qRv3b0jDuQgc3P69HbhmesaZPMSix_Odk7Ql9o0HpBF6Ur-yUWZSOi0u_qa20dGRvx7JMjtOj3JYpjmgzUVWV7d5Lem5is8sriloLcQnhj1IEX6Iq2Mm5rOFLPIyLJc5vTS-K1fX5KmcVxy1ymP1PjlxAmXLMYgm7C6ft6gqAuTglcDwK5V8RELxqraX8QP0gPkPlLTicvMgdkaSiX4PN9lRCkwW9d5v-zrVwo"
+            />
+            <img
+              alt="Icon of waves"
+              class="rounded-lg shadow-md object-cover aspect-square cursor-pointer hover:shadow-lg transition-shadow"
+              src="https://lh3.googleusercontent.com/aida-public/AB6AXuA105MPOvwoVdgbCHmUi3O6vBZCPeYGE_dG-_4Votp2Zy-Hr7sDq3j-3Zn7P6QBZrw8cXONGsT8jNtc-SPieEJdc0BIXBMx4OnQOVmVfnFS8pjI-miJ9Yn_8ZIRHdhLPxzDHFcYnlG7jMfBS6-OrQBIrkr752k1UW7QS5D3imzIN3DNuGROAk0E25ScsYfdJZ4I3MyeJPt3OXkyqKsad4z-l8EDfZCYahs15v2OmnDiP6XWTcEeJ02-edKx8XANFdi-ymKgqgYWHbc"
+            />
+            <img
+              alt="Icon of an apple"
+              class="rounded-lg shadow-md object-cover aspect-square cursor-pointer hover:shadow-lg transition-shadow"
+              src="https://lh3.googleusercontent.com/aida-public/AB6AXuB8GAlu-EHSpvIii3D1iICHKbFMKn9RHLzC4RqHooFjXHi9G3vKGmOrbBTmJSO1IDbP3tlKHsXaXXIuNzAnOH4hE3PJ-0T7TD1XsdkZ4TSPSw-a6jOhj_P6BowMAZwXUaOsRqOD5Sw7cOp_fj-IXBJ2vCR_a1A_5YmFKc0PvFwQDfXI3Jz6lwI60uvMqm0Ldt8XHcaQTFbTZgtUrqEuYRodPZ9zgNBwah6X92qlAVg_9x-HDCZ3h7i3hQWqedybmfg0kvYJegt6eCE"
+            />
+            <img
+              alt="Icon of curves"
+              class="rounded-lg shadow-md object-cover aspect-square cursor-pointer hover:shadow-lg transition-shadow"
+              src="https://lh3.googleusercontent.com/aida-public/AB6AXuD_Z0ArG3yAkdTF0Sj59KAFYdSpQBWVlxWrRhJYr6t_L79hGyQJxzydyEyURISjT0uq2U8TAKxU_OsNB6TwTRm8TSMxw2JdTQRaDVd8mtUhKrZUW2DCEpYEGH4nvhl-Cg0p5staZioLNDcombjvQRayLm0sS9DTze9bDShGBjZjU3xtEcbdq79npHMn6CUJc-bxhZfZa4l3q9s1zRZper9N0Q5JeMg0-5vCBONu9KJAejbZ9zkV2eHmBsNq2jNhBc3LkHy6lohygu0"
+            />
+            <img
+              alt="Icon of a leaf"
+              class="rounded-lg shadow-md object-cover aspect-square cursor-pointer hover:shadow-lg transition-shadow"
+              src="https://lh3.googleusercontent.com/aida-public/AB6AXuAK2Jgsv4vbl4GAF7wLlmDbpbX_vrqFIERWWPyd__40O0lY0H0floubNfCX-9n5XUtJ2cD5dFe84Vk6w6qWOw2iZyJWRQpPu2fx-FnKn9yCi6_rJe-bpq9BWEKwnUSV2SwAOP6AzjDcuqlh4wE5eHgaa7fxpuV5V-wOT55Dp_HY1AoCL4j7RnOEgkYhhU3DZsnonB95rT-KvVcrCBmjhGQD8h-l4cG4w6tZpiWCZkdF9wzAIf4w0M_zisjVxA1R0gkPl_uY8bIfwqM"
+            />
+            <img
+              alt="Icon of a cat"
+              class="rounded-lg shadow-md object-cover aspect-square cursor-pointer hover:shadow-lg transition-shadow"
+              src="https://lh3.googleusercontent.com/aida-public/AB6AXuCrGRgHdYbYhKy0MI5lj2EJ37jciGmYKBQO3qQ9C-I4bs59g7L50iBMgmQWM-9hH47E_3dv7IqZDZM1040dJmMQf2tusG3g9ZobsodPoSqkHEKaLADPbhzYHmf6KRyynQSKjITGMkE9AceNs5bVkzzQ39O5scIG9uQ8-5crbyCv1PGJsGjSNOY2fx3te3_L8kj-zVv-7Yq6180Oa8k1pJB-XI1BQBEiqSKxLHQyUzJS3_k2SbRCR9MPnizdfZlYQO8-0UvI_16Hoa8"
+            />
+            <img
+              alt="Icon of geometric shapes"
+              class="rounded-lg shadow-md object-cover aspect-square cursor-pointer hover:shadow-lg transition-shadow"
+              src="https://lh3.googleusercontent.com/aida-public/AB6AXuBODRDUZa4l1nDDw6J-QC6aTzq-0PbhR5HdTyRqgNdGoXbne5Guiux9kt3AP5bUbW4V5e6iFyKciiGdS2ZRd8r9sNXDE40EefITOm9oa95Wh2rZpMSB67kMaRnz_fmM8aW8cN44LEeyu8mfKg3vnGUuYeVebOnheFylVkS9SHLkpJAkKhWnCXh85MQ_DGB7ms_HuTG9OLWwo0S8WkMwA3NU76ouAwEzv5DOUsFixSgGCyYzbGdBMrURi7ZJtF_zHacicwas0QV8jJI"
+            />
+            <img
+              alt="Icon of a scribble"
+              class="rounded-lg shadow-md object-cover aspect-square cursor-pointer hover:shadow-lg transition-shadow"
+              src="https://lh3.googleusercontent.com/aida-public/AB6AXuBAq3N4DE7N2BE-qzKW-F4ALKQGDu2po6OeGb-gqH5sEg2ckKPADZESGA8WTHnwH2PZ-AzissoqeAxgPEzDvAhGdjmf8GMxx109aK6r7ug168gW4QNUDN0HdKjc4gwyOQf6IS2BX3rSdApyu2KKfqgUclyxOUdoVDHeC0MhSc2G2MV4sSA31Dth-rUC5tFc7Fh2SZ13IKnpsh1-wqhPnduZOOvVoh2kH6L6TB6qaMSaRLnif7edntXtfTd4rGB4gts6yPjWF8brvww"
+            />
+            <img
+              alt="Icon of a pear"
+              class="rounded-lg shadow-md object-cover aspect-square cursor-pointer hover:shadow-lg transition-shadow"
+              src="https://lh3.googleusercontent.com/aida-public/AB6AXuCBMxWn15lsbIE8FMRGbk-sB5BBgoTHXA43ZNFgMjqB-i-cjveq6ZM66EKZ0luYX0FC9FwGnkntRWXz7-IfnUo-8zmn9y9pN4Zt0Wft3WhtiC_nOsLHNGGNVtXFvTkjO8rWjweVSMLOm_Fc6FcKHP0hlQF9wy7svTgsn3ylWlYgIvvEG7rnz7QyMLSE58LN8XH2f9FynebTIGAVLtVhR8Hl61gRyX3EaG9JT9Oksc-BHaYAzuVn4x5nilssdwLnBIan-9S9z9N_kAk"
+            />
+            <img
+              alt="Icon of a dog"
+              class="rounded-lg shadow-md object-cover aspect-square cursor-pointer hover:shadow-lg transition-shadow"
+              src="https://lh3.googleusercontent.com/aida-public/AB6AXuCdS33nYXZVxd3_QCX4apv21qGY4B7Vyp2nmbJVS_RyV1Puvagpz3KZEfH6dhv1iNKlFccSRpiv4f0CQDjsVVSOJqGCf1mqJFfRjyjGf11A5yN2GEKVa9s1rmo2UHTK1ii3_y301rtCzOp7uViqCKUNSAyTHT1xKiMq3ENMli4XbPS8BAsHOKp-DqCeKPmevkiYkuk3M6AGCO2ipuyL6bVC3LRcb4pOsPNGMY4lIs1_idsDdcOQx_Rk6aQTodvHBZZw8_zbGTkuoiQ"
+            />
+            <img
+              alt="Icon of a flower"
+              class="rounded-lg shadow-md object-cover aspect-square cursor-pointer hover:shadow-lg transition-shadow"
+              src="https://lh3.googleusercontent.com/aida-public/AB6AXuBydBTveMk-wj91ebOu4HQiXT_WOBYSjwF50oQSu56xLy3r9uWBJgb9UaqLOMDnXQO-j0Z60oHYcux9k7kBY9nZ7rkYbFEmLcaR7GdjZrFyYE0cBGGw2b-5jEMZ0n5QZNXJb_nJ3hbtsCyzDuhqxOPr6mwM1Am9MtuCuJsaJQVgK11nJMUD9pJ1PWLa_l112Nj1ocy8Ato4o0K1GeOM-DGsRueScHRwCc3ekZl8w02SeyinZDNdd9-0trSd4WkknWQJNFRuGX9GI9g"
+            />
+            <div class="bg-gray-200 rounded-lg shadow-md aspect-square"></div>
+            <img
+              alt="Icon of diagonal lines"
+              class="rounded-lg shadow-md object-cover aspect-square cursor-pointer hover:shadow-lg transition-shadow"
+              src="https://lh3.googleusercontent.com/aida-public/AB6AXuBO7i5kbin5pub53dbtQiLuC6ZO_zD3_pZ8mFAOT_6FCqiGLsFva_gXKO8-8wdxXBxImvGodq1ffc8IIstPH-3wYxGCiY6rOf8Un1ce4dIyqEFZVeRwBKd8JwZfdrMjSvZch7kGomzm8afDYA3PDwda0haJIiHkkUCTQjHlSJHDT5mLqe38jl22Y6P5G7FTS3XQW4NXn0FXL10k4K3yqNt2r-nS8vVedRM9VBj9qiqIsnUGMzmft_scTM9KOWm-I4epmkOMF_Vlgts"
+            />
+            <div class="bg-gray-200 rounded-lg shadow-md aspect-square"></div>
+            <img
+              alt="Icon of a sun"
+              class="rounded-lg shadow-md object-cover aspect-square cursor-pointer hover:shadow-lg transition-shadow"
+              src="https://lh3.googleusercontent.com/aida-public/AB6AXuDo6ye8LUBq29jlpLbJQSzH1s-aD8WdN2M-L5YnDKThTEBbdgodQzl4o3FBNfNFLlPAxXxdNzLGTXQ6c1aN0KDjAxAfqfiEEu2bbAmK7vu5GBnVubZhGgYhmxgF4_rTET4ViUC84Sxy545aysIMSYZbj6VgAPOWS2jFMIgEBBv0EFSm-SCxB69_krjtB4sCaxQJTE--zFcNn6BGLVJF3gcOxrtfptqRG689oo8I0r2NL-VPXK0VcHjFtEimC3l_bQanrSjmAfO-O_c"
+            />
+            <div class="bg-gray-200 rounded-lg shadow-md aspect-square"></div>
+            <div class="bg-gray-200 rounded-lg shadow-md aspect-square"></div>
+          </div>
+        </section>
+        <aside class="w-96 bg-white p-6 border-l border-gray-200">
+          <div class="mb-6">
+            <img
+              alt="Detailed view of a squirrel"
+              class="rounded-xl shadow-lg w-full object-cover aspect-square"
+              src="https://lh3.googleusercontent.com/aida-public/AB6AXuAmRq2KVqIw12886h11KCVOxYRB2OK5NcJ56PLOF4oF9GkGaeLQRLq5YsT_fnmi3CAISeYjMUC4c7r_f5t_I8fp0pHUzj7PLNOCBOU2DzlB1UiFZQm1ViceZtdewUwTbt00wShsF7ZW6qG7pcz_XlUvs25rN5uUjK-AM1rTcs5LJC664acMq_BmmyAdNeYdxF9lp5mOmUMlfUpQWBIOA-6D6vSfZwMljkSTKluFihLoJNZwdSd4AM7yKBbyKrbyA-cYm9djY8RrIJ4"
+            />
+          </div>
+          <div class="mb-6">
+            <div class="flex border-b border-gray-200">
+              <button
+                class="py-2 px-4 text-blue-600 border-b-2 border-blue-600 font-medium focus:outline-none"
+              >
+                Details
+              </button>
+              <button
+                class="py-2 px-4 text-gray-500 hover:text-gray-700 focus:outline-none"
+              >
+                Content
+              </button>
+              <button
+                class="py-2 px-4 text-gray-500 hover:text-gray-700 focus:outline-none"
+              >
+                Colors
+              </button>
+            </div>
+          </div>
+          <div>
+            <h3 class="text-sm font-medium text-gray-500 mb-1">File Name</h3>
+            <p class="text-gray-800 mb-3">squirrel_image_01.jpg</p>
+            <h3 class="text-sm font-medium text-gray-500 mb-1">Date Taken</h3>
+            <p class="text-gray-800 mb-3">October 26, 2023</p>
+            <h3 class="text-sm font-medium text-gray-500 mb-1">Dimensions</h3>
+            <p class="text-gray-800 mb-3">3024 x 4032</p>
+            <h3 class="text-sm font-medium text-gray-500 mb-1">Size</h3>
+            <p class="text-gray-800 mb-3">2.5 MB</p>
+            <h3 class="text-sm font-medium text-gray-500 mb-2">
+              Dominant Colors
+            </h3>
+            <div class="flex space-x-2">
+              <div
+                class="w-6 h-6 rounded-full bg-yellow-700"
+                title="Brown"
+              ></div>
+              <div class="w-6 h-6 rounded-full bg-gray-500" title="Gray"></div>
+              <div
+                class="w-6 h-6 rounded-full bg-green-600"
+                title="Green"
+              ></div>
+              <div
+                class="w-6 h-6 rounded-full bg-gray-300"
+                title="Light Gray"
+              ></div>
+              <div
+                class="w-6 h-6 rounded-full bg-orange-400"
+                title="Orange"
+              ></div>
+            </div>
+          </div>
+        </aside>
+      </main>
+    </div>
+  </body>
+</html>

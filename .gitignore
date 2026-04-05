@@ -6,6 +6,9 @@
 *.swp
 .DS_Store
 .env
+.env.dev
+AiAssistant/.env.dev
+erise-ai-ui/.env.dev
 
 # Python
 __pycache__/

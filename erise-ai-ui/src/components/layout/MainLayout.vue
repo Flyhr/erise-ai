@@ -1,156 +1,150 @@
-﻿<template>
-  <div class="shell">
-    <div class="glass-card shell-frame">
-      <aside class="shell-aside">
-        <div class="shell-brand">
-          <div class="shell-brand__eyebrow">ERISE-AI</div>
-          <div class="shell-brand__title">智能知识工作台</div>
-          <div class="shell-brand__copy">
-            项目、文档、文件和 AI 助手在同一个工作界面里协同运行。
-          </div>
-          <div v-if="authStore.isAdmin" class="shell-brand__pill">管理员模式</div>
+<template>
+  <div class="app-shell">
+    <aside class="app-sidebar">
+      <div class="app-sidebar__brand">
+        <span class="app-brand-mark">E</span>
+        <!-- <div> -->
+        <!-- <div class="app-eyebrow">Erise 知识中枢</div> -->
+        <div class="app-brand-title">Erise知识库</div>
+        <!-- <div class="app-brand-copy">项目、文件、文档、搜索与 AI 协作的统一入口。</div> -->
+        <!-- </div> -->
+        <AppStatusTag v-if="authStore.isAdmin" label="管理员" tone="primary" />
+      </div>
+
+      <el-menu :default-active="activeNavIndex" router class="shell-menu">
+        <el-menu-item v-for="item in navItems" :key="item.index" :index="item.index">
+          <el-icon>
+            <component :is="item.icon" />
+          </el-icon>
+          <span>{{ item.label }}</span>
+        </el-menu-item>
+      </el-menu>
+    </aside>
+
+    <section class="app-main">
+      <header class="app-topbar">
+        <el-button class="app-topbar__mobile-toggle" plain @click="sidebarVisible = true">
+          <el-icon>
+            <Menu />
+          </el-icon>
+        </el-button>
+
+        <div class="app-topbar__context">
+          <div class="app-topbar__title">{{ pageTitle }}</div>
+          <!-- <div class="app-topbar__copy">{{ pageDescription }}</div> -->
         </div>
 
-        <el-menu :default-active="$route.path" router class="shell-menu">
-          <el-menu-item index="/workspace">工作台</el-menu-item>
-          <el-menu-item index="/projects">项目</el-menu-item>
-          <el-menu-item index="/ai">AI 助手</el-menu-item>
-        </el-menu>
-      </aside>
+        <div class="app-topbar__search panel-surface">
+          <el-input v-model="searchKeyword" clearable placeholder="搜索项目、文档、文件或知识内容" @keyup.enter="runSearch">
+            <template #append>
+              <el-button @click="runSearch">搜索</el-button>
+            </template>
+          </el-input>
+        </div>
 
-      <section class="shell-main">
-        <header class="shell-header">
-          <div class="shell-search panel-surface">
-            <el-input
-              v-model="searchKeyword"
-              clearable
-              placeholder="搜索项目、文档、文件或内容"
-              @keyup.enter="runSearch"
-            >
-              <template #append>
-                <el-button @click="runSearch">搜索</el-button>
-              </template>
-            </el-input>
-          </div>
-
-          <div class="shell-actions">
-            <el-button v-if="authStore.isAdmin" plain @click="$router.push('/admin')">管理后台</el-button>
-            <el-dropdown trigger="click" @command="handleCommand">
-              <div class="avatar-chip shell-user-trigger">
-                <el-avatar :src="authStore.user?.avatarUrl" :size="42">{{ userInitials }}</el-avatar>
-                <div class="avatar-chip__meta">
-                  <span class="avatar-chip__name">{{ authStore.user?.displayName || authStore.user?.username }}</span>
-                  <span class="avatar-chip__desc">个人设置、主题外观与会话入口</span>
-                </div>
+        <div class="app-topbar__actions">
+          <el-button v-if="authStore.isAdmin" plain @click="router.push('/admin')">管理后台</el-button>
+          <el-button plain @click="themeDrawerVisible = true">主题</el-button>
+          <el-dropdown trigger="click" @command="handleCommand">
+            <div class="avatar-chip shell-user-trigger">
+              <el-avatar :src="authStore.user?.avatarUrl" :size="40">{{ userInitials }}</el-avatar>
+              <div class="avatar-chip__meta">
+                <span class="avatar-chip__name">{{ authStore.user?.displayName || authStore.user?.username }}</span>
+                <span class="avatar-chip__desc">个人资料、主题与账号操作</span>
               </div>
-              <template #dropdown>
-                <el-dropdown-menu>
-                  <el-dropdown-item command="profile">个人设置</el-dropdown-item>
-                  <el-dropdown-item command="theme">主题外观</el-dropdown-item>
-                  <el-dropdown-item v-if="authStore.isAdmin" command="admin">管理后台</el-dropdown-item>
-                  <el-dropdown-item divided command="logout">退出登录</el-dropdown-item>
-                </el-dropdown-menu>
-              </template>
-            </el-dropdown>
-          </div>
-        </header>
-
-        <main class="shell-content">
-          <router-view />
-        </main>
-      </section>
-    </div>
-
-    <el-drawer v-model="themeDrawerVisible" title="主题外观" size="460px">
-      <div class="section-stack">
-        <div>
-          <div class="theme-section__title">预设主题</div>
-          <div class="page-subtitle">选择白天、夜间、护眼或自定义配色，界面会立即生效。</div>
-        </div>
-
-        <div class="theme-grid">
-          <button
-            v-for="theme in themeOptions"
-            :key="theme.name"
-            type="button"
-            class="theme-card"
-            :class="{ 'is-active': theme.name === currentTheme }"
-            @click="selectTheme(theme.name)"
-          >
-            <div class="theme-card__title">{{ theme.label }}</div>
-            <div class="theme-card__desc">{{ theme.description }}</div>
-            <div class="theme-card__preview">
-              <span :style="previewStyle(theme.name, 0)" />
-              <span :style="previewStyle(theme.name, 1)" />
-              <span :style="previewStyle(theme.name, 2)" />
             </div>
-          </button>
+            <template #dropdown>
+              <el-dropdown-menu>
+                <el-dropdown-item command="profile">个人资料</el-dropdown-item>
+                <el-dropdown-item command="theme">主题</el-dropdown-item>
+                <el-dropdown-item v-if="authStore.isAdmin" command="admin">管理后台</el-dropdown-item>
+                <el-dropdown-item divided command="logout">退出登录</el-dropdown-item>
+              </el-dropdown-menu>
+            </template>
+          </el-dropdown>
         </div>
+      </header>
 
-        <el-divider />
+      <main class="app-page">
+        <router-view />
+      </main>
+    </section>
 
+    <el-drawer v-model="sidebarVisible" direction="ltr" size="280px" title="导航">
+      <AppDrawerPanel>
         <div class="section-stack">
           <div>
-            <div class="theme-section__title">自定义配色</div>
-            <div class="page-subtitle">自定义强调色、页面底色和卡片底色。</div>
+            <div class="app-eyebrow">导航</div>
+            <div class="page-subtitle">主工作台的一级入口。</div>
           </div>
-
-          <div class="theme-custom-grid">
-            <div class="theme-color-field">
-              <span>强调色</span>
-              <el-color-picker v-model="customTheme.accent" />
-            </div>
-            <div class="theme-color-field">
-              <span>页面底色</span>
-              <el-color-picker v-model="customTheme.canvas" />
-            </div>
-            <div class="theme-color-field">
-              <span>卡片底色</span>
-              <el-color-picker v-model="customTheme.surface" />
-            </div>
-          </div>
-
-          <div class="theme-custom-preview panel-surface">
-            <div class="theme-custom-preview__title">预览</div>
-            <div class="theme-custom-preview__swatches">
-              <span :style="{ background: customTheme.accent }" />
-              <span :style="{ background: customTheme.surface }" />
-              <span :style="{ background: customTheme.canvas }" />
-            </div>
-          </div>
-
-          <div class="table-actions">
-            <el-button @click="resetCustomTheme">重置</el-button>
-            <el-button type="primary" @click="applyCustomTheme">应用自定义主题</el-button>
-          </div>
+          <el-menu :default-active="activeNavIndex" router class="shell-menu">
+            <el-menu-item v-for="item in navItems" :key="item.index" :index="item.index"
+              @click="sidebarVisible = false">
+              <el-icon>
+                <component :is="item.icon" />
+              </el-icon>
+              <span>{{ item.label }}</span>
+            </el-menu-item>
+          </el-menu>
         </div>
-      </div>
+      </AppDrawerPanel>
+    </el-drawer>
+
+    <el-drawer v-model="themeDrawerVisible" title="主题" size="420px">
+      <AppDrawerPanel>
+        <ThemePanel description="默认主题更克制稳重，其余主题仍然可选。" />
+      </AppDrawerPanel>
     </el-drawer>
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed, reactive, ref, watch } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import { Menu } from '@element-plus/icons-vue'
 import { useAuthStore } from '@/stores/auth'
-import {
-  applyTheme,
-  defaultCustomThemeColors,
-  getCustomThemeColors,
-  getStoredTheme,
-  getThemePreview,
-  themeOptions,
-  updateCustomThemeColors,
-  type ThemeName,
-} from '@/theme'
+import AppDrawerPanel from '@/components/common/AppDrawerPanel.vue'
+import AppStatusTag from '@/components/common/AppStatusTag.vue'
+import ThemePanel from '@/components/common/ThemePanel.vue'
 
 const route = useRoute()
 const router = useRouter()
 const authStore = useAuthStore()
 const searchKeyword = ref('')
+const sidebarVisible = ref(false)
 const themeDrawerVisible = ref(false)
-const currentTheme = ref<ThemeName>(getStoredTheme())
-const customTheme = reactive(getCustomThemeColors())
+
+const navItems = computed(() => {
+  const base = [
+    { index: '/workspace', label: '工作台', icon: 'House' },
+    { index: '/projects', label: '项目', icon: 'FolderOpened' },
+    { index: '/files', label: '文件', icon: 'Files' },
+    { index: '/documents', label: '文档', icon: 'Document' },
+    { index: '/search', label: '搜索', icon: 'Search' },
+    { index: '/ai', label: 'AI 助理', icon: 'ChatLineRound' },
+  ]
+  if (authStore.isAdmin) {
+    base.push({ index: '/admin', label: '管理后台', icon: 'Setting' })
+  }
+  return base
+})
+
+const activeNavIndex = computed(() => {
+  if (route.path.startsWith('/admin')) return '/admin'
+  if (route.path.startsWith('/projects')) return '/projects'
+  if (route.path.startsWith('/files')) return '/files'
+  if (route.path.startsWith('/documents')) return '/documents'
+  if (route.path.startsWith('/search')) return '/search'
+  if (route.path.startsWith('/ai')) return '/ai'
+  return '/workspace'
+})
+
+const pageTitle = computed(() => (route.meta.title as string) || 'Erise')
+// const pageDescription = computed(() => (route.meta.description as string) || '在项目、搜索、文件、文档与 AI 对话之间组织知识工作。')
+const userInitials = computed(() => {
+  const raw = authStore.user?.displayName || authStore.user?.username || 'U'
+  return raw.trim().slice(0, 1).toUpperCase()
+})
 
 watch(
   () => route.query.q,
@@ -160,40 +154,9 @@ watch(
   { immediate: true },
 )
 
-const userInitials = computed(() => {
-  const raw = authStore.user?.displayName || authStore.user?.username || 'U'
-  return raw.trim().slice(0, 1).toUpperCase()
-})
-
-const previewStyle = (themeName: ThemeName, index: number) => ({
-  background: getThemePreview(themeName, { ...customTheme })[index],
-})
-
 const runSearch = () => {
   const keyword = searchKeyword.value.trim()
-  router.push({
-    path: '/search',
-    query: keyword ? { q: keyword } : {},
-  })
-}
-
-const selectTheme = (themeName: ThemeName) => {
-  if (themeName === 'custom') {
-    applyCustomTheme()
-    return
-  }
-  currentTheme.value = themeName
-  applyTheme(themeName)
-}
-
-const applyCustomTheme = () => {
-  Object.assign(customTheme, updateCustomThemeColors({ ...customTheme }))
-  currentTheme.value = 'custom'
-  applyTheme('custom')
-}
-
-const resetCustomTheme = () => {
-  Object.assign(customTheme, defaultCustomThemeColors)
+  router.push({ path: '/search', query: keyword ? { q: keyword } : {} })
 }
 
 const handleCommand = async (command: string | number | object) => {
@@ -217,153 +180,7 @@ const handleCommand = async (command: string | number | object) => {
 </script>
 
 <style scoped>
-.shell-frame {
-  display: grid;
-  grid-template-columns: 280px minmax(0, 1fr);
-  min-height: calc(100vh - 48px);
-  overflow: hidden;
-}
-
-.shell-aside {
-  padding: 28px 24px;
-  border-right: 1px solid var(--line);
-  background: linear-gradient(180deg, var(--surface-strong), var(--panel));
-}
-
-.shell-brand {
-  margin-bottom: 30px;
-}
-
-.shell-brand__eyebrow,
-.theme-section__title {
-  font-size: 12px;
-  letter-spacing: 0.2em;
-  color: var(--muted);
-  text-transform: uppercase;
-}
-
-.shell-brand__title {
-  margin-top: 8px;
-  font-size: 30px;
-  font-weight: 800;
-  letter-spacing: -0.04em;
-}
-
-.shell-brand__copy {
-  margin-top: 10px;
-  color: var(--muted);
-  line-height: 1.7;
-}
-
-.shell-brand__pill {
-  display: inline-flex;
-  margin-top: 14px;
-  padding: 8px 12px;
-  border-radius: 999px;
-  background: var(--panel);
-  color: var(--accent);
-  font-size: 12px;
-  font-weight: 700;
-}
-
-.shell-menu {
-  border-right: none;
-  background: transparent;
-}
-
-.shell-main {
-  min-width: 0;
-}
-
-.shell-header {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 18px;
-  align-items: center;
-  padding: 18px 24px;
-  border-bottom: 1px solid var(--line);
-  background: var(--header);
-  backdrop-filter: blur(20px);
-}
-
-.shell-search {
-  padding: 8px;
-  border-radius: 20px;
-}
-
-.shell-search :deep(.el-input__wrapper) {
-  box-shadow: none;
-  background: transparent;
-}
-
-.shell-actions {
-  display: flex;
-  gap: 12px;
-  align-items: center;
-}
-
 .shell-user-trigger {
   cursor: pointer;
-}
-
-.shell-content {
-  padding: 24px;
-}
-
-.theme-custom-grid {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 14px;
-}
-
-.theme-color-field {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  padding: 14px;
-  border-radius: 18px;
-  border: 1px solid var(--line);
-  background: var(--surface-strong);
-}
-
-.theme-custom-preview {
-  padding: 16px;
-}
-
-.theme-custom-preview__title {
-  font-weight: 700;
-}
-
-.theme-custom-preview__swatches {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 12px;
-  margin-top: 12px;
-}
-
-.theme-custom-preview__swatches span {
-  height: 52px;
-  border-radius: 16px;
-}
-
-@media (max-width: 1100px) {
-  .shell-frame {
-    grid-template-columns: 1fr;
-  }
-
-  .shell-aside {
-    border-right: none;
-    border-bottom: 1px solid var(--line);
-  }
-
-  .shell-header {
-    grid-template-columns: 1fr;
-  }
-}
-
-@media (max-width: 900px) {
-  .theme-custom-grid {
-    grid-template-columns: 1fr;
-  }
 }
 </style>

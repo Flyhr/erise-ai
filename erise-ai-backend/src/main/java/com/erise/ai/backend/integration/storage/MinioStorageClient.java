@@ -8,6 +8,7 @@ import io.minio.GetObjectArgs;
 import io.minio.MakeBucketArgs;
 import io.minio.MinioClient;
 import io.minio.PutObjectArgs;
+import io.minio.RemoveObjectArgs;
 import io.minio.StatObjectArgs;
 import java.io.InputStream;
 import org.springframework.stereotype.Component;
@@ -67,6 +68,19 @@ public class MinioStorageClient {
             return true;
         } catch (Exception ignored) {
             return false;
+        }
+    }
+
+    public void removeObject(String objectKey) {
+        try {
+            minioClient.removeObject(
+                    RemoveObjectArgs.builder()
+                            .bucket(properties.getStorage().getBucket())
+                            .object(objectKey)
+                            .build()
+            );
+        } catch (Exception ignored) {
+            // Cleanup is best-effort.
         }
     }
 

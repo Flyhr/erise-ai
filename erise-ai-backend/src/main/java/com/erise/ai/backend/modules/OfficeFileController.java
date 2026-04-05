@@ -9,6 +9,7 @@ import com.erise.ai.backend.common.api.ApiResponse;
 import com.erise.ai.backend.common.exception.BizException;
 import com.erise.ai.backend.common.exception.ErrorCodes;
 import com.erise.ai.backend.common.util.SecurityUtils;
+import com.erise.ai.backend.common.util.TextContentUtils;
 import com.erise.ai.backend.integration.storage.MinioStorageClient;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotNull;
@@ -175,8 +176,8 @@ class OfficeFileService {
             throw new BizException(ErrorCodes.FORBIDDEN, "No permission", HttpStatus.FORBIDDEN);
         }
         String extension = file.getFileExt() == null ? "" : file.getFileExt().toLowerCase(Locale.ROOT);
-        if (!"doc".equals(extension) && !"docx".equals(extension)) {
-            throw new BizException(ErrorCodes.BAD_REQUEST, "Only doc/docx files support online editing", HttpStatus.BAD_REQUEST);
+        if (!"doc".equals(extension) && !"docx".equals(extension) && !"txt".equals(extension)) {
+            throw new BizException(ErrorCodes.BAD_REQUEST, "Only doc/docx/txt files support online editing", HttpStatus.BAD_REQUEST);
         }
         return file;
     }
@@ -187,6 +188,7 @@ class OfficeFileService {
             String html = switch (file.getFileExt().toLowerCase(Locale.ROOT)) {
                 case "docx" -> renderDocxHtml(bytes, file.getFileName());
                 case "doc" -> renderDocHtml(bytes, file.getFileName());
+                case "txt" -> renderTxtHtml(bytes, file.getFileName());
                 default -> throw new BizException(ErrorCodes.BAD_REQUEST, "Unsupported office file type", HttpStatus.BAD_REQUEST);
             };
             return new OriginalOfficeContent(html, Jsoup.parse(html).text());
@@ -223,10 +225,18 @@ class OfficeFileService {
             StringWriter writer = new StringWriter();
             transformer.transform(new DOMSource(converter.getDocument()), new StreamResult(writer));
             String body = Jsoup.parse(writer.toString()).body().html();
-            return wrapOfficeDocumentStart(stripExtension(fileName), "DOC 在线编辑预览") + body + "</article></main></body></html>";
+            return wrapOfficeDocumentStart(stripExtension(fileName), "DOC Preview") + body + "</article></main></body></html>";
         } catch (Exception exception) {
             throw new BizException(ErrorCodes.FILE_ERROR, "DOC preview failed: " + exception.getMessage());
         }
+    }
+
+    private String renderTxtHtml(byte[] bytes, String fileName) {
+        String textValue = TextContentUtils.decodeText(bytes);
+        return wrapOfficeDocumentStart(stripExtension(fileName), "TXT Preview")
+                + "<pre style=\"white-space:pre-wrap;word-break:break-word;font-family:'Consolas','Cascadia Code','Microsoft YaHei',monospace;font-size:14px;\">"
+                + escapeHtml(textValue)
+                + "</pre></article></main></body></html>";
     }
 
     private String wrapOfficeDocumentStart(String title, String eyebrow) {

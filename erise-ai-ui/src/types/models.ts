@@ -74,6 +74,7 @@ export interface DocumentSummaryView {
   summary?: string
   docStatus: string
   latestVersionNo: number
+  createdAt: string
   updatedAt: string
 }
 

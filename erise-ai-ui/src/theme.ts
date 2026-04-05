@@ -1,4 +1,4 @@
-export type ThemeName = 'sunrise' | 'midnight' | 'eyecare' | 'graphite' | 'custom'
+﻿export type ThemeName = 'sunrise' | 'midnight' | 'eyecare' | 'graphite' | 'custom'
 export type ThemeScheme = 'light' | 'dark'
 
 export interface ThemeOption {
@@ -34,43 +34,43 @@ const legacyThemeMap: Record<string, ThemeName> = {
 
 const themePresets: Record<Exclude<ThemeName, 'custom'>, ThemePreset> = {
   sunrise: {
-    label: 'Daylight',
-    description: 'Bright daytime workspace for search, editing, and browsing.',
-    accent: '#2563eb',
+    label: '晨曦蓝',
+    description: '默认的企业工作台风格，明亮克制，适合日常办公与知识协作。',
+    accent: '#2358d6',
     surface: '#ffffff',
-    canvas: '#f4f7fb',
+    canvas: '#f2f5fb',
     scheme: 'light',
   },
   midnight: {
-    label: 'Midnight',
-    description: 'High-contrast dark workspace for long chats and log review.',
+    label: '夜幕蓝',
+    description: '深色工作环境，适合长时间浏览、审阅和夜间使用。',
     accent: '#7dd3fc',
     surface: '#0f172a',
     canvas: '#040814',
     scheme: 'dark',
   },
   eyecare: {
-    label: 'Eye Care',
-    description: 'Warm paper-like colors that reduce glare for long reading.',
+    label: '护眼绿',
+    description: '降低对比刺激，适合高频阅读文档和长时间整理资料。',
     accent: '#4d7c0f',
-    surface: '#f4f0d9',
-    canvas: '#e7efda',
+    surface: '#fbf8ef',
+    canvas: '#eef2df',
     scheme: 'light',
   },
   graphite: {
-    label: 'Graphite',
-    description: 'Neutral gray-blue style for dashboards and admin views.',
+    label: '石墨灰',
+    description: '偏理性的中性商务风格，强调密度和信息可扫读性。',
     accent: '#334155',
     surface: '#ffffff',
-    canvas: '#edf1f7',
+    canvas: '#eef2f7',
     scheme: 'light',
   },
 }
 
 export const defaultCustomThemeColors: CustomThemeColors = {
-  accent: '#c2410c',
-  surface: '#fff7ed',
-  canvas: '#f7efe5',
+  accent: '#b45309',
+  surface: '#fffaf2',
+  canvas: '#f5efe5',
 }
 
 const clamp = (value: number, min: number, max: number) => Math.min(Math.max(value, min), max)
@@ -86,7 +86,7 @@ const normalizeHex = (value: string) => {
   if (hex.length === 6) {
     return `#${hex}`
   }
-  return '#2563eb'
+  return '#2358d6'
 }
 
 const hexToRgb = (value: string) => {
@@ -140,6 +140,7 @@ const buildThemeVariables = (colors: CustomThemeColors, scheme: ThemeScheme) => 
   const bgAlt = mix(surface, canvas, scheme === 'dark' ? 0.4 : 0.58)
   const border = alpha(text, scheme === 'dark' ? 0.18 : 0.12)
   const borderLight = alpha(text, scheme === 'dark' ? 0.12 : 0.08)
+  const sidebar = mix(surface, canvas, scheme === 'dark' ? 0.08 : 0.24)
 
   return {
     '--bg': canvas,
@@ -155,9 +156,12 @@ const buildThemeVariables = (colors: CustomThemeColors, scheme: ThemeScheme) => 
     '--header': alpha(surface, scheme === 'dark' ? 0.82 : 0.78),
     '--danger': scheme === 'dark' ? '#fb7185' : '#be123c',
     '--warning': scheme === 'dark' ? '#fbbf24' : '#b45309',
+    '--success': scheme === 'dark' ? '#86efac' : '#15803d',
     '--surface-soft': alpha(surface, scheme === 'dark' ? 0.74 : 0.66),
     '--surface-strong': alpha(surface, scheme === 'dark' ? 0.92 : 0.84),
     '--shadow-color': scheme === 'dark' ? 'rgba(3, 7, 18, 0.42)' : 'rgba(15, 23, 42, 0.08)',
+    '--sidebar': sidebar,
+    '--sidebar-ink': text,
     '--el-color-primary': accent,
     '--el-color-primary-dark-2': accentStrong,
     '--el-color-primary-light-3': mix(accent, '#ffffff', 0.2),
@@ -176,6 +180,12 @@ const buildThemeVariables = (colors: CustomThemeColors, scheme: ThemeScheme) => 
     '--el-border-color-light': borderLight,
     '--el-menu-active-color': accent,
     '--el-mask-color': scheme === 'dark' ? 'rgba(2, 6, 23, 0.72)' : 'rgba(15, 23, 42, 0.45)',
+    '--radius-xs': '10px',
+    '--radius-sm': '14px',
+    '--radius-md': '18px',
+    '--radius-lg': '24px',
+    '--radius-xl': '32px',
+    '--content-width': '1320px',
   }
 }
 
@@ -208,8 +218,8 @@ export const themeOptions: ThemeOption[] = [
   })),
   {
     name: 'custom',
-    label: 'Custom',
-    description: 'Tune accent, page background, and surface colors yourself.',
+    label: '自定义主题',
+    description: '自行调整主色、面板和画布颜色。',
     swatches: [defaultCustomThemeColors.accent, defaultCustomThemeColors.surface, defaultCustomThemeColors.canvas],
   },
 ]

@@ -1,0 +1,9 @@
+FROM maven:3.9.11-eclipse-temurin-21
+
+WORKDIR /workspace
+
+COPY settings.xml /root/.m2/settings.xml
+COPY pom.xml ./
+RUN mvn -q -DskipTests dependency:go-offline
+
+CMD ["/bin/sh", "/workspace/docker/dev-entrypoint.sh"]

@@ -76,7 +76,7 @@ export const renderDocumentHtml = (title: string, summary: string | undefined, b
   const summaryHtml = summary?.trim() ? `<div class="document-export__summary">${summary.trim()}</div>` : ''
   return `
     <div class="document-export">
-      <h1 class="document-export__title">${title || 'Untitled document'}</h1>
+      <h1 class="document-export__title">${title || '未命名文档'}</h1>
       ${summaryHtml}
       <div class="document-export__body">${bodyHtml}</div>
     </div>
@@ -90,7 +90,7 @@ export const buildTocFromHtml = (bodyHtml: string): TocItem[] => {
   return headings.map((heading, index) => ({
     index,
     level: Number.parseInt(heading.tagName.slice(1), 10),
-    text: heading.textContent?.trim() || `Heading ${index + 1}`,
+    text: heading.textContent?.trim() || `标题 ${index + 1}`,
     tagName: heading.tagName.toLowerCase(),
   }))
 }
@@ -111,7 +111,7 @@ export const exportDocumentAsDoc = async ({ fileName, title, summary, bodyHtml }
 }
 
 export const exportDocumentAsMarkdown = async ({ fileName, title, summary, bodyHtml }: DocumentExportPayload) => {
-  const header = [`# ${title || 'Untitled document'}`]
+  const header = [`# ${title || '未命名文档'}`]
   if (summary?.trim()) {
     header.push('', `> ${summary.trim()}`)
   }

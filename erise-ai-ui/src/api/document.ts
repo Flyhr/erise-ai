@@ -10,7 +10,7 @@ export interface DocumentVersionView {
   createdAt: string
 }
 
-export const getDocuments = (params: { projectId: number; pageNum?: number; pageSize?: number }) =>
+export const getDocuments = (params: { projectId?: number; q?: string; pageNum?: number; pageSize?: number }) =>
   http.get<never, PageResponse<DocumentSummaryView>>('/v1/documents', { params })
 
 export const createDocument = (payload: { projectId: number; title: string; summary?: string }) =>

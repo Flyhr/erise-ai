@@ -32,7 +32,7 @@ class Settings(BaseSettings):
     default_org_id: int = 0
     sqlite_echo: bool = False
 
-    model_config = SettingsConfigDict(env_file='.env', env_file_encoding='utf-8', extra='ignore')
+    model_config = SettingsConfigDict(env_file=('.env.dev', '.env'), env_file_encoding='utf-8', extra='ignore')
 
     @property
     def blocked_term_list(self) -> list[str]:

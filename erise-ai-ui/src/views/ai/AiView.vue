@@ -1,235 +1,256 @@
 ﻿<template>
-  <div class="ai-page">
-    <div class="glass-card ai-shell">
-      <aside class="ai-sidebar">
-        <div class="ai-sidebar__header">
-          <div>
-            <div class="ai-sidebar__eyebrow">AI</div>
-            <div class="ai-sidebar__title">项目智能协作</div>
-          </div>
-        </div>
-
-        <div class="model-card">
-          <div class="model-card__label">当前模型</div>
-          <div class="model-card__title">{{ modelCardTitle }}</div>
-          <div class="model-card__copy">{{ modelCardCopy }}</div>
-          <div v-if="availableModels.length" class="model-card__list">
-            <button
-              v-for="model in availableModels"
-              :key="model.modelCode"
-              type="button"
-              class="model-card__item"
-              :class="{ 'is-active': model.modelCode === selectedModelCode }"
-              :disabled="sending"
-              @click="selectModel(model.modelCode)"
-            >
-              <span class="model-card__item-name">{{ model.modelName }}</span>
-              <span class="model-card__item-meta">{{ model.providerCode }}</span>
-            </button>
-          </div>
-          <div v-else-if="!loadingModels" class="model-card__empty">当前没有可用模型。</div>
-          <div v-if="modelError" class="model-card__hint is-error">{{ modelError }}</div>
-        </div>
-
-        <div class="thread-list">
-          <div
-            v-for="session in visibleSessions"
-            :key="session.id"
-            class="thread-item"
-            :class="{ 'is-active': session.id === activeSessionId }"
-          >
-            <button type="button" class="thread-item__main" @click="openSession(session.id)">
-              <div class="thread-item__title">{{ session.title }}</div>
-              <div class="thread-item__meta">
-                <span>{{ relativeTime(session.lastMessageAt || session.createdAt) }}</span>
+  <div class="page-shell ai-admin-page">
+    <WorkspaceNavigationShell v-model="searchKeyword" active-nav="ai" brand-title="Erise AI"
+      brand-subtitle="The Digital Curator" create-text="新建对话" :footer-title="selectedProjectDisplay || '知识工作台'"
+      :footer-copy="activeModel?.providerCode || 'Premium Account'"
+      :footer-avatar="(selectedProjectDisplay || 'ER').slice(0, 2).toUpperCase()"
+      :user-name="activeModel?.modelName || 'AI 助理'" :user-role="sessionStatusText"
+      :user-avatar="(activeModel?.modelName || 'A').slice(0, 1)" search-placeholder="搜索项目、知识库、文件或 AI 会话..."
+      @create="resetConversation" @navigate-dashboard="router.push('/workspace')"
+      @navigate-projects="router.push('/projects')" @navigate-knowledge="router.push('/files')"
+      @navigate-ai="router.push('/ai')" @search="openSearch" @notify="showComingSoon('通知中心')"
+      @settings="router.push('/settings/profile')" @profile="router.push('/settings/profile')">
+      <div class="workspace-shell-card app-card">
+        <div class="ai-workspace">
+          <aside class="conversation-history">
+            <div class="conversation-history__head">
+              <div>
+                <div class="section-eyebrow">Chat History</div>
+                <h3>会话列表</h3>
               </div>
-            </button>
-            <button type="button" class="thread-item__delete" :disabled="sending" @click="removeSession(session.id)">×</button>
-          </div>
-
-          <div v-if="!visibleSessions.length" class="thread-empty">
-            这里还没有历史会话。发送第一条消息后，会自动生成会话记录。
-          </div>
-        </div>
-      </aside>
-
-      <section class="ai-main">
-        <header class="ai-main__header">
-          <div class="run-chip">
-            <span>{{ sending ? 'AI 正在回复' : activeSessionSummary?.title || '新对话' }}</span>
-            <span v-if="sending">({{ runningSeconds }}s)</span>
-          </div>
-          <div class="ai-main__actions">
-            <button
-              type="button"
-              class="icon-button ai-main__mobile-trigger"
-              :disabled="sending"
-              @click="sessionDrawerVisible = true"
-            >
-              =
-            </button>
-            <div class="ai-main__model">{{ modelHeaderTitle }}</div>
-            <button type="button" class="soft-chip" :disabled="sending" @click="resetConversation">新对话</button>
-          </div>
-        </header>
-
-        <section ref="messageListRef" class="ai-stream" :class="{ 'is-empty': !messages.length }">
-          <div class="ai-stream__inner">
-            <div v-if="networkError" class="status-banner status-banner--error">
-              <span>{{ networkError }}</span>
-              <button type="button" @click="networkError = ''">关闭</button>
+              <button type="button" class="soft-chip" :disabled="sending" @click="resetConversation">新对话</button>
             </div>
 
-            <div v-if="messages.length" class="transcript-list">
-              <article
-                v-for="message in messages"
-                :key="message.id"
-                class="transcript-item"
-                :class="message.roleCode === 'USER' ? 'is-user' : 'is-assistant'"
-              >
-                <div class="transcript-item__head">
-                  <span class="transcript-item__label">{{ message.roleCode === 'USER' ? '你' : 'Erise AI' }}</span>
-                  <span class="transcript-item__time">{{ formatTime(message.createdAt) }}</span>
-                </div>
-
-                <div class="transcript-item__body" :class="surfaceClasses(message)">
-                  <div v-if="message.roleCode === 'ASSISTANT' && message.status === 'streaming' && !message.content" class="thinking-dots">
-                    <span />
-                    <span />
-                    <span />
-                  </div>
-                  <div v-else class="transcript-item__content" :class="{ 'is-collapsed': isCollapsed(message) }">
-                    {{ message.content || '...' }}
-                  </div>
-
-                  <div v-if="message.refusedReason" class="transcript-item__notice">{{ message.refusedReason }}</div>
-                  <div v-if="message.errorMessage" class="transcript-item__notice">{{ message.errorMessage }}</div>
-
-                  <button v-if="isCollapsible(message)" type="button" class="transcript-item__toggle" @click="toggleExpanded(message)">
-                    {{ message.expanded ? '收起' : '展开全部' }}
-                  </button>
-                  <button
-                    v-if="message.roleCode === 'USER' && message.pendingQuestion && message.status === 'failed'"
-                    type="button"
-                    class="retry-button"
-                    :disabled="sending"
-                    @click="retryMessage(message)"
-                  >
-                    重新发送
-                  </button>
-                </div>
-              </article>
-            </div>
-
-            <div v-else class="empty-stage">
-              <div class="empty-stage__eyebrow">{{ activeModel?.modelName || 'Erise AI Chat' }}</div>
-              <h2 class="empty-stage__title">把项目文档交给 AI，一起总结和修改</h2>
-              <p class="empty-stage__copy">
-                点击输入框左侧的 +，先选择一个项目，再勾选一个或多个文档/文件。然后你可以直接说：
-                “总结这些文档的主要内容”，或“将发送给你的文档标题改为：测试ai修改文档功能”。
-              </p>
-              <div class="empty-stage__prompts">
-                <button v-for="prompt in quickPrompts" :key="prompt" type="button" class="prompt-card" :disabled="sending" @click="usePrompt(prompt)">
-                  {{ prompt }}
-                </button>
+            <div class="knowledge-card">
+              <div class="knowledge-card__head">
+                <span class="section-eyebrow">Knowledge Base</span>
+                <button type="button" class="mini-link" @click="openAttachmentPicker">添加文件</button>
               </div>
-            </div>
-          </div>
-        </section>
-
-        <footer class="composer-wrap">
-          <div class="composer-box">
-            <button type="button" class="composer-box__attach" :disabled="sending" @click="openAttachmentPicker">+</button>
-            <div class="composer-box__content">
-              <div v-if="selectedProjectDisplay || selectedAttachments.length" class="composer-box__selection">
-                <button
-                  v-if="selectedProjectDisplay"
-                  type="button"
-                  class="selection-chip is-project"
-                  :disabled="sending || projectLocked"
-                  @click="clearSelectedProject"
-                >
-                  <span>项目：{{ selectedProjectDisplay }}</span>
-                  <span v-if="!projectLocked">×</span>
-                </button>
-                <button
-                  v-for="attachment in selectedAttachments"
-                  :key="attachmentKeyOf(attachment)"
-                  type="button"
-                  class="selection-chip"
-                  :disabled="sending"
-                  @click="removeAttachment(attachment)"
-                >
-                  <span>{{ attachmentLabel(attachment) }}</span>
+              <div class="knowledge-subtabs">
+                <button type="button" class="knowledge-subtabs__item is-active"
+                  @click="openAttachmentPicker">文件</button>
+              </div>
+              <div v-if="selectedAttachments.length" class="knowledge-selected">
+                <button v-for="attachment in selectedAttachments.filter((item) => item.attachmentType === 'FILE')"
+                  :key="attachmentKeyOf(attachment)" type="button" class="selection-chip" :disabled="sending"
+                  @click="removeAttachment(attachment)">
+                  <span>{{ attachment.title || `文件 #${attachment.sourceId}` }}</span>
                   <span>×</span>
                 </button>
+                <button v-if="selectedAttachments.some((item) => item.attachmentType !== 'FILE')" type="button"
+                  class="mini-link mini-link--block" @click="showUnavailable('当前只展示文件标签')">
+                  还有其它类型资料已附加
+                </button>
               </div>
+              <div v-else class="knowledge-empty">还没有附加知识库文件，点击“添加文件”即可将资料带入当前对话。</div>
+            </div>
 
-              <textarea
-                ref="composerRef"
-                v-model="question"
-                class="composer-box__input"
-                rows="1"
-                :disabled="sending"
-                placeholder="输入你的指令，例如：总结这些附件；把发送给你的文档标题改为“测试ai修改文档功能”；或结合当前项目继续分析。"
-                @input="resizeComposer"
-                @keydown.enter.exact.prevent="send()"
-              />
+            <div class="thread-list thread-list--history">
+              <div v-for="session in visibleSessions" :key="session.id" class="thread-item"
+                :class="{ 'is-active': session.id === activeSessionId }">
+                <button type="button" class="thread-item__main" @click="openSession(session.id)">
+                  <div class="thread-item__title">{{ session.title }}</div>
+                  <div class="thread-item__meta">
+                    <span>{{ relativeTime(session.lastMessageAt || session.createdAt) }}</span>
+                  </div>
+                </button>
+                <button type="button" class="thread-item__delete" :disabled="sending"
+                  @click="removeSession(session.id)">×</button>
+              </div>
+              <div v-if="!visibleSessions.length" class="thread-empty">这里还没有历史会话。发送第一条消息后，会自动生成会话记录。</div>
+            </div>
+          </aside>
 
-              <div class="composer-box__toolbar">
-                <div class="composer-box__left-tools">
-                  <button type="button" class="toolbar-chip" disabled>{{ modelProviderLabel }}</button>
-                  <button type="button" class="toolbar-chip" disabled>{{ modelModeLabel }}</button>
-                  <button v-if="selectedAttachments.length" type="button" class="toolbar-chip" disabled>
-                    已附加 {{ selectedAttachments.length }} 份资料
-                  </button>
-                </div>
-                <div class="composer-box__right-tools">
-                  <button v-if="sending" type="button" class="send-button" :disabled="!currentRequestId" @click="stopGeneration">
-                    停止生成
-                  </button>
-                  <button v-else type="button" class="send-button" :disabled="!canSend" @click="send()">
-                    发送
-                  </button>
+          <section class="chat-stage">
+            <div class="chat-stage__header">
+              <div>
+                <div class="section-eyebrow">AI Assistant</div>
+                <h2>{{ activeSessionSummary?.title || 'Architectural Assistant' }}</h2>
+                <p>{{ pageSubtitleText }}</p>
+              </div>
+              <div class="chat-stage__meta">
+                <button type="button" class="model-chip" :disabled="sending" @click="showUnavailable('模型高级设置')">
+                  <span class="material-symbols-outlined">data_object</span>
+                  <span>{{ modelHeaderTitle }}</span>
+                </button>
+                <div class="run-chip" :class="{ 'is-live': sending }">
+                  <span class="run-chip__dot"></span>
+                  <span>{{ sessionStatusText }}</span>
                 </div>
               </div>
             </div>
-          </div>
-        </footer>
-      </section>
-    </div>
 
-    <el-dialog v-model="attachmentDialogVisible" title="选择项目文件或文档" width="760px">
-      <div class="attachment-dialog">
+            <section ref="messageListRef" class="message-board" :class="{ 'is-empty': !messages.length }">
+              <div class="message-board__inner">
+                <div v-if="networkError" class="status-banner status-banner--error">
+                  <span>{{ networkError }}</span>
+                  <button type="button" @click="networkError = ''">关闭</button>
+                </div>
+
+                <div v-if="messages.length" class="transcript-list transcript-list--modern">
+                  <article v-for="message in messages" :key="message.id" class="transcript-item"
+                    :class="message.roleCode === 'USER' ? 'is-user' : 'is-assistant'">
+                    <div class="transcript-item__avatar">
+                      <span v-if="message.roleCode === 'USER'" class="material-symbols-outlined">person</span>
+                      <span v-else class="material-symbols-outlined"
+                        style="font-variation-settings: 'FILL' 1">smart_toy</span>
+                    </div>
+                    <div class="transcript-item__panel">
+                      <div class="transcript-item__head">
+                        <span class="transcript-item__label">{{ message.roleCode === 'USER' ? '你' : 'Erise AI' }}</span>
+                        <span class="transcript-item__time">{{ formatTime(message.createdAt) }}</span>
+                      </div>
+                      <div class="transcript-item__body" :class="surfaceClasses(message)">
+                        <div
+                          v-if="message.roleCode === 'ASSISTANT' && message.status === 'streaming' && !message.content"
+                          class="thinking-dots">
+                          <span></span><span></span><span></span>
+                        </div>
+                        <div v-else class="transcript-item__content" :class="{ 'is-collapsed': isCollapsed(message) }">
+                          {{ message.content || '...' }}
+                        </div>
+                        <div v-if="message.refusedReason" class="transcript-item__notice">{{ message.refusedReason }}
+                        </div>
+                        <div v-if="message.errorMessage" class="transcript-item__notice">{{ message.errorMessage }}
+                        </div>
+
+                        <div v-if="message.citations?.length" class="citation-panel citation-panel--modern">
+                          <div class="citation-panel__title">引用来源</div>
+                          <button v-for="citation in message.citations"
+                            :key="`${citation.sourceType}-${citation.sourceId}-${citation.pageNo || 'na'}`"
+                            type="button" class="citation-card" @click="openCitation(citation)">
+                            <strong>{{ citation.sourceTitle }}</strong>
+                            <span>
+                              {{ citationSourceLabel(citation.sourceType) }}
+                              <template v-if="citation.pageNo"> · 第 {{ citation.pageNo }} 页</template>
+                            </span>
+                            <small>{{ citation.snippet || '暂无引用摘录' }}</small>
+                          </button>
+                        </div>
+
+                        <button v-if="isCollapsible(message)" type="button" class="transcript-item__toggle"
+                          @click="toggleExpanded(message)">
+                          {{ message.expanded ? '收起' : '展开全部' }}
+                        </button>
+                        <button
+                          v-if="message.roleCode === 'USER' && message.pendingQuestion && message.status === 'failed'"
+                          type="button" class="retry-button" :disabled="sending" @click="retryMessage(message)">
+                          重新发送
+                        </button>
+                      </div>
+                    </div>
+                  </article>
+                </div>
+
+                <div v-else class="empty-stage empty-stage--architect">
+                  <div class="empty-stage__robot">
+                    <span class="material-symbols-outlined" style="font-variation-settings: 'FILL' 1">smart_toy</span>
+                  </div>
+                  <div class="empty-stage__eyebrow">{{ activeModel?.modelName || 'Erise AI 助理' }}</div>
+                  <h2 class="empty-stage__title">Ask the digital curator anything.</h2>
+                  <p class="empty-stage__copy">先附加文件，再让 AI 帮你总结内容、提炼风险、列出待办，或者直接围绕当前项目继续分析。</p>
+                  <div class="empty-stage__prompts">
+                    <button v-for="prompt in quickPrompts" :key="prompt" type="button" class="prompt-card"
+                      :disabled="sending" @click="usePrompt(prompt)">
+                      {{ prompt }}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </section>
+
+            <footer class="composer-wrap composer-wrap--architect">
+              <div class="composer-box composer-box--architect">
+                <div class="composer-box__toptools">
+                  <button type="button" class="toolbar-ghost" :disabled="sending" @click="openAttachmentPicker">
+                    <span class="material-symbols-outlined">attach_file</span>
+                    <span>文件</span>
+                  </button>
+                  <button type="button" class="toolbar-ghost" @click="showUnavailable('图片上传')">
+                    <span class="material-symbols-outlined">image</span>
+                    <span>图片</span>
+                  </button>
+                  <button type="button" class="toolbar-ghost" @click="showUnavailable('高级模型选择')">
+                    <span class="material-symbols-outlined">tune</span>
+                    <span>模型配置</span>
+                  </button>
+                </div>
+
+                <div class="composer-box__content">
+                  <textarea ref="composerRef" v-model="question"
+                    class="composer-box__input composer-box__input--architect" rows="1" :disabled="sending"
+                    :placeholder="composerPlaceholder" @input="resizeComposer" @keydown="handleComposerKeydown" />
+
+                  <div class="composer-box__toolbar">
+                    <div class="composer-box__left-tools">
+                      <button type="button" class="toolbar-chip" disabled>{{ modelProviderLabel }}</button>
+                      <button v-if="selectedProjectDisplay" type="button" class="toolbar-chip" disabled>{{
+                        selectedProjectDisplay
+                      }}</button>
+                      <button v-if="selectedAttachments.length" type="button" class="toolbar-chip" disabled>
+                        已附加 {{ selectedAttachments.length }} 份资料
+                      </button>
+                    </div>
+                    <div class="composer-box__right-tools">
+                      <span class="composer-box__hint">Enter 发送，Shift + Enter 换行</span>
+                      <button v-if="sending" type="button" class="send-button is-danger" :disabled="!currentRequestId"
+                        @click="stopGeneration">停止生成</button>
+                      <button v-else type="button" class="send-button send-button--architect" :disabled="!canSend"
+                        @click="send()">
+                        <span class="material-symbols-outlined">send</span>
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+              <p class="composer-footnote">
+                AI Assistant may provide generated content that still requires your review.
+                <button type="button" class="mini-link" @click="showUnavailable('服务条款')">Terms of Service</button>
+              </p>
+            </footer>
+          </section>
+        </div>
+      </div>
+    </WorkspaceNavigationShell>
+
+    <el-dialog v-model="attachmentDialogVisible" title="资料托盘" width="760px">
+      <div class="attachment-dialog attachment-dialog--modern">
         <div class="attachment-dialog__project">
           <div class="attachment-dialog__label">项目</div>
-          <el-select
-            v-model="draftProjectId"
-            class="attachment-dialog__project-select"
-            filterable
-            :clearable="!projectLocked"
-            :disabled="projectLocked || loadingAttachmentOptions"
-            placeholder="请选择项目"
-          >
-            <el-option v-for="project in selectableProjects" :key="project.id" :label="project.name" :value="project.id" />
+          <el-select v-model="draftProjectId" class="attachment-dialog__project-select" filterable
+            :clearable="!projectLocked" :disabled="projectLocked || loadingAttachmentOptions" placeholder="请选择项目">
+            <el-option v-for="project in selectableProjects" :key="project.id" :label="project.name"
+              :value="project.id" />
           </el-select>
-          <div class="attachment-dialog__hint">
-            先选项目，再从该项目里勾选文档和文件。支持一次发送多个文档/文件给 AI。
-          </div>
+          <div class="attachment-dialog__hint">先选项目，再勾选要带进本轮对话的资料。当前页优先强调文件，其他资料类型保留原功能。</div>
         </div>
 
         <div class="attachment-dialog__grid">
           <section class="attachment-panel">
-            <div class="attachment-panel__title">文档</div>
+            <div class="attachment-panel__title">文件</div>
             <div v-if="!draftProjectId" class="attachment-panel__empty">请先选择项目。</div>
-            <div v-else-if="loadingAttachmentOptions" class="attachment-panel__empty">正在加载文档和文件列表...</div>
+            <div v-else-if="loadingAttachmentOptions" class="attachment-panel__empty">正在加载文件列表...</div>
+            <div v-else-if="draftFiles.length" class="attachment-panel__list">
+              <label v-for="file in draftFiles" :key="`file-${file.id}`" class="attachment-option">
+                <input type="checkbox" :checked="draftAttachmentSelected('FILE', file.id)"
+                  @change="toggleDraftAttachment('FILE', file.id, file.fileName)" />
+                <span class="attachment-option__copy">
+                  <strong>{{ file.fileName }}</strong>
+                  <small>{{ file.fileExt.toUpperCase() }} · {{ fileParseStatusLabel(file.parseStatus) }}</small>
+                </span>
+              </label>
+            </div>
+            <div v-else class="attachment-panel__empty">当前项目还没有文件。</div>
+          </section>
+
+          <section class="attachment-panel attachment-panel--secondary">
+            <div class="attachment-panel__title">更多资料</div>
+            <div v-if="!draftProjectId" class="attachment-panel__empty">请先选择项目。</div>
+            <div v-else-if="loadingAttachmentOptions" class="attachment-panel__empty">正在加载资料...</div>
             <div v-else-if="draftDocuments.length" class="attachment-panel__list">
               <label v-for="document in draftDocuments" :key="`document-${document.id}`" class="attachment-option">
-                <input
-                  type="checkbox"
-                  :checked="draftAttachmentSelected('DOCUMENT', document.id)"
-                  @change="toggleDraftAttachment('DOCUMENT', document.id, document.title)"
-                />
+                <input type="checkbox" :checked="draftAttachmentSelected('DOCUMENT', document.id)"
+                  @change="toggleDraftAttachment('DOCUMENT', document.id, document.title)" />
                 <span class="attachment-option__copy">
                   <strong>{{ document.title }}</strong>
                   <small>{{ document.summary || '暂无摘要' }}</small>
@@ -237,26 +258,6 @@
               </label>
             </div>
             <div v-else class="attachment-panel__empty">当前项目还没有文档。</div>
-          </section>
-
-          <section class="attachment-panel">
-            <div class="attachment-panel__title">文件</div>
-            <div v-if="!draftProjectId" class="attachment-panel__empty">请先选择项目。</div>
-            <div v-else-if="loadingAttachmentOptions" class="attachment-panel__empty">正在加载文档和文件列表...</div>
-            <div v-else-if="draftFiles.length" class="attachment-panel__list">
-              <label v-for="file in draftFiles" :key="`file-${file.id}`" class="attachment-option">
-                <input
-                  type="checkbox"
-                  :checked="draftAttachmentSelected('FILE', file.id)"
-                  @change="toggleDraftAttachment('FILE', file.id, file.fileName)"
-                />
-                <span class="attachment-option__copy">
-                  <strong>{{ file.fileName }}</strong>
-                  <small>{{ file.fileExt.toUpperCase() }} · {{ file.parseStatus || 'PENDING' }}</small>
-                </span>
-              </label>
-            </div>
-            <div v-else class="attachment-panel__empty">当前项目还没有文件。</div>
           </section>
         </div>
       </div>
@@ -271,25 +272,6 @@
         </div>
       </template>
     </el-dialog>
-
-    <el-drawer v-model="sessionDrawerVisible" title="历史会话" direction="ltr" size="320px">
-      <div class="thread-list thread-list--drawer">
-        <div
-          v-for="session in visibleSessions"
-          :key="session.id"
-          class="thread-item"
-          :class="{ 'is-active': session.id === activeSessionId }"
-        >
-          <button type="button" class="thread-item__main" @click="openSession(session.id)">
-            <div class="thread-item__title">{{ session.title }}</div>
-            <div class="thread-item__meta">
-              <span>{{ relativeTime(session.lastMessageAt || session.createdAt) }}</span>
-            </div>
-          </button>
-          <button type="button" class="thread-item__delete" :disabled="sending" @click="removeSession(session.id)">×</button>
-        </div>
-      </div>
-    </el-drawer>
   </div>
 </template>
 
@@ -304,9 +286,11 @@ import { getDocuments } from '@/api/document'
 import { getFiles } from '@/api/file'
 import { getProjects } from '@/api/project'
 import { resolveApiUrl } from '@/api/http'
+import WorkspaceNavigationShell from '@/components/common/WorkspaceNavigationShell.vue'
 import type {
   AiAttachmentPayload,
   AiChatResponse,
+  AiCitationView,
   AiMessageView,
   AiModelView,
   AiSessionSummaryView,
@@ -328,6 +312,7 @@ interface UiMessage {
   pendingQuestion?: string
   errorMessage?: string
   expanded?: boolean
+  citations?: AiCitationView[]
 }
 
 interface StreamDonePayload {
@@ -340,7 +325,12 @@ interface DraftAttachmentOption {
   sourceId: number
   title: string
 }
-
+const showComingSoon = (feature: string) => {
+  ElMessageBox.alert(`${feature} 当前功能还未开发`, '提示', {
+    confirmButtonText: '确定',
+    type: 'info',
+  })
+}
 const props = defineProps<{ id?: string }>()
 const route = useRoute()
 const router = useRouter()
@@ -353,8 +343,19 @@ const parseNumber = (value: unknown) => {
 const buildLocalId = (prefix: string) => `${prefix}-${Date.now()}-${Math.random().toString(16).slice(2)}`
 const attachmentStorageKey = (sessionId: number) => `erise-ai-attachments:${sessionId}`
 const attachmentKeyOf = (attachment: Pick<AiAttachmentPayload, 'attachmentType' | 'sourceId'>) => `${attachment.attachmentType}:${attachment.sourceId}`
-const attachmentTypeLabel = (type: AiAttachmentPayload['attachmentType']) => (type === 'DOCUMENT' ? '文档' : '文件')
-const attachmentLabel = (attachment: AiAttachmentPayload) => `${attachmentTypeLabel(attachment.attachmentType)}：${attachment.title || `#${attachment.sourceId}`}`
+const citationSourceLabel = (sourceType?: string) => ({
+  DOCUMENT: '文档',
+  FILE: '文件',
+  SHEET: '表格',
+  BOARD: '画板',
+  DATA_TABLE: '数据表',
+}[sourceType || ''] || sourceType || '引用来源')
+const fileParseStatusLabel = (status?: string) => ({
+  PENDING: '待解析',
+  PROCESSING: '解析中',
+  COMPLETED: '已完成',
+  FAILED: '失败',
+}[status || ''] || status || '待处理')
 
 const errorMessageOf = (error: unknown) => {
   const candidate = error as { response?: { data?: { message?: string; msg?: string } }; message?: string }
@@ -410,9 +411,9 @@ const draftAttachmentOptions = ref<DraftAttachmentOption[]>([])
 const loadingModels = ref(false)
 const loadingAttachmentOptions = ref(false)
 const attachmentDialogVisible = ref(false)
-const modelError = ref('')
 const selectedModelCode = ref('')
 const currentRequestId = ref('')
+const searchKeyword = ref('')
 const question = ref('')
 const sending = ref(false)
 const activeSessionId = ref<number | undefined>()
@@ -420,7 +421,6 @@ const selectedProjectId = ref<number | undefined>()
 const draftProjectId = ref<number | undefined>()
 const selectedAttachments = ref<AiAttachmentPayload[]>([])
 const draftAttachmentKeys = ref<string[]>([])
-const sessionDrawerVisible = ref(false)
 const networkError = ref('')
 const messageListRef = ref<HTMLDivElement | null>(null)
 const composerRef = ref<HTMLTextAreaElement | null>(null)
@@ -433,6 +433,11 @@ const projectLookup = computed(() => new Map(selectableProjects.value.map((proje
 const activeProjectId = computed(() => routeProjectId.value || selectedProjectId.value)
 const activeProject = computed(() => (activeProjectId.value ? projectLookup.value.get(activeProjectId.value) : undefined))
 const selectedProjectDisplay = computed(() => activeProject.value?.name || (activeProjectId.value ? `项目 #${activeProjectId.value}` : ''))
+const pageSubtitleText = computed(() =>
+  routeProjectId.value
+    ? '围绕当前项目上下文、知识库文件与会话记录发起连续协作。'
+    : '选择项目、附加资料，像 ChatGPT 一样持续对话与分析。',
+)
 const baseAiPath = computed(() => (props.id ? `/projects/${props.id}/ai` : '/ai'))
 const visibleSessions = computed(() => {
   if (!projectLocked.value || !routeProjectId.value) {
@@ -447,6 +452,21 @@ const activeModel = computed(() => {
   }
   return availableModels.value.find((model) => model.modelCode === selectedModelCode.value) || availableModels.value[0]
 })
+// const sessionTitleText = computed(() => activeSessionSummary.value?.title || (messages.value.length ? '当前对话' : '开始一段新对话'))
+const sessionStatusText = computed(() => {
+  if (sending.value) {
+    return `AI 正在回复 (${runningSeconds.value}s)`
+  }
+  if (networkError.value) {
+    return '对话暂时中断'
+  }
+  return messages.value.length ? '对话已就绪' : '等待你的第一条消息'
+})
+const composerPlaceholder = computed(() =>
+  routeProjectId.value
+    ? '围绕当前项目继续提问，或先附加文档/文件后再发起指令。'
+    : '输入你的问题，或先附加项目资料。按 Shift + Enter 可换行。',
+)
 const runningSeconds = computed(() => {
   if (!sending.value || !sendStartedAt.value) {
     return 0
@@ -454,28 +474,9 @@ const runningSeconds = computed(() => {
   return Math.max(1, Math.floor((clockNow.value - sendStartedAt.value) / 1000))
 })
 const canSend = computed(() => Boolean(question.value.trim()) && !sending.value)
-const modelCardTitle = computed(() => activeModel.value?.modelName || (loadingModels.value ? '正在加载模型...' : '未选择模型'))
 const modelHeaderTitle = computed(() => activeModel.value?.modelName || '未选择模型')
 const modelProviderLabel = computed(() => activeModel.value?.providerCode || (loadingModels.value ? '加载中' : '模型服务'))
-const modelModeLabel = computed(() => (activeModel.value?.supportStream === false ? '普通回复' : '流式回复'))
-const modelCardCopy = computed(() => {
-  if (modelError.value) {
-    return '模型列表加载失败，请检查 Python AI 服务和 Java 网关是否已启动。'
-  }
-  if (loadingModels.value) {
-    return '正在从后端读取可用模型列表。'
-  }
-  if (!availableModels.value.length) {
-    return '当前还没有启用的模型，请先在后台完成模型配置。'
-  }
-  if (selectedAttachments.value.length) {
-    return `当前会优先参考 ${selectedAttachments.value.length} 份已附加资料${selectedProjectDisplay.value ? `，并结合${selectedProjectDisplay.value}的项目上下文` : ''}。`
-  }
-  if (activeProjectId.value) {
-    return '当前会携带项目上下文。点击输入框左侧的 +，还可以继续附加具体文档或文件。'
-  }
-  return '点击输入框左侧的 + 先选择项目、文档或文件，再让 AI 帮你总结、改标题或继续分析。'
-})
+// const modelModeLabel = computed(() => (activeModel.value?.supportStream === false ? '普通回复' : '流式回复'))
 const quickPrompts = computed(() => [
   selectedAttachments.value.length ? '总结我发送给你的文档和文件主要内容' : '基于当前项目上下文，帮我梳理下一步工作重点',
   '将发送给你的文档标题改为：“测试ai修改文档功能”',
@@ -494,6 +495,7 @@ const toUiMessage = (message: AiMessageView): UiMessage => ({
   status: message.status === 'streaming' ? 'streaming' : 'sent',
   errorMessage: message.errorMessage,
   expanded: false,
+  citations: message.citations || [],
 })
 
 const isCollapsible = (message: UiMessage) => message.content.length > 560 || (message.content.match(/\n/g)?.length ?? 0) > 12
@@ -516,6 +518,14 @@ const resizeComposer = async () => {
   }
   composerRef.value.style.height = '0px'
   composerRef.value.style.height = `${Math.min(composerRef.value.scrollHeight, 220)}px`
+}
+
+const handleComposerKeydown = (event: KeyboardEvent) => {
+  if (event.key !== 'Enter' || event.shiftKey || event.isComposing) {
+    return
+  }
+  event.preventDefault()
+  void send()
 }
 
 const scrollToBottom = async () => {
@@ -677,22 +687,12 @@ const removeAttachment = (attachment: AiAttachmentPayload) => {
   persistAttachmentState(activeSessionId.value)
 }
 
-const clearSelectedProject = () => {
-  if (projectLocked.value) {
-    return
-  }
-  selectedProjectId.value = undefined
-  selectedAttachments.value = []
-  persistAttachmentState(activeSessionId.value)
-}
-
 const refreshSessions = async () => {
   sessions.value = await getSessions()
 }
 
 const refreshModels = async () => {
   loadingModels.value = true
-  modelError.value = ''
   try {
     const models = await getModels()
     availableModels.value = models
@@ -706,14 +706,21 @@ const refreshModels = async () => {
   } catch (error) {
     availableModels.value = []
     selectedModelCode.value = ''
-    modelError.value = errorMessageOf(error)
   } finally {
     loadingModels.value = false
   }
 }
 
-const selectModel = (modelCode: string) => {
-  selectedModelCode.value = modelCode
+const showUnavailable = (feature = '当前功能还未开发') => {
+  ElMessageBox.alert('当前功能还未开发', feature, { confirmButtonText: '确定', type: 'info' })
+}
+
+const openSearch = async () => {
+  const keyword = searchKeyword.value.trim()
+  await router.push({
+    path: '/search',
+    query: keyword ? { keyword } : {},
+  })
 }
 
 const buildAiLocation = (sessionId?: number) => ({
@@ -739,6 +746,7 @@ const applyChatResponse = async (response: AiChatResponse, userMessage: UiMessag
   assistantMessage.serverId = response.messageId
   assistantMessage.content = response.answer
   assistantMessage.refusedReason = response.refusedReason
+  assistantMessage.citations = response.citations || []
   if (response.modelCode && availableModels.value.some((model) => model.modelCode === response.modelCode)) {
     selectedModelCode.value = response.modelCode
   }
@@ -783,7 +791,6 @@ const resetConversation = async () => {
   currentRequestId.value = ''
   question.value = ''
   networkError.value = ''
-  sessionDrawerVisible.value = false
   attachmentDialogVisible.value = false
   selectedAttachments.value = []
   selectedProjectId.value = routeProjectId.value || preservedProjectId
@@ -795,7 +802,6 @@ const resetConversation = async () => {
 }
 
 const openSession = async (sessionId: number) => {
-  sessionDrawerVisible.value = false
   await router.push(buildAiLocation(sessionId))
 }
 
@@ -996,6 +1002,11 @@ const send = async (presetQuestion?: string) => {
         assistantMessage.status = 'sent'
         assistantMessage.serverId = donePayload.messageId
         await syncSessionRoute(donePayload.sessionId)
+        if (donePayload.sessionId) {
+          const detail = await getSession(donePayload.sessionId)
+          messages.value = detail.messages.map(toUiMessage)
+          restoreAttachmentState(detail.id, detail.projectId)
+        }
         await refreshSessions()
       },
     })
@@ -1037,6 +1048,22 @@ const retryMessage = async (message: UiMessage) => {
 
 const usePrompt = async (prompt: string) => {
   await send(prompt)
+}
+
+const openCitation = async (citation: AiCitationView) => {
+  if (citation.sourceType === 'DOCUMENT') {
+    await router.push({ path: `/documents/${citation.sourceId}/edit`, query: { mode: 'preview' } })
+    return
+  }
+  if (citation.sourceType === 'FILE') {
+    await router.push(`/files/${citation.sourceId}`)
+    return
+  }
+  if (['SHEET', 'BOARD', 'DATA_TABLE'].includes(citation.sourceType)) {
+    await router.push({ path: `/contents/${citation.sourceId}/edit`, query: { mode: 'preview' } })
+    return
+  }
+  ElMessage.info('暂不支持打开该引用类型')
 }
 
 watch(
@@ -1096,190 +1123,353 @@ onBeforeUnmount(() => {
 </script>
 
 <style scoped>
-.ai-page {
-  min-height: calc(100vh - 96px);
-}
-
-.ai-shell {
-  display: grid;
-  grid-template-columns: 280px minmax(0, 1fr);
-  min-height: calc(100vh - 120px);
+.workspace-shell-card {
+  min-height: calc(100dvh - 148px);
   overflow: hidden;
+  border: 1px solid rgba(192, 199, 212, 0.5);
+  background: #f8f9ff;
+  box-shadow: 0 24px 64px rgba(0, 96, 169, 0.08);
 }
 
-.ai-sidebar {
+.ai-admin-page {
+  min-height: calc(100dvh - 120px);
+}
+
+.architect-shell {
+  display: grid;
+  grid-template-columns: 260px minmax(0, 1fr);
+  min-height: calc(100dvh - 148px);
+  overflow: hidden;
+  padding: 0;
+  border: 1px solid rgba(192, 199, 212, 0.5);
+  background: #f8f9ff;
+  box-shadow: 0 24px 64px rgba(0, 96, 169, 0.08);
+}
+
+.architect-nav {
   display: flex;
   flex-direction: column;
   gap: 18px;
-  padding: 20px;
-  border-right: 1px solid var(--line);
-  background: linear-gradient(180deg, var(--surface-strong), var(--panel));
+  padding: 24px 18px;
+  background: #f1f3fa;
+  border-right: 1px solid rgba(192, 199, 212, 0.5);
 }
 
-.ai-sidebar__header,
-.ai-main__header,
-.ai-main__actions,
-.transcript-item__head,
-.composer-box__toolbar,
-.composer-box__left-tools,
-.composer-box__right-tools,
-.status-banner,
-.attachment-dialog__footer,
-.attachment-dialog__footer-actions {
+.architect-brand {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.architect-brand__icon,
+.top-user__avatar,
+.architect-account__avatar,
+.empty-stage__robot {
+  display: grid;
+  place-items: center;
+  color: #fff;
+  font-weight: 800;
+  background: linear-gradient(135deg, #409eff, #0060a9);
+}
+
+.architect-brand__icon {
+  width: 40px;
+  height: 40px;
+  border-radius: 12px;
+}
+
+.architect-brand h1 {
+  margin: 0;
+  font-size: 18px;
+  line-height: 1.1;
+  font-weight: 800;
+  color: #181c20;
+}
+
+.architect-brand p,
+.architect-account__copy span,
+.top-user__meta span,
+.chat-stage__header p,
+.knowledge-empty,
+.composer-footnote,
+.thread-empty {
+  margin: 0;
+  color: #5f6775;
+}
+
+.architect-brand p {
+  font-size: 11px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.nav-primary-btn,
+.architect-menu__item,
+.architect-account,
+.top-search,
+.top-icon-btn,
+.top-user,
+.model-chip,
+.toolbar-ghost,
+.mini-link,
+.selection-chip,
+.soft-chip,
+.send-button,
+.thread-item__delete,
+.thread-item__main,
+.citation-card,
+.prompt-card,
+.retry-button,
+.transcript-item__toggle {
+  border: 0;
+  font: inherit;
+  cursor: pointer;
+}
+
+.nav-primary-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  width: 100%;
+  padding: 12px 16px;
+  border-radius: 14px;
+  color: #fff;
+  background: linear-gradient(135deg, #409eff, #0060a9);
+  font-weight: 700;
+  box-shadow: 0 16px 32px rgba(0, 96, 169, 0.18);
+}
+
+.architect-menu {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.architect-menu__item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  padding: 12px 14px;
+  border-radius: 12px;
+  background: transparent;
+  color: #404752;
+  text-align: left;
+  transition: all 0.2s ease;
+}
+
+.architect-menu__item:hover {
+  background: rgba(255, 255, 255, 0.72);
+  color: #181c20;
+}
+
+.architect-menu__item.is-active {
+  color: #0060a9;
+  background: rgba(64, 158, 255, 0.1);
+  box-shadow: inset 3px 0 0 #0060a9;
+  font-weight: 700;
+}
+
+.architect-account {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: auto;
+  padding: 14px 12px 0;
+  border-top: 1px solid rgba(192, 199, 212, 0.5);
+  background: transparent;
+}
+
+.architect-account__avatar,
+.top-user__avatar {
+  width: 38px;
+  height: 38px;
+  border-radius: 999px;
+}
+
+.architect-account__copy {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+}
+
+.architect-account__copy strong,
+.top-user__meta strong {
+  color: #181c20;
+  font-size: 13px;
+}
+
+.architect-main {
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  flex-direction: column;
+}
+
+.architect-topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  padding: 18px 22px;
+  background: rgba(255, 255, 255, 0.82);
+  backdrop-filter: blur(12px);
+  border-bottom: 1px solid rgba(192, 199, 212, 0.45);
+}
+
+.top-search {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  width: min(460px, 100%);
+  padding: 12px 16px;
+  border-radius: 999px;
+  background: #f1f3fa;
+  color: #5f6775;
+  text-align: left;
+}
+
+.architect-topbar__actions {
   display: flex;
   align-items: center;
   gap: 10px;
 }
 
-.ai-sidebar__header,
-.ai-main__header,
-.transcript-item__head,
-.composer-box__toolbar,
-.status-banner,
-.attachment-dialog__footer {
-  justify-content: space-between;
+.top-icon-btn {
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  border-radius: 999px;
+  background: transparent;
+  color: #5f6775;
 }
 
-.ai-sidebar__eyebrow,
-.empty-stage__eyebrow,
-.model-card__label {
-  color: var(--muted);
-  font-size: 12px;
-  letter-spacing: 0.18em;
-  text-transform: uppercase;
+.top-icon-btn:hover,
+.top-search:hover,
+.top-user:hover,
+.toolbar-ghost:hover,
+.soft-chip:hover,
+.selection-chip:hover,
+.model-chip:hover {
+  background: #e6e8ef;
 }
 
-.ai-sidebar__title {
-  margin-top: 6px;
-  font-size: 28px;
-  font-weight: 800;
-  letter-spacing: -0.04em;
-}
-
-.icon-button,
-.soft-chip,
-.toolbar-chip,
-.send-button,
-.thread-item__delete,
-.prompt-card,
-.retry-button,
-.transcript-item__toggle,
-.model-card__item {
-  border: 1px solid transparent;
-  font: inherit;
+.top-user {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 4px;
+  border-radius: 999px;
   background: transparent;
 }
 
-.icon-button {
-  width: 34px;
-  height: 34px;
-  border-radius: 12px;
-  color: var(--muted);
-  cursor: pointer;
-}
-
-.ai-main__mobile-trigger {
-  display: none;
-}
-
-.icon-button:hover,
-.thread-item__delete:hover,
-.soft-chip:hover,
-.toolbar-chip:hover,
-.prompt-card:hover,
-.model-card__item:hover {
-  background: rgba(15, 23, 42, 0.05);
-}
-
-.model-card {
-  padding: 16px;
-  border: 1px solid var(--line);
-  border-radius: 20px;
-  background: rgba(255, 255, 255, 0.62);
-}
-
-.model-card__title {
-  margin-top: 8px;
-  font-size: 18px;
-  font-weight: 700;
-}
-
-.model-card__copy,
-.thread-item__meta,
-.transcript-item__time,
-.empty-stage__copy,
-.status-banner,
-.transcript-item__notice {
-  color: var(--muted);
-}
-
-.model-card__copy,
-.model-card__empty,
-.model-card__hint,
-.thread-empty,
-.attachment-dialog__hint,
-.attachment-panel__empty,
-.attachment-option__copy small {
-  line-height: 1.6;
-}
-
-.model-card__copy,
-.model-card__empty,
-.model-card__hint {
-  margin-top: 12px;
-}
-
-.model-card__list {
+.top-user__meta {
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  margin-top: 12px;
+  text-align: right;
 }
 
-.model-card__item {
+.ai-workspace {
+  display: grid;
+  grid-template-columns: 300px minmax(0, 1fr);
+  flex: 1;
+  min-height: 0;
+}
+
+.conversation-history {
   display: flex;
-  width: 100%;
+  min-height: 0;
+  flex-direction: column;
+  gap: 16px;
+  padding: 20px;
+  background: #f1f3fa;
+  border-right: 1px solid rgba(192, 199, 212, 0.45);
+}
+
+.conversation-history__head,
+.knowledge-card__head,
+.chat-stage__header,
+.chat-stage__meta,
+.composer-box__toptools,
+.status-banner,
+.attachment-dialog__footer,
+.attachment-dialog__footer-actions,
+.transcript-item__head,
+.composer-box__toolbar,
+.composer-box__left-tools,
+.composer-box__right-tools {
+  display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 12px 14px;
-  border-color: var(--line);
-  border-radius: 16px;
-  background: rgba(255, 255, 255, 0.64);
-  color: var(--text);
-  cursor: pointer;
+  gap: 10px;
 }
 
-.model-card__item.is-active {
-  border-color: rgba(15, 23, 42, 0.18);
-  background: rgba(15, 23, 42, 0.08);
-}
-
-.model-card__item-name,
-.thread-item__title,
+.section-eyebrow,
 .transcript-item__label,
-.attachment-dialog__label,
-.attachment-panel__title {
+.citation-panel__title {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: #5f6775;
+}
+
+.conversation-history__head h3,
+.chat-stage__header h2 {
+  margin: 4px 0 0;
+  font-size: 22px;
+  line-height: 1.2;
+  font-weight: 800;
+  color: #181c20;
+}
+
+.knowledge-card {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 16px;
+  border-radius: 18px;
+  background: #ffffff;
+  border: 1px solid rgba(192, 199, 212, 0.45);
+}
+
+.knowledge-subtabs {
+  display: flex;
+  gap: 10px;
+}
+
+.knowledge-subtabs__item,
+.mini-link {
+  padding: 0;
+  background: transparent;
+  color: #0060a9;
   font-weight: 700;
 }
 
-.model-card__item-meta,
-.model-card__empty,
-.model-card__hint,
-.thread-item__meta,
-.transcript-item__time {
-  font-size: 13px;
+.knowledge-subtabs__item.is-active {
+  padding: 8px 12px;
+  border-radius: 999px;
+  background: rgba(64, 158, 255, 0.12);
 }
 
-.model-card__hint.is-error,
-.transcript-item__meta .is-error,
-.transcript-item__notice,
-.status-banner--error {
-  color: var(--danger);
+.knowledge-selected {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
 }
 
-.thread-list {
+.mini-link--block {
+  text-align: left;
+}
+
+.thread-list--history,
+.thread-list--drawer {
   display: flex;
   flex: 1;
+  min-height: 0;
   flex-direction: column;
   gap: 10px;
   overflow-y: auto;
@@ -1289,96 +1479,153 @@ onBeforeUnmount(() => {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   gap: 8px;
-  align-items: start;
+  padding: 4px;
+  border-radius: 16px;
+  background: transparent;
+  transition: background 0.2s ease;
+}
+
+.thread-item.is-active {
+  background: #fff;
+  box-shadow: 0 10px 24px rgba(0, 96, 169, 0.08);
 }
 
 .thread-item__main {
-  width: 100%;
-  padding: 14px 16px;
-  border: 1px solid transparent;
-  border-radius: 18px;
-  background: transparent;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+  padding: 12px;
+  border-radius: 12px;
   text-align: left;
-  cursor: pointer;
+  background: transparent;
 }
 
-.thread-item__main:hover,
-.thread-item.is-active .thread-item__main {
-  background: rgba(255, 255, 255, 0.66);
-  border-color: var(--line);
+.thread-item__title {
+  color: #181c20;
+  font-weight: 700;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
-.thread-item__meta {
-  margin-top: 8px;
+.thread-item__meta,
+.transcript-item__time,
+.transcript-item__notice,
+.attachment-option__copy small,
+.citation-card span,
+.citation-card small,
+.composer-box__hint {
+  color: #5f6775;
 }
 
 .thread-item__delete {
-  width: 30px;
-  height: 30px;
-  border-radius: 10px;
-  color: var(--muted);
-  cursor: pointer;
+  width: 34px;
+  height: 34px;
+  align-self: center;
+  border-radius: 999px;
+  background: transparent;
+  color: #5f6775;
 }
 
-.thread-empty {
-  padding: 16px;
-  border-radius: 18px;
-  background: rgba(255, 255, 255, 0.6);
-}
-
-.ai-main {
+.chat-stage {
   display: flex;
-  flex-direction: column;
   min-width: 0;
+  min-height: 0;
+  flex-direction: column;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.92), rgba(248, 249, 255, 0.96));
 }
 
-.ai-main__header {
-  padding: 20px 22px;
-  border-bottom: 1px solid var(--line);
-  background: rgba(255, 255, 255, 0.58);
-  backdrop-filter: blur(18px);
+.chat-stage__header {
+  padding: 22px 24px 16px;
 }
 
 .run-chip,
-.soft-chip,
+.model-chip,
 .toolbar-chip,
-.ai-main__model {
+.selection-chip,
+.soft-chip {
   display: inline-flex;
   align-items: center;
   gap: 8px;
-  padding: 10px 14px;
+  padding: 8px 12px;
   border-radius: 999px;
-  border: 1px solid var(--line);
-  background: rgba(255, 255, 255, 0.82);
+  background: #e6e8ef;
+  color: #404752;
 }
 
-.run-chip {
-  color: var(--text);
-  font-weight: 600;
+.run-chip.is-live {
+  background: rgba(64, 158, 255, 0.14);
+  color: #0060a9;
 }
 
-.ai-stream {
+.run-chip__dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: currentColor;
+}
+
+.message-board {
   flex: 1;
+  min-height: 0;
   overflow-y: auto;
-  padding: 24px;
+  padding: 0 24px 24px;
 }
 
-.ai-stream__inner,
-.composer-box {
-  width: min(100%, 920px);
+.message-board__inner {
+  min-height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+.transcript-list--modern {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+  max-width: 980px;
+  width: 100%;
   margin: 0 auto;
 }
 
-.transcript-list {
-  display: flex;
-  flex-direction: column;
-  gap: 18px;
+.transcript-item {
+  display: grid;
+  grid-template-columns: 44px minmax(0, 1fr);
+  gap: 14px;
 }
 
-.transcript-item {
+.transcript-item.is-user {
+  grid-template-columns: minmax(0, 1fr) 44px;
+}
+
+.transcript-item.is-user .transcript-item__avatar {
+  order: 2;
+}
+
+.transcript-item.is-user .transcript-item__panel {
+  order: 1;
+}
+
+.transcript-item__avatar {
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  border-radius: 14px;
+  background: rgba(85, 175, 40, 0.12);
+  color: #286c00;
+}
+
+.transcript-item.is-user .transcript-item__avatar {
+  border-radius: 999px;
+  background: rgba(64, 158, 255, 0.12);
+  color: #0060a9;
+}
+
+.transcript-item__panel {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 8px;
 }
 
 .transcript-item.is-user .transcript-item__head {
@@ -1386,94 +1633,231 @@ onBeforeUnmount(() => {
 }
 
 .transcript-item__body {
-  max-width: 88%;
-  padding: 16px 18px;
-  border-radius: 22px;
-  border: 1px solid var(--line);
-  line-height: 1.8;
+  padding: 18px;
+  border-radius: 20px;
+  background: #f1f3fa;
+  color: #181c20;
+  box-shadow: 0 10px 28px rgba(0, 96, 169, 0.05);
 }
 
 .transcript-item.is-user .transcript-item__body {
-  margin-left: auto;
-  background: var(--panel);
+  background: rgba(64, 158, 255, 0.08);
+  border: 1px solid rgba(64, 158, 255, 0.18);
 }
 
-.transcript-item.is-assistant .transcript-item__body {
-  background: rgba(255, 255, 255, 0.72);
-}
-
-.transcript-item__body.is-failed {
-  border-color: rgba(190, 24, 60, 0.22);
-}
-
-.transcript-item__content {
-  white-space: pre-wrap;
-  word-break: break-word;
-}
-
-.transcript-item__content.is-collapsed {
-  display: -webkit-box;
-  overflow: hidden;
-  -webkit-line-clamp: 12;
-  -webkit-box-orient: vertical;
-}
-
-.transcript-item__toggle,
-.retry-button {
-  margin-top: 10px;
-  padding: 0;
-  color: var(--accent);
-  cursor: pointer;
-}
-
-.empty-stage {
+.empty-stage--architect {
   display: flex;
-  min-height: 520px;
+  flex: 1;
   flex-direction: column;
+  align-items: center;
   justify-content: center;
-  gap: 16px;
+  gap: 14px;
+  padding: 40px 16px 24px;
+  text-align: center;
+}
+
+.empty-stage__robot {
+  width: 72px;
+  height: 72px;
+  border-radius: 24px;
+  font-size: 30px;
+  box-shadow: 0 20px 40px rgba(0, 96, 169, 0.18);
 }
 
 .empty-stage__title {
   margin: 0;
-  font-size: clamp(32px, 3.2vw, 42px);
+  font-size: 34px;
+  line-height: 1.1;
   font-weight: 800;
-  letter-spacing: -0.04em;
+  color: #181c20;
 }
 
 .empty-stage__copy {
-  max-width: 720px;
-  margin: 0;
-  line-height: 1.8;
+  max-width: 620px;
 }
 
 .empty-stage__prompts {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 12px;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px;
+  width: 100%;
+  max-width: 980px;
 }
 
 .prompt-card {
-  padding: 14px 16px;
+  padding: 18px;
   border-radius: 18px;
-  border-color: var(--line);
-  color: var(--text);
-  cursor: pointer;
+  background: #fff;
+  border: 1px solid rgba(192, 199, 212, 0.45);
+  color: #181c20;
+  text-align: left;
+  box-shadow: 0 14px 30px rgba(0, 96, 169, 0.05);
+}
+
+.prompt-card:hover,
+.citation-card:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 18px 32px rgba(0, 96, 169, 0.08);
+}
+
+.composer-wrap--architect {
+  padding: 18px 24px 24px;
+  background: linear-gradient(180deg, rgba(248, 249, 255, 0), rgba(248, 249, 255, 1) 34%);
+}
+
+.composer-box--architect {
+  border-radius: 24px;
+  background: #fff;
+  border: 1px solid rgba(192, 199, 212, 0.45);
+  box-shadow: 0 20px 40px rgba(0, 96, 169, 0.08);
+}
+
+.composer-box__toptools {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 14px 16px 0;
+}
+
+.toolbar-ghost {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 12px;
+  border-radius: 12px;
+  background: transparent;
+  color: #404752;
+}
+
+.composer-box__content {
+  padding: 8px 16px 16px;
+}
+
+.composer-box__input--architect {
+  min-height: 56px;
+  width: 100%;
+  resize: none;
+  border: 0;
+  background: transparent;
+  font: inherit;
+  color: #181c20;
+  outline: none;
+}
+
+.send-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 10px 16px;
+  border-radius: 14px;
+  background: linear-gradient(135deg, #409eff, #0060a9);
+  color: #fff;
+  font-weight: 700;
+}
+
+.send-button--architect {
+  width: 48px;
+  height: 48px;
+  padding: 0;
+  border-radius: 14px;
+}
+
+.send-button.is-danger {
+  background: linear-gradient(135deg, #d96b6b, #ba1a1a);
+}
+
+.composer-footnote {
+  margin: 12px 4px 0;
+  text-align: center;
+  font-size: 11px;
+}
+
+.citation-panel--modern {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 14px;
+}
+
+.citation-card {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 12px 14px;
+  border-radius: 14px;
+  background: #fff;
+  border: 1px solid rgba(192, 199, 212, 0.45);
+  text-align: left;
+}
+
+.attachment-dialog--modern,
+.attachment-dialog__grid,
+.attachment-panel__list {
+  display: flex;
+}
+
+.attachment-dialog--modern {
+  flex-direction: column;
+  gap: 18px;
+}
+
+.attachment-dialog__grid {
+  gap: 16px;
+}
+
+.attachment-panel {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-height: 280px;
+  padding: 16px;
+  border-radius: 18px;
+  background: #f8f9ff;
+  border: 1px solid rgba(192, 199, 212, 0.45);
+}
+
+.attachment-panel--secondary {
+  background: #f1f3fa;
+}
+
+.attachment-panel__title {
+  font-size: 14px;
+  font-weight: 700;
+  color: #181c20;
+}
+
+.attachment-panel__list {
+  flex-direction: column;
+  gap: 10px;
+  overflow-y: auto;
+}
+
+.attachment-option {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px 12px;
+  border-radius: 14px;
+  background: #fff;
+}
+
+.attachment-option__copy {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 4px;
 }
 
 .status-banner {
-  margin-bottom: 18px;
-  padding: 12px 16px;
-  border-radius: 16px;
-  border: 1px solid rgba(190, 24, 60, 0.16);
-  background: rgba(254, 242, 242, 0.86);
-}
-
-.status-banner button {
-  border: none;
-  background: transparent;
-  color: inherit;
-  cursor: pointer;
+  margin: 0 auto 16px;
+  max-width: 980px;
+  padding: 12px 14px;
+  border-radius: 14px;
+  background: #fff3f0;
+  color: #ba1a1a;
+  border: 1px solid rgba(186, 26, 26, 0.18);
 }
 
 .thinking-dots {
@@ -1485,8 +1869,9 @@ onBeforeUnmount(() => {
   width: 8px;
   height: 8px;
   border-radius: 999px;
-  background: var(--muted);
-  animation: pulse 1.1s ease-in-out infinite;
+  background: #0060a9;
+  opacity: 0.4;
+  animation: pulse 1.2s infinite ease-in-out;
 }
 
 .thinking-dots span:nth-child(2) {
@@ -1497,175 +1882,13 @@ onBeforeUnmount(() => {
   animation-delay: 0.3s;
 }
 
-.composer-wrap {
-  position: sticky;
-  bottom: 0;
-  padding: 0 24px 24px;
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0) 0%, rgba(244, 247, 251, 0.74) 28%, rgba(244, 247, 251, 0.96) 100%);
-}
-
-.composer-box {
-  display: flex;
-  gap: 14px;
-  align-items: flex-start;
-  border: 1px solid var(--line);
-  border-radius: 24px;
-  background: rgba(255, 255, 255, 0.92);
-  box-shadow: 0 18px 36px var(--shadow-color);
-  padding: 16px 18px;
-}
-
-.composer-box__attach,
-.selection-chip,
-.attachment-option {
-  border: 1px solid var(--line);
-  background: rgba(255, 255, 255, 0.78);
-}
-
-.composer-box__attach {
-  width: 44px;
-  height: 44px;
-  flex: 0 0 auto;
-  border-radius: 16px;
-  color: var(--text);
-  font-size: 24px;
-  line-height: 1;
-  cursor: pointer;
-}
-
-.composer-box__content {
-  flex: 1;
-  min-width: 0;
-}
-
-.composer-box__selection {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 10px;
-  margin-bottom: 12px;
-}
-
-.selection-chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  padding: 8px 12px;
-  border-radius: 999px;
-  color: var(--text);
-  cursor: pointer;
-}
-
-.selection-chip.is-project {
-  background: rgba(15, 23, 42, 0.08);
-}
-
-.composer-box__input {
-  width: 100%;
-  min-height: 56px;
-  max-height: 220px;
-  border: none;
-  outline: none;
-  resize: none;
-  background: transparent;
-  color: var(--text);
-  font-size: 16px;
-  line-height: 1.8;
-}
-
-.composer-box__input::placeholder {
-  color: var(--muted);
-}
-
-.send-button {
-  padding: 10px 18px;
-  border-radius: 999px;
-  background: var(--accent);
-  color: #ffffff;
-  cursor: pointer;
-}
-
-.send-button:disabled,
-.model-card__item:disabled,
-.icon-button:disabled,
-.soft-chip:disabled,
-.thread-item__delete:disabled,
-.prompt-card:disabled,
-.composer-box__attach:disabled {
-  opacity: 0.45;
-  cursor: not-allowed;
-}
-
-.attachment-dialog {
-  display: flex;
-  flex-direction: column;
-  gap: 20px;
-}
-
-.attachment-dialog__project,
-.attachment-panel {
-  border: 1px solid var(--line);
-  border-radius: 20px;
-  background: rgba(255, 255, 255, 0.86);
-  padding: 16px;
-}
-
-.attachment-dialog__project-select {
-  width: 100%;
-  margin-top: 10px;
-}
-
-.attachment-dialog__hint {
-  margin-top: 10px;
-}
-
-.attachment-dialog__grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 16px;
-}
-
-.attachment-panel {
-  min-height: 280px;
-}
-
-.attachment-panel__list {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  margin-top: 12px;
-  max-height: 320px;
-  overflow-y: auto;
-}
-
-.attachment-option {
-  display: flex;
-  gap: 10px;
-  align-items: flex-start;
-  padding: 12px;
-  border-radius: 16px;
-  cursor: pointer;
-}
-
-.attachment-option input {
-  margin-top: 4px;
-}
-
-.attachment-option__copy {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-
-.thread-list--drawer {
-  padding-top: 6px;
-}
-
 @keyframes pulse {
+
   0%,
   80%,
   100% {
-    transform: scale(0.8);
-    opacity: 0.45;
+    transform: scale(0.75);
+    opacity: 0.35;
   }
 
   40% {
@@ -1675,45 +1898,81 @@ onBeforeUnmount(() => {
 }
 
 @media (max-width: 1200px) {
-  .ai-shell {
+  .ai-workspace {
+    grid-template-columns: 280px minmax(0, 1fr);
+  }
+
+  .empty-stage__prompts {
     grid-template-columns: 1fr;
-  }
-
-  .ai-sidebar {
-    display: none;
-  }
-
-  .ai-main__mobile-trigger {
-    display: inline-flex;
   }
 }
 
-@media (max-width: 900px) {
-  .ai-main__header,
-  .ai-stream,
-  .composer-wrap {
-    padding-left: 16px;
-    padding-right: 16px;
+@media (max-width: 960px) {
+
+  .architect-shell,
+  .ai-workspace,
+  .attachment-dialog__grid {
+    grid-template-columns: 1fr;
   }
 
-  .ai-main__header,
-  .composer-box__toolbar,
-  .ai-main__actions {
+  .architect-shell {
+    display: flex;
     flex-direction: column;
-    align-items: flex-start;
   }
 
-  .composer-box__left-tools,
-  .composer-box__right-tools,
-  .empty-stage__prompts {
+  .architect-nav {
+    gap: 12px;
+  }
+
+  .architect-menu {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .conversation-history {
+    border-right: 0;
+    border-bottom: 1px solid rgba(192, 199, 212, 0.45);
+  }
+}
+
+@media (max-width: 720px) {
+
+  .architect-topbar,
+  .chat-stage__header,
+  .composer-wrap--architect,
+  .message-board,
+  .conversation-history {
+    padding-left: 14px;
+    padding-right: 14px;
+  }
+
+  .architect-topbar,
+  .chat-stage__header,
+  .composer-box__toolbar,
+  .composer-box__toptools,
+  .architect-topbar__actions {
     flex-wrap: wrap;
   }
 
-  .transcript-item__body {
-    max-width: 100%;
+  .transcript-item,
+  .transcript-item.is-user {
+    grid-template-columns: 1fr;
   }
 
-  .attachment-dialog__grid {
+  .transcript-item__avatar,
+  .transcript-item.is-user .transcript-item__avatar {
+    order: 0;
+  }
+
+  .transcript-item.is-user .transcript-item__panel {
+    order: 0;
+  }
+
+  .transcript-item.is-user .transcript-item__head {
+    justify-content: space-between;
+  }
+
+  .architect-menu {
     grid-template-columns: 1fr;
   }
 }

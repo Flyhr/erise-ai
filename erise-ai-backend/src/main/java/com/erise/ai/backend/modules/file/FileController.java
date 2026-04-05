@@ -12,6 +12,7 @@ import com.erise.ai.backend.common.entity.AuditableEntity;
 import com.erise.ai.backend.common.exception.BizException;
 import com.erise.ai.backend.common.exception.ErrorCodes;
 import com.erise.ai.backend.common.util.SecurityUtils;
+import com.erise.ai.backend.common.util.TextContentUtils;
 import com.erise.ai.backend.integration.storage.MinioStorageClient;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
@@ -20,6 +21,7 @@ import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
+import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.Base64;
 import java.util.List;
@@ -69,10 +71,11 @@ public class FileController {
     private final FileService fileService;
 
     @GetMapping
-    public ApiResponse<PageResponse<FileView>> page(@RequestParam Long projectId,
-                                                    @RequestParam(defaultValue = "1") long pageNum,
-                                                    @RequestParam(defaultValue = "10") long pageSize) {
-        return ApiResponse.success(fileService.page(projectId, pageNum, pageSize));
+    public ApiResponse<PageResponse<FileView>> page(@RequestParam(required = false) Long projectId,
+                                                     @RequestParam(required = false) String q,
+                                                     @RequestParam(defaultValue = "1") long pageNum,
+                                                     @RequestParam(defaultValue = "10") long pageSize) {
+        return ApiResponse.success(fileService.page(projectId, q, pageNum, pageSize));
     }
 
     @PostMapping("/init-upload")
@@ -133,12 +136,17 @@ class FileService {
     private final AuditLogService auditLogService;
     private final KnowledgeService knowledgeService;
 
-    PageResponse<FileView> page(Long projectId, long pageNum, long pageSize) {
-        projectService.requireAccessibleProject(projectId);
-        Page<FileEntity> page = fileMapper.selectPage(Page.of(pageNum, pageSize),
-                new LambdaQueryWrapper<FileEntity>()
-                        .eq(FileEntity::getProjectId, projectId)
-                        .orderByDesc(FileEntity::getUpdatedAt));
+    PageResponse<FileView> page(Long projectId, String keyword, long pageNum, long pageSize) {
+        var currentUser = SecurityUtils.currentUser();
+        if (projectId != null) {
+            projectService.requireAccessibleProject(projectId);
+        }
+        LambdaQueryWrapper<FileEntity> wrapper = new LambdaQueryWrapper<FileEntity>()
+                .eq(projectId != null, FileEntity::getProjectId, projectId)
+                .eq(!currentUser.isAdmin(), FileEntity::getOwnerUserId, currentUser.userId())
+                .like(keyword != null && !keyword.isBlank(), FileEntity::getFileName, keyword == null ? null : keyword.trim())
+                .orderByDesc(FileEntity::getUpdatedAt);
+        Page<FileEntity> page = fileMapper.selectPage(Page.of(pageNum, pageSize), wrapper);
         return PageResponse.of(page.getRecords().stream().map(this::toView).toList(), pageNum, pageSize, page.getTotal());
     }
 
@@ -221,6 +229,9 @@ class FileService {
         if (inline && "docx".equalsIgnoreCase(entity.getFileExt())) {
             return docxPreview(entity);
         }
+        if (inline && "txt".equalsIgnoreCase(entity.getFileExt())) {
+            return txtPreview(entity);
+        }
         InputStream stream = storageClient.getObject(entity.getStorageKey());
         ContentDisposition disposition = inline
                 ? ContentDisposition.inline().filename(entity.getFileName(), StandardCharsets.UTF_8).build()
@@ -269,6 +280,8 @@ class FileService {
         var currentUser = SecurityUtils.currentUser();
         FileEntity entity = requireAccessibleFile(fileId);
         fileMapper.deleteById(fileId);
+        fileEditContentMapper.delete(new LambdaQueryWrapper<FileEditContentEntity>().eq(FileEditContentEntity::getFileId, fileId));
+        storageClient.removeObject(entity.getStorageKey());
         knowledgeService.deleteForSource(entity.getProjectId(), "FILE", fileId);
         auditLogService.log(currentUser, "FILE_DELETE", "FILE", fileId, null);
     }
@@ -316,8 +329,8 @@ class FileService {
         }
         try (InputStream stream = storageClient.getObject(entity.getStorageKey())) {
             return switch (entity.getFileExt() == null ? "" : entity.getFileExt().toLowerCase(Locale.ROOT)) {
-                case "txt" -> new String(stream.readAllBytes(), StandardCharsets.UTF_8);
-                case "md", "markdown" -> stripMarkdown(new String(stream.readAllBytes(), StandardCharsets.UTF_8));
+                case "txt" -> TextContentUtils.decodeText(stream.readAllBytes());
+                case "md", "markdown" -> stripMarkdown(TextContentUtils.decodeText(stream.readAllBytes()));
                 case "pdf" -> extractPdfText(stream);
                 case "doc" -> extractDocText(stream);
                 case "docx" -> extractDocxText(stream);
@@ -411,10 +424,25 @@ class FileService {
         }
     }
 
+    private ResponseEntity<InputStreamResource> txtPreview(FileEntity entity) {
+        try (InputStream stream = storageClient.getObject(entity.getStorageKey())) {
+            String html = wrapDocumentHtml(entity.getFileName(), "TXT Preview", escapeHtml(TextContentUtils.decodeText(stream.readAllBytes())));
+            ContentDisposition disposition = ContentDisposition.inline()
+                    .filename(stripExtension(entity.getFileName()) + ".html", StandardCharsets.UTF_8)
+                    .build();
+            return ResponseEntity.ok()
+                    .header(HttpHeaders.CONTENT_DISPOSITION, disposition.toString())
+                    .contentType(MediaType.TEXT_HTML)
+                    .body(new InputStreamResource(new ByteArrayInputStream(html.getBytes(StandardCharsets.UTF_8))));
+        } catch (IOException exception) {
+            throw new BizException(ErrorCodes.FILE_ERROR, "TXT preview failed: " + exception.getMessage());
+        }
+    }
+
     private List<KnowledgeService.ChunkInput> extractChunks(FileEntity file, InputStream stream) throws IOException {
         return switch (file.getFileExt()) {
-            case "txt" -> knowledgeService.splitText(new String(stream.readAllBytes(), StandardCharsets.UTF_8), null);
-            case "md", "markdown" -> knowledgeService.splitText(stripMarkdown(new String(stream.readAllBytes(), StandardCharsets.UTF_8)), null);
+            case "txt" -> knowledgeService.splitText(TextContentUtils.decodeText(stream.readAllBytes()), null);
+            case "md", "markdown" -> knowledgeService.splitText(stripMarkdown(TextContentUtils.decodeText(stream.readAllBytes())), null);
             case "pdf" -> extractPdf(stream);
             case "doc" -> extractDoc(stream);
             case "docx" -> extractDocx(stream);
@@ -663,6 +691,21 @@ class FileService {
         return index > 0 ? fileName.substring(0, index) : fileName;
     }
 
+    private String wrapDocumentHtml(String title, String eyebrow, String bodyText) {
+        return "<!DOCTYPE html><html lang=\"zh-CN\"><head><meta charset=\"UTF-8\" />"
+                + "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\" />"
+                + "<title>" + escapeHtml(stripExtension(title)) + "</title>"
+                + "<style>"
+                + "body{margin:0;background:#eef3fb;font-family:'Segoe UI','PingFang SC','Microsoft YaHei',sans-serif;color:#1c2536;}"
+                + "main{max-width:960px;margin:0 auto;padding:32px 20px 56px;}"
+                + "article{background:#fff;border:1px solid rgba(66,92,145,.16);border-radius:16px;box-shadow:0 12px 32px rgba(15,23,42,.08);padding:32px;line-height:1.8;}"
+                + ".eyebrow{color:#667085;font-size:13px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;margin-bottom:16px;}"
+                + "pre{margin:0;white-space:pre-wrap;word-break:break-word;font-family:'Consolas','Cascadia Code','Microsoft YaHei',monospace;font-size:14px;}"
+                + "</style></head><body><main><article><div class=\"eyebrow\">" + eyebrow + "</div><pre>"
+                + bodyText
+                + "</pre></article></main></body></html>";
+    }
+
     private String stripMarkdown(String markdown) {
         return markdown
                 .replaceAll("```[\\s\\S]*?```", " ")
@@ -693,12 +736,24 @@ class FileParseWorker {
 
     @Scheduled(fixedDelay = 15000)
     public void poll() {
+        cleanupStaleUploads();
         queueDocxBackfillTasks();
         List<FileParseTaskEntity> tasks = fileParseTaskMapper.selectList(new LambdaQueryWrapper<FileParseTaskEntity>()
                 .eq(FileParseTaskEntity::getTaskStatus, "PENDING")
                 .orderByAsc(FileParseTaskEntity::getCreatedAt)
                 .last("limit 5"));
         tasks.forEach(fileService::handleParseTask);
+    }
+
+    private void cleanupStaleUploads() {
+        LocalDateTime threshold = LocalDateTime.now().minusMinutes(30);
+        List<FileEntity> staleFiles = fileMapper.selectList(new LambdaQueryWrapper<FileEntity>()
+                .eq(FileEntity::getUploadStatus, "INIT")
+                .lt(FileEntity::getCreatedAt, threshold)
+                .last("limit 20"));
+        for (FileEntity file : staleFiles) {
+            fileMapper.deleteById(file.getId());
+        }
     }
 
     private void queueDocxBackfillTasks() {

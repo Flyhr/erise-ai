@@ -1,90 +1,77 @@
 # Erise-AI
 
-Erise-AI 当前默认运行架构已经切换为：
+Erise-AI 是一个面向个人与轻量团队的项目知识库系统，核心能力覆盖项目管理、文件与文档协作、统一检索，以及 AI / RAG 助理能力。
 
-- `erise-ai-ui`：Vue 3 + Vite 前端
-- `erise-ai-backend`：Spring Boot 业务后端与 AI 网关
-- `AiAssistant`：Python AI 聊天服务
+当前运行链路已经统一为：
 
-##
-
-- `erise-ai-cloud`：旧 Java AI 服务，不参与运行
-
-## 仓库结构
-
-```text
-AiAssistant/        Python AI chat service
-erise-ai-backend/  Spring Boot business backend
-erise-ai-cloud/    Legacy Java AI service kept for reference
-erise-ai-ui/       Vue 3 frontend
-deploy/            Nginx and deployment assets
-docs/              Integration and deployment notes
-docker-compose.yml Local development stack
-```
-
-## AI 聊天运行链路
-
-正式链路：
-
-`UI -> /api/v1/ai -> Java Backend -> Python AiAssistant -> Model Provider`
+`UI -> Nginx -> Java Backend -> Python AiAssistant -> Model Provider`
 
 其中：
 
-- Java 负责鉴权、项目权限、公共 API 与 SSE 转发
-- Python 负责会话、消息、模型调用、取消生成、项目上下文拼装
-- 旧的 `erise-ai-cloud` 不再承接正式功能，只保留源码，
+- `erise-ai-ui`：Vue 3 + Vite 前端
+- `erise-ai-backend`：Spring Boot 业务后端与统一网关入口
+- `AiAssistant`：Python AI 聊天服务
+- `deploy/nginx`：开发态与部署态 Nginx 配置
 
-## 快速开始
+## 推荐开发方式
 
-1. 复制 `.env.example` 为 `.env`
-2. 填写 `INTERNAL_API_KEY` 与至少一个模型 provider key
-3. 启动整套环境：
+开发态统一使用纯 Docker 方式启动，不要求本机额外安装 Java、Node 或 Python 运行环境。
 
-```bash
-docker compose up --build
-```
+首次使用：
 
-4. 打开以下地址检查状态：
-
-- Nginx: `http://localhost:8088`
-- Backend health: `http://localhost:8080/actuator/health`
-- Python AI health: `http://localhost:8081/internal/ai/chat/health`
-
-## `docker compose up --build` 检查清单
-
-1. 运行 `docker compose ps`，确认 `mysql`、`redis`、`cloud` 已健康，`backend`、`ui`、`nginx` 已启动。
-2. 运行 `docker compose logs cloud --tail=100`，确认 Python AI 服务没有启动期异常。
-3. 运行 `docker compose logs backend --tail=100`，确认 Java 后端没有代理 Python AI 的连接错误。
-4. 访问 `http://localhost:8088` 登录系统并进入 AI 页面。
-5. 确认 AI 页侧边栏显示的是后端真实返回的模型列表。
-6. 发送消息、停止生成、刷新页面，确认完整聊天链路可用。
-
-完整版本见 `docs/AI_CHAT_INTEGRATION.md`。
-
-## Python AI 单独启动
+1. 复制 `.env.dev.example` 为 `.env.dev`
+2. 按需填写 `OPENAI_API_KEY`、`DEEPSEEK_API_KEY`、`INTERNAL_API_KEY` 等配置
+3. 在仓库根目录执行：
 
 ```bash
-cd AiAssistant
-pip install -r requirements.txt
-python scripts/init_db.py
-python scripts/smoke_test.py
-uvicorn src.app.main:app --host 0.0.0.0 --port 8081 --reload
+docker compose --env-file .env.dev -f docker-compose.dev.yml up --build
 ```
 
-## 关键文档
+停止环境：
 
+```bash
+docker compose --env-file .env.dev -f docker-compose.dev.yml down
+```
+
+## 开发态访问地址
+
+- Chrome 统一入口：`http://localhost:8088`
+- 前端直连调试口：`http://localhost:5173`
+- Java Backend 健康检查：`http://localhost:8080/actuator/health`
+- Python AI 健康检查：`http://localhost:8081/internal/ai/chat/health`
+
+## 热更新说明
+
+开发态下，源码直接挂载到容器内，依赖和构建产物保留在容器卷中：
+
+- 前端：Vite HMR + polling，本地修改 Vue / TS / CSS 后浏览器直接热更新
+- Python AI：`uvicorn --reload`，修改 `AiAssistant/src` 后容器内自动 reload
+- Java Backend：容器内 watcher + `spring-boot:run` / DevTools 自动重启
+
+说明：
+
+- 前端和 Python 服务可以做到不重新构建镜像即可生效
+- Java 代码无法做到“完全不编译就生效”，但编译与重启都发生在容器内部，不需要重新执行 `docker compose up --build`
+
+## 什么时候需要重新 `--build`
+
+仅在以下场景建议重新构建：
+
+- `package.json` / `package-lock.json` 发生变化
+- `requirements.txt` 发生变化
+- `pom.xml` 或 Maven 依赖发生变化
+- `Dockerfile.dev` 或基础镜像发生变化
+
+日常业务代码、样式、配置文件调整通常不需要重新 `--build`
+
+## 生产与其他说明
+
+- 开发态使用：`docker-compose.dev.yml`
+- 现有部署态编排仍保留：`docker-compose.yml`
+- Nginx 开发态配置文件：`deploy/nginx/default.dev.conf`
+
+## 相关文档
+
+- `docs/DOCKER_DEV_MOUNT.md`
 - `docs/AI_CHAT_INTEGRATION.md`
 - `AiAssistant/README.md`
-- `AiAssistant/INTEGRATION_NOTES.md`
-
-# 存在问题
-
-1. 项目上传文件中txt文本查看时会乱码，且不能相关doc文件一样在线编辑
-2. 上传27.2M大小的的pdf上传失败，140k的pdf文件可以成功:index-DH8bWNw6.js:93 POST http://localhost:8088/api/v1/files/upload 413 (Request Entity Too Large)，且上传失败后，项目列表还是有该文件信息，点击预览没反应，点击详情里面的在线预览提示文件加载失败
-3. 项目大小显示内容太多，要修改为大于0.1M的以M单位显示，小于等于0.1M的以KB单位显示，文件类型以文件实际类型为准，例如果是pff，类型里面就是：PDF
-
-4. 添加文档后不会自动关闭添加文档界面，正常流程是，我添加成功文档后，自动跳转到文档浏览界面；
-5. 文档的预览功能可以编辑文档的内容，正常是点击预览后，只能查看文件内容，不能编辑，编辑功能是点击“编辑”后才可以的
-6. 文档的显示属性多加一个‘创建时间’，文档如果是草稿就背景高亮提示，‘状态’显示‘草稿’，而不是‘
-   DRAFT’，如果是‘已发布’就显示‘已发布’，而不是‘PUBLISHED’
-7. 将项目文件界面中的‘解析状态’改为文件‘上传时间’，‘索引状态’改为显示文件的‘更新时间’，

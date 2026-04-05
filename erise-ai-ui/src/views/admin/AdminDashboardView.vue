@@ -1,42 +1,32 @@
-<template>
-  <div v-if="dashboard" class="section-stack admin-dashboard">
-    <section class="glass-card admin-hero">
-      <div>
-        <div class="admin-hero__eyebrow">Admin Dashboard</div>
-        <h1 class="admin-hero__title">平台运营与 AI 工作链路总览</h1>
-        <div class="page-subtitle">
-          管理端不仅看统计，还要看 AI 请求是如何进入、如何检索知识、如何生成回答、如何落库引用并回到前端页面。
-        </div>
-      </div>
-      <div class="admin-hero__actions">
-        <el-button type="primary" @click="router.push('/workspace')">进入普通工作台</el-button>
-        <el-button plain @click="router.push('/admin/ai-models')">检查模型配置</el-button>
+﻿<template>
+  <div v-if="dashboard" class="page-shell section-stack admin-dashboard">
+    <AppPageHeader
+      title="平台运营与 AI 工作链路总览"
+      eyebrow="后台总览"
+      subtitle="后台只保留高密度运营信息、趋势图和关键审计表，不再使用营销式 hero。"
+    >
+      <template #actions>
+        <el-button type="primary" @click="router.push('/workspace')">进入工作台</el-button>
+        <el-button plain @click="router.push('/admin/ai-models')">查看模型配置</el-button>
         <el-button plain @click="router.push('/admin/audit-logs')">查看审计日志</el-button>
-      </div>
-    </section>
+      </template>
+    </AppPageHeader>
 
     <div class="grid-4">
-      <el-card v-for="metric in metrics" :key="metric.label" class="glass-card metric-card" shadow="never">
-        <div class="metric-card__label">{{ metric.label }}</div>
-        <div class="metric-card__value">{{ metric.value }}</div>
-        <div class="metric-card__hint">{{ metric.hint }}</div>
-      </el-card>
+      <AppStatCard v-for="metric in metrics" :key="metric.label" :label="metric.label" :value="metric.value" :hint="metric.hint" />
     </div>
 
     <div class="grid-2">
-      <el-card class="glass-card chart-card" shadow="never">
-        <div class="chart-title">访问趋势</div>
+      <AppSectionCard title="访问趋势" description="最近一段时间的平台访问变化。">
         <div ref="visitChartRef" class="chart-box" />
-      </el-card>
-      <el-card class="glass-card chart-card" shadow="never">
-        <div class="chart-title">下载趋势</div>
+      </AppSectionCard>
+      <AppSectionCard title="下载趋势" description="最近一段时间的资料下载变化。">
         <div ref="downloadChartRef" class="chart-box" />
-      </el-card>
+      </AppSectionCard>
     </div>
 
     <div class="grid-2">
-      <el-card class="glass-card" shadow="never">
-        <template #header>AI 工作原理</template>
+      <AppSectionCard title="AI 工作原理" description="帮助后台同学快速理解请求、检索、生成和落库链路。">
         <div class="workflow-list">
           <article v-for="step in workflowSteps" :key="step.title" class="workflow-item">
             <div class="workflow-item__index">{{ step.index }}</div>
@@ -46,48 +36,44 @@
             </div>
           </article>
         </div>
-      </el-card>
+      </AppSectionCard>
 
-      <el-card class="glass-card" shadow="never">
-        <template #header>当前实现重点</template>
+      <AppSectionCard title="当前实现重点" description="这一轮平台改造里需要持续守住的交互和系统原则。">
         <div class="principle-list">
           <div v-for="item in principleNotes" :key="item.title" class="principle-item">
             <div class="principle-item__title">{{ item.title }}</div>
             <div class="principle-item__desc">{{ item.description }}</div>
           </div>
         </div>
-      </el-card>
+      </AppSectionCard>
     </div>
 
     <div class="grid-2">
-      <el-card class="glass-card" shadow="never">
-        <template #header>安全日志</template>
-        <el-table :data="dashboard.securityLogs" stripe>
+      <AppSectionCard title="安全日志" description="最近的登录记录与设备信息。" :unpadded="true">
+        <AppDataTable :data="dashboard.securityLogs" stripe>
           <el-table-column prop="username" label="账号" min-width="140" />
           <el-table-column prop="loginIp" label="IP" min-width="140" />
           <el-table-column prop="userAgent" label="设备信息" min-width="220" show-overflow-tooltip />
           <el-table-column prop="createdAt" label="时间" min-width="180" />
-        </el-table>
-      </el-card>
+        </AppDataTable>
+      </AppSectionCard>
 
-      <el-card class="glass-card" shadow="never">
-        <template #header>下载日志</template>
-        <el-table :data="dashboard.downloadLogs" stripe>
+      <AppSectionCard title="下载日志" description="最近的文件和文档下载操作。" :unpadded="true">
+        <AppDataTable :data="dashboard.downloadLogs" stripe>
           <el-table-column prop="operatorUsername" label="操作人" min-width="140" />
           <el-table-column prop="resourceId" label="资源 ID" width="120" />
           <el-table-column prop="detailJson" label="详情" min-width="220" show-overflow-tooltip />
           <el-table-column prop="createdAt" label="时间" min-width="180" />
-        </el-table>
-      </el-card>
+        </AppDataTable>
+      </AppSectionCard>
     </div>
 
-    <el-card class="glass-card" shadow="never">
-      <template #header>近 7 日高频操作</template>
-      <el-table :data="dashboard.topActions" stripe>
+    <AppSectionCard title="近 7 日高频动作" description="帮助确认平台近期最常见的关键动作。" :unpadded="true">
+      <AppDataTable :data="dashboard.topActions" stripe>
         <el-table-column prop="actionCode" label="动作编码" min-width="220" />
         <el-table-column prop="total" label="次数" width="120" />
-      </el-table>
-    </el-card>
+      </AppDataTable>
+    </AppSectionCard>
   </div>
 </template>
 
@@ -96,6 +82,10 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import * as echarts from 'echarts'
 import { getAdminDashboard, type AdminDashboardView } from '@/api/admin'
+import AppDataTable from '@/components/common/AppDataTable.vue'
+import AppPageHeader from '@/components/common/AppPageHeader.vue'
+import AppSectionCard from '@/components/common/AppSectionCard.vue'
+import AppStatCard from '@/components/common/AppStatCard.vue'
 
 const router = useRouter()
 const dashboard = ref<AdminDashboardView>()
@@ -118,7 +108,7 @@ const workflowSteps = [
   {
     index: '03',
     title: '模型生成或本地兜底',
-    description: '优先调用配置好的模型；如果模型不可用，则退回基于知识块的本地摘要回答。',
+    description: '优先调用配置好的模型；如果模型不可用，则回退到基于知识块的本地摘要回答。',
   },
   {
     index: '04',
@@ -147,7 +137,7 @@ const principleNotes = [
   },
   {
     title: '资料入库链路',
-    description: '当前已有 PDF / Markdown / TXT / DOC / DOCX 文本解析和 Office 内容入库；OCR 仍需要额外接入识别引擎。',
+    description: '当前已具备 PDF、Markdown、TXT、DOC、DOCX 文本解析和 Office 内容入库，OCR 仍需额外接入识别引擎。',
   },
 ]
 
@@ -296,39 +286,6 @@ onBeforeUnmount(() => {
   gap: 22px;
 }
 
-.admin-hero {
-  display: flex;
-  justify-content: space-between;
-  gap: 24px;
-  align-items: flex-start;
-  padding: 28px;
-}
-
-.admin-hero__eyebrow {
-  font-size: 12px;
-  letter-spacing: 0.18em;
-  color: var(--muted);
-  text-transform: uppercase;
-}
-
-.admin-hero__title {
-  margin: 10px 0 0;
-  font-size: clamp(30px, 4vw, 42px);
-  letter-spacing: -0.04em;
-}
-
-.admin-hero__actions {
-  display: flex;
-  gap: 12px;
-  flex-wrap: wrap;
-}
-
-.metric-card__hint {
-  margin-top: 10px;
-  color: var(--muted);
-  line-height: 1.7;
-}
-
 .workflow-list,
 .principle-list {
   display: flex;
@@ -374,11 +331,5 @@ onBeforeUnmount(() => {
 
 .principle-item {
   grid-template-columns: 1fr;
-}
-
-@media (max-width: 900px) {
-  .admin-hero {
-    flex-direction: column;
-  }
 }
 </style>

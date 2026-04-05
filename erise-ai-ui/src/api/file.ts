@@ -7,7 +7,7 @@ export interface InitUploadResponse {
   uploadUrl: string
 }
 
-export const getFiles = (params: { projectId: number; pageNum?: number; pageSize?: number }) =>
+export const getFiles = (params: { projectId?: number; q?: string; pageNum?: number; pageSize?: number }) =>
   http.get<never, PageResponse<FileView>>('/v1/files', { params })
 
 export const initUpload = (payload: {
@@ -46,7 +46,7 @@ const fetchBinary = async (path: string) => {
   const headers = token ? { Authorization: `Bearer ${token}` } : undefined
   const response = await fetch(resolveApiUrl(path), { headers })
   if (!response.ok) {
-    throw new Error('文件获取失败')
+    throw new Error('Unable to fetch file content')
   }
   return response
 }
