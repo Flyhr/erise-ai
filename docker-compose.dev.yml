@@ -63,10 +63,10 @@ services:
     container_name: erise-ai-backend-dev
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8080/actuator/health"] # Spring Boot 默认健康检查端点
-      interval: 5s
-      timeout: 3s
+      interval: 15s
+      timeout: 10s
       retries: 10
-      start_period: 10s #
+      start_period: 90s #
     restart: unless-stopped
     working_dir: /workspace
     env_file:
@@ -155,7 +155,7 @@ services:
       VITE_APP_TITLE: Erise-AI Dev
     depends_on:
       backend:
-        condition: service_started
+        condition: service_healthy
     volumes:
       - ./erise-ai-ui:/workspace
       - ui-node-modules:/workspace/node_modules
@@ -168,15 +168,12 @@ services:
     container_name: erise-ai-nginx-dev
     restart: unless-stopped
     depends_on:
-      # - ui
-      # - backend
-      # - cloud
-      - ui:
-        condition: service_started # ui 只需启动（无健康检查也保持默认行为）
-      - backend:
+      ui:
+        condition: service_started # ui 只需启动
+      backend:
         condition: service_healthy # 等待后端健康检查通过
-      - cloud:
-        condition: service_started # 如果 cloud 没有健康检查，保持 service_started
+      cloud:
+        condition: service_started # cloud 启动即可
     ports:
       - "${NGINX_HTTP_PORT:-8088}:80"
     volumes:
