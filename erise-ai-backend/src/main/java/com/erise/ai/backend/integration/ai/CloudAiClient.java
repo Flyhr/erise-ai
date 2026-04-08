@@ -83,9 +83,21 @@ public class CloudAiClient {
         return get(user, properties.getCloud().getBaseUrl() + "/internal/ai/chat/models", requestId, new TypeReference<List<ModelResponse>>() { });
     }
 
+    public RagIndexUpsertResponse upsertRagIndex(Long userId, RagIndexUpsertRequest request, String requestId) {
+        return post(userId, "/internal/ai/chat/rag/index/upsert", request, requestId, RagIndexUpsertResponse.class);
+    }
+
+    public RagIndexDeleteResponse deleteRagIndex(Long userId, RagIndexDeleteRequest request, String requestId) {
+        return post(userId, "/internal/ai/chat/rag/index/delete", request, requestId, RagIndexDeleteResponse.class);
+    }
+
     private <T> T post(CurrentUser user, String path, Object body, String requestId, Class<T> type) {
+        return post(user.userId(), path, body, requestId, type);
+    }
+
+    private <T> T post(Long userId, String path, Object body, String requestId, Class<T> type) {
         try {
-            HttpEntity<Object> entity = new HttpEntity<>(body, buildHeaders(user, requestId));
+            HttpEntity<Object> entity = new HttpEntity<>(body, buildHeaders(userId, requestId));
             String payload = restTemplate.exchange(
                     properties.getCloud().getBaseUrl() + path,
                     HttpMethod.POST,
@@ -100,7 +112,7 @@ public class CloudAiClient {
 
     private <T> T delete(CurrentUser user, String url, String requestId, Class<T> type) {
         try {
-            HttpEntity<Void> entity = new HttpEntity<>(buildHeaders(user, requestId));
+            HttpEntity<Void> entity = new HttpEntity<>(buildHeaders(user.userId(), requestId));
             String payload = restTemplate.exchange(url, HttpMethod.DELETE, entity, String.class).getBody();
             return readData(payload, type);
         } catch (RestClientException exception) {
@@ -110,7 +122,7 @@ public class CloudAiClient {
 
     private <T> T get(CurrentUser user, String url, String requestId, TypeReference<T> type) {
         try {
-            HttpEntity<Void> entity = new HttpEntity<>(buildHeaders(user, requestId));
+            HttpEntity<Void> entity = new HttpEntity<>(buildHeaders(user.userId(), requestId));
             String payload = restTemplate.exchange(url, HttpMethod.GET, entity, String.class).getBody();
             return readData(payload, type);
         } catch (RestClientException exception) {
@@ -119,11 +131,15 @@ public class CloudAiClient {
     }
 
     private HttpHeaders buildHeaders(CurrentUser user, String requestId) {
+        return buildHeaders(user.userId(), requestId);
+    }
+
+    private HttpHeaders buildHeaders(Long userId, String requestId) {
         HttpHeaders headers = new HttpHeaders();
         headers.setContentType(MediaType.APPLICATION_JSON);
         headers.set("X-Internal-Service-Token", properties.getInternal().getApiKey());
         headers.set("X-Internal-Key", properties.getInternal().getApiKey());
-        headers.set("X-User-Id", String.valueOf(user.userId()));
+        headers.set("X-User-Id", String.valueOf(userId));
         headers.set("X-Org-Id", "0");
         headers.set("X-Request-Id", requestId);
         return headers;
@@ -173,14 +189,64 @@ public class CloudAiClient {
             String message,
             ChatContext context,
             Double temperature,
-            Integer maxTokens
+            Integer maxTokens,
+            String mode,
+            Boolean webSearchEnabled,
+            Double similarityThreshold,
+            Integer topK
     ) {
     }
 
     public record ChatContext(Long projectId, Long documentId, List<AttachmentRef> attachments) {
     }
 
-    public record AttachmentRef(String attachmentType, Long sourceId, Long projectId, String title) {
+    public record AttachmentRef(String attachmentType, Long sourceId, Long projectId, Long sessionId, String title) {
+    }
+
+    public record RagChunkRequest(
+            Integer chunkNum,
+            String chunkText,
+            Integer pageNo,
+            String sectionPath
+    ) {
+    }
+
+    public record RagIndexUpsertRequest(
+            Long userId,
+            String scopeType,
+            Long projectId,
+            Long sessionId,
+            String sourceType,
+            Long sourceId,
+            String sourceName,
+            List<RagChunkRequest> chunks,
+            LocalDateTime updatedAt
+    ) {
+    }
+
+    public record RagIndexDeleteRequest(
+            Long userId,
+            String scopeType,
+            Long projectId,
+            Long sessionId,
+            String sourceType,
+            Long sourceId
+    ) {
+    }
+
+    public record RagIndexUpsertResponse(
+            Integer upserted,
+            String collectionName,
+            String embeddingModelCode,
+            String embeddingVersion,
+            Integer embeddingDimension
+    ) {
+    }
+
+    public record RagIndexDeleteResponse(
+            Boolean deleted,
+            String collectionName
+    ) {
     }
 
     public record ChatResponse(
@@ -189,12 +255,27 @@ public class CloudAiClient {
             Long userMessageId,
             Long assistantMessageId,
             String answer,
+            List<CitationResponse> citations,
+            List<String> usedTools,
+            Double confidence,
+            String refusedReason,
             String scene,
             String modelCode,
             String providerCode,
             String messageStatus,
             Usage usage,
             Integer latencyMs
+    ) {
+    }
+
+    public record CitationResponse(
+            String sourceType,
+            Long sourceId,
+            String sourceTitle,
+            String snippet,
+            Integer pageNo,
+            Double score,
+            String url
     ) {
     }
 
@@ -224,6 +305,9 @@ public class CloudAiClient {
             Long id,
             String role,
             String content,
+            Double confidence,
+            String refusedReason,
+            List<CitationResponse> citations,
             String messageStatus,
             Integer sequenceNo,
             String modelCode,

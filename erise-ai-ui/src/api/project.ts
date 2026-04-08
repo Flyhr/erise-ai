@@ -1,7 +1,7 @@
 import http from './http'
 import type { PageResponse, ProjectDetailView } from '@/types/models'
 
-export const getProjects = (params: { pageNum?: number; pageSize?: number }) =>
+export const getProjects = (params: { pageNum?: number; pageSize?: number; q?: string; status?: string }) =>
   http.get<never, PageResponse<ProjectDetailView>>('/v1/projects', { params })
 
 export const getProject = (id: number) => http.get<never, ProjectDetailView>(`/v1/projects/${id}`)

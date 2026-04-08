@@ -134,7 +134,8 @@ class FileService {
     private final ProjectService projectService;
     private final MinioStorageClient storageClient;
     private final AuditLogService auditLogService;
-    private final KnowledgeService knowledgeService;
+    private final RagKnowledgeService ragKnowledgeService;
+    private final StoredTextExtractionSupport storedTextExtractionSupport;
 
     PageResponse<FileView> page(Long projectId, String keyword, long pageNum, long pageSize) {
         var currentUser = SecurityUtils.currentUser();
@@ -282,7 +283,7 @@ class FileService {
         fileMapper.deleteById(fileId);
         fileEditContentMapper.delete(new LambdaQueryWrapper<FileEditContentEntity>().eq(FileEditContentEntity::getFileId, fileId));
         storageClient.removeObject(entity.getStorageKey());
-        knowledgeService.deleteForSource(entity.getProjectId(), "FILE", fileId);
+        ragKnowledgeService.deleteKbSource(entity.getOwnerUserId(), entity.getProjectId(), "FILE", fileId);
         auditLogService.log(currentUser, "FILE_DELETE", "FILE", fileId, null);
     }
 
@@ -328,14 +329,7 @@ class FileService {
             return stored.getPlainText();
         }
         try (InputStream stream = storageClient.getObject(entity.getStorageKey())) {
-            return switch (entity.getFileExt() == null ? "" : entity.getFileExt().toLowerCase(Locale.ROOT)) {
-                case "txt" -> TextContentUtils.decodeText(stream.readAllBytes());
-                case "md", "markdown" -> stripMarkdown(TextContentUtils.decodeText(stream.readAllBytes()));
-                case "pdf" -> extractPdfText(stream);
-                case "doc" -> extractDocText(stream);
-                case "docx" -> extractDocxText(stream);
-                default -> "";
-            };
+            return storedTextExtractionSupport.extractPlainText(entity.getFileExt(), stream);
         } catch (IOException exception) {
             throw new BizException(ErrorCodes.FILE_ERROR, "File context load failed: " + exception.getMessage());
         }
@@ -350,8 +344,8 @@ class FileService {
             return;
         }
         try (InputStream stream = storageClient.getObject(file.getStorageKey())) {
-            List<KnowledgeService.ChunkInput> chunks = extractChunks(file, stream);
-            knowledgeService.replaceForSource(file.getOwnerUserId(), file.getProjectId(), "FILE", file.getId(), file.getFileName(), chunks);
+            List<RagKnowledgeService.ChunkInput> chunks = extractChunks(file, stream);
+            ragKnowledgeService.replaceKbSource(file.getOwnerUserId(), file.getProjectId(), "FILE", file.getId(), file.getFileName(), chunks);
             file.setParseStatus("SUCCESS");
             file.setIndexStatus("SUCCESS");
             file.setUpdatedBy(file.getOwnerUserId());
@@ -439,43 +433,36 @@ class FileService {
         }
     }
 
-    private List<KnowledgeService.ChunkInput> extractChunks(FileEntity file, InputStream stream) throws IOException {
-        return switch (file.getFileExt()) {
-            case "txt" -> knowledgeService.splitText(TextContentUtils.decodeText(stream.readAllBytes()), null);
-            case "md", "markdown" -> knowledgeService.splitText(stripMarkdown(TextContentUtils.decodeText(stream.readAllBytes())), null);
-            case "pdf" -> extractPdf(stream);
-            case "doc" -> extractDoc(stream);
-            case "docx" -> extractDocx(stream);
-            default -> List.of();
-        };
+    private List<RagKnowledgeService.ChunkInput> extractChunks(FileEntity file, InputStream stream) throws IOException {
+        return storedTextExtractionSupport.extractChunks(file.getFileExt(), stream);
     }
 
-    private List<KnowledgeService.ChunkInput> extractPdf(InputStream stream) throws IOException {
+    private List<RagKnowledgeService.ChunkInput> extractPdf(InputStream stream) throws IOException {
         byte[] bytes = stream.readAllBytes();
         try (PDDocument document = Loader.loadPDF(bytes)) {
-            List<KnowledgeService.ChunkInput> chunks = new ArrayList<>();
+            List<RagKnowledgeService.ChunkInput> chunks = new ArrayList<>();
             PDFTextStripper stripper = new PDFTextStripper();
             for (int page = 1; page <= document.getNumberOfPages(); page++) {
                 stripper.setStartPage(page);
                 stripper.setEndPage(page);
                 String text = stripper.getText(document);
-                chunks.addAll(knowledgeService.splitText(text, page));
+                chunks.addAll(ragKnowledgeService.splitText(text, page));
             }
             return chunks;
         }
     }
 
-    private List<KnowledgeService.ChunkInput> extractDoc(InputStream stream) throws IOException {
+    private List<RagKnowledgeService.ChunkInput> extractDoc(InputStream stream) throws IOException {
         try (HWPFDocument document = new HWPFDocument(stream); WordExtractor extractor = new WordExtractor(document)) {
-            return knowledgeService.splitText(extractor.getText(), null);
+            return ragKnowledgeService.splitText(extractor.getText(), null);
         }
     }
 
-    private List<KnowledgeService.ChunkInput> extractDocx(InputStream stream) throws IOException {
+    private List<RagKnowledgeService.ChunkInput> extractDocx(InputStream stream) throws IOException {
         try (XWPFDocument document = new XWPFDocument(stream)) {
-            List<KnowledgeService.ChunkInput> chunks = new ArrayList<>();
+            List<RagKnowledgeService.ChunkInput> chunks = new ArrayList<>();
             for (String block : readDocxBlocks(document)) {
-                chunks.addAll(knowledgeService.splitText(block, null));
+                chunks.addAll(ragKnowledgeService.splitText(block, null));
             }
             return chunks;
         }

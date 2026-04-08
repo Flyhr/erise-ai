@@ -27,19 +27,22 @@ from src.app.core.constants import (
 )
 from src.app.core.exceptions import AiServiceError
 from src.app.models.ai_message import AiChatMessage
+from src.app.models.ai_message_citation import AiMessageCitation
 from src.app.models.ai_request_log import AiRequestLog
 from src.app.models.ai_session import AiChatSession
 from src.app.schemas.chat import CancelResponse, ChatCompletionRequest, ChatCompletionView, UsageView
 from src.app.schemas.common import PageData
-from src.app.schemas.message import MessageView
+from src.app.schemas.message import CitationView, MessageView
 from src.app.schemas.session import SessionCreateRequest, SessionDetailView, SessionSummaryView
-from src.app.services.context_service import build_prompt_messages
+from src.app.services.context_service import LoadedAttachmentContext, build_prompt_messages
 from src.app.services.document_action_service import apply_document_title_action
 from src.app.services.model_registry import get_model_adapter, get_model_config
+from src.app.services.rag_service import RetrievalDecision, rag_service
 from src.app.utils.sse import sse_event
 
 SYSTEM_PROVIDER_CODE = 'SYSTEM'
 DOCUMENT_TITLE_ACTION_MODEL = 'document-title-update'
+SCOPED_EVIDENCE_GUARD_MODEL = 'scoped-evidence-guard'
 
 
 class CancellationStore:
@@ -161,8 +164,9 @@ class ChatService:
             .offset((page_num - 1) * page_size)
             .limit(page_size)
         ).scalars().all()
+        citation_map = self._load_citation_map(db, [item.id for item in records])
         return PageData(
-            records=[MessageView.model_validate(item).model_dump(by_alias=True) for item in records],
+            records=[self._to_message_view(item, citation_map.get(item.id)).model_dump(by_alias=True) for item in records],
             page_num=page_num,
             page_size=page_size,
             total=total,
@@ -174,9 +178,10 @@ class ChatService:
         messages = db.execute(
             select(AiChatMessage).where(AiChatMessage.session_id == session_id).order_by(AiChatMessage.sequence_no.asc())
         ).scalars().all()
+        citation_map = self._load_citation_map(db, [item.id for item in messages])
         return SessionDetailView(
             **SessionSummaryView.model_validate(session).model_dump(),
-            messages=[MessageView.model_validate(item) for item in messages],
+            messages=[self._to_message_view(item, citation_map.get(item.id)) for item in messages],
         )
 
     def delete_session(self, db: Session, context: RequestContext, session_id: int) -> None:
@@ -274,6 +279,160 @@ class ChatService:
             )
         )
 
+    def _serialize_json(self, value: object | None) -> str | None:
+        if value is None:
+            return None
+        if isinstance(value, str):
+            return value
+
+        def _normalize(item: object) -> object:
+            if hasattr(item, 'model_dump'):
+                return item.model_dump(by_alias=True)
+            return item
+
+        if isinstance(value, list):
+            return json.dumps([_normalize(item) for item in value], ensure_ascii=False)
+        return json.dumps(_normalize(value), ensure_ascii=False)
+
+    def _load_citations(self, raw: str | None) -> list[CitationView]:
+        if not raw:
+            return []
+        try:
+            payload = json.loads(raw)
+        except json.JSONDecodeError:
+            return []
+        if not isinstance(payload, list):
+            return []
+
+        citations: list[CitationView] = []
+        for item in payload:
+            if not isinstance(item, dict):
+                continue
+            try:
+                citations.append(CitationView.model_validate(item))
+            except Exception:
+                continue
+        return citations
+
+    def _replace_citations(self, db: Session, message: AiChatMessage, citations: list[CitationView]) -> None:
+        db.query(AiMessageCitation).filter(AiMessageCitation.message_id == message.id).delete()
+        for index, citation in enumerate(citations, start=1):
+            db.add(
+                AiMessageCitation(
+                    message_id=message.id,
+                    session_id=message.session_id,
+                    user_id=message.user_id,
+                    position_no=index,
+                    source_type=citation.source_type,
+                    source_id=citation.source_id,
+                    source_title=citation.source_title,
+                    snippet=citation.snippet,
+                    page_no=citation.page_no,
+                    score=citation.score,
+                    url=citation.url,
+                )
+            )
+
+    def _load_citation_map(self, db: Session, message_ids: list[int]) -> dict[int, list[CitationView]]:
+        if not message_ids:
+            return {}
+        records = db.execute(
+            select(AiMessageCitation)
+            .where(AiMessageCitation.message_id.in_(message_ids))
+            .order_by(AiMessageCitation.message_id.asc(), AiMessageCitation.position_no.asc(), AiMessageCitation.id.asc())
+        ).scalars().all()
+        citation_map: dict[int, list[CitationView]] = {message_id: [] for message_id in message_ids}
+        for record in records:
+            citation_map.setdefault(record.message_id, []).append(
+                CitationView(
+                    source_type=record.source_type,
+                    source_id=record.source_id,
+                    source_title=record.source_title,
+                    snippet=record.snippet,
+                    page_no=record.page_no,
+                    score=record.score,
+                    url=record.url,
+                )
+            )
+        return citation_map
+
+    def _to_attachment_citations(self, attachment_contexts: list[LoadedAttachmentContext]) -> list[CitationView]:
+        return [
+            CitationView(
+                source_type=attachment.attachment_type,
+                source_id=attachment.source_id,
+                source_title=attachment.title,
+                snippet=attachment.snippet or attachment.summary or None,
+                score=1.0,
+            )
+            for attachment in attachment_contexts
+        ]
+
+    def _apply_answer_metadata(
+        self,
+        message: AiChatMessage,
+        citations: list[CitationView],
+        used_tools: list[str],
+        confidence: float | None,
+        refused_reason: str | None,
+        answer_source: str | None,
+    ) -> None:
+        message.confidence = confidence
+        message.refused_reason = refused_reason
+        message.citations_json = self._serialize_json(citations)
+        message.used_tools_json = self._serialize_json(used_tools)
+        message.answer_source = answer_source
+
+    def _to_message_view(self, item: AiChatMessage, citations: list[CitationView] | None = None) -> MessageView:
+        return MessageView(
+            id=item.id,
+            role=item.role,
+            content=item.content,
+            confidence=item.confidence,
+            refused_reason=item.refused_reason,
+            citations=citations if citations is not None else self._load_citations(item.citations_json),
+            message_status=item.message_status,
+            sequence_no=item.sequence_no,
+            model_code=item.model_code,
+            provider_code=item.provider_code,
+            prompt_tokens=item.prompt_tokens,
+            completion_tokens=item.completion_tokens,
+            total_tokens=item.total_tokens,
+            latency_ms=item.latency_ms,
+            error_code=item.error_code,
+            error_message=item.error_message,
+            request_id=item.request_id,
+            created_at=item.created_at,
+        )
+
+    def _inject_context_messages(
+        self,
+        prompt_messages: list[dict[str, str]],
+        retrieval_decision: RetrievalDecision,
+    ) -> list[dict[str, str]]:
+        if not retrieval_decision.context_messages:
+            return prompt_messages
+        return prompt_messages[:-1] + retrieval_decision.context_messages + prompt_messages[-1:]
+
+    def _compose_response_payload(
+        self,
+        answer: str,
+        citations: list[CitationView],
+        used_tools: list[str],
+        answer_source: str | None,
+        confidence: float | None,
+        raw_payload: dict[str, object] | None = None,
+    ) -> dict[str, object]:
+        payload = dict(raw_payload or {})
+        payload.update({
+            'answer': answer,
+            'citations': [item.model_dump(by_alias=True) for item in citations],
+            'usedTools': used_tools,
+            'answerSource': answer_source,
+            'confidence': confidence,
+        })
+        return payload
+
     def _build_completion_view(
         self,
         request_id: str,
@@ -285,6 +444,10 @@ class ChatService:
         provider_code: str,
         usage: AdapterUsage,
         latency_ms: int,
+        citations: list[CitationView],
+        used_tools: list[str],
+        confidence: float | None,
+        refused_reason: str | None,
     ) -> ChatCompletionView:
         return ChatCompletionView(
             request_id=request_id,
@@ -292,6 +455,10 @@ class ChatService:
             user_message_id=user_message.id,
             assistant_message_id=assistant_message.id,
             answer=answer,
+            citations=citations,
+            used_tools=used_tools,
+            confidence=confidence,
+            refused_reason=refused_reason,
             scene=session.scene,
             model_code=model_code,
             provider_code=provider_code,
@@ -316,6 +483,9 @@ class ChatService:
             latency_ms = max(1, int((perf_counter() - action_started_at) * 1000))
             answer = self._build_document_title_action_reply(action_result)
             usage = AdapterUsage()
+            citations: list[CitationView] = []
+            used_tools = ['document_title_action']
+            answer_source = 'SYSTEM_ACTION'
             assistant_message = self._create_message(
                 db,
                 session.id,
@@ -328,6 +498,8 @@ class ChatService:
                 provider_code=SYSTEM_PROVIDER_CODE,
             )
             assistant_message.latency_ms = latency_ms
+            self._apply_answer_metadata(assistant_message, citations, used_tools, None, None, answer_source)
+            self._replace_citations(db, assistant_message, citations)
             session.message_count = (session.message_count or 0) + 2
             self._touch_session(session)
             self._save_request_log(
@@ -343,7 +515,14 @@ class ChatService:
                 max_tokens=request.max_tokens,
                 stream=False,
                 request_payload=request.model_dump(by_alias=True),
-                response_payload={'answer': answer, 'document': action_result},
+                response_payload=self._compose_response_payload(
+                    answer=answer,
+                    citations=citations,
+                    used_tools=used_tools,
+                    answer_source=answer_source,
+                    confidence=None,
+                    raw_payload={'document': action_result},
+                ),
                 usage=usage,
                 duration_ms=latency_ms,
                 success_flag=True,
@@ -361,11 +540,93 @@ class ChatService:
                 SYSTEM_PROVIDER_CODE,
                 usage,
                 latency_ms,
+                citations,
+                used_tools,
+                None,
+                None,
+            )
+
+        retrieval_decision = await rag_service.query(request, context)
+        if retrieval_decision.fallback_answer:
+            answer = retrieval_decision.fallback_answer
+            usage = AdapterUsage()
+            assistant_message = self._create_message(
+                db,
+                session.id,
+                context.user_id,
+                ROLE_ASSISTANT,
+                answer,
+                STATUS_SUCCESS,
+                request_id=request_id,
+                model_code=SCOPED_EVIDENCE_GUARD_MODEL,
+                provider_code=SYSTEM_PROVIDER_CODE,
+            )
+            assistant_message.latency_ms = 1
+            self._apply_answer_metadata(
+                assistant_message,
+                retrieval_decision.citations,
+                retrieval_decision.used_tools,
+                retrieval_decision.confidence,
+                None,
+                retrieval_decision.answer_source,
+            )
+            self._replace_citations(db, assistant_message, retrieval_decision.citations)
+            session.message_count = (session.message_count or 0) + 2
+            self._touch_session(session)
+            self._save_request_log(
+                db,
+                request_id=request_id,
+                session_id=session.id,
+                user_message_id=user_message.id,
+                assistant_message_id=assistant_message.id,
+                provider_code=SYSTEM_PROVIDER_CODE,
+                model_code=SCOPED_EVIDENCE_GUARD_MODEL,
+                scene=session.scene,
+                temperature=request.temperature,
+                max_tokens=request.max_tokens,
+                stream=False,
+                request_payload=request.model_dump(by_alias=True),
+                response_payload=self._compose_response_payload(
+                    answer=answer,
+                    citations=retrieval_decision.citations,
+                    used_tools=retrieval_decision.used_tools,
+                    answer_source=retrieval_decision.answer_source,
+                    confidence=retrieval_decision.confidence,
+                ),
+                usage=usage,
+                duration_ms=1,
+                success_flag=True,
+            )
+            db.commit()
+            db.refresh(session)
+            db.refresh(assistant_message)
+            return self._build_completion_view(
+                request_id,
+                session,
+                user_message,
+                assistant_message,
+                answer,
+                SCOPED_EVIDENCE_GUARD_MODEL,
+                SYSTEM_PROVIDER_CODE,
+                usage,
+                1,
+                retrieval_decision.citations,
+                retrieval_decision.used_tools,
+                retrieval_decision.confidence,
+                None,
             )
 
         model = get_model_config(db, request.model_code)
         adapter = get_model_adapter(model)
-        prompt_messages = await build_prompt_messages(db, context, session, request, exclude_message_id=user_message.id)
+        prompt_messages = await build_prompt_messages(
+            db,
+            context,
+            session,
+            request,
+            exclude_message_id=user_message.id,
+            attachment_contexts=[],
+        )
+        prompt_messages = self._inject_context_messages(prompt_messages, retrieval_decision)
         started_at = perf_counter()
         result = await adapter.chat(model.model_code, prompt_messages, request.temperature, request.max_tokens)
         latency_ms = max(1, int((perf_counter() - started_at) * 1000))
@@ -384,6 +645,15 @@ class ChatService:
         assistant_message.completion_tokens = result.usage.completion_tokens
         assistant_message.total_tokens = result.usage.total_tokens
         assistant_message.latency_ms = latency_ms
+        self._apply_answer_metadata(
+            assistant_message,
+            retrieval_decision.citations,
+            retrieval_decision.used_tools,
+            retrieval_decision.confidence,
+            None,
+            retrieval_decision.answer_source,
+        )
+        self._replace_citations(db, assistant_message, retrieval_decision.citations)
         session.message_count = (session.message_count or 0) + 2
         self._touch_session(session)
         self._save_request_log(
@@ -399,7 +669,14 @@ class ChatService:
             max_tokens=request.max_tokens,
             stream=False,
             request_payload=request.model_dump(by_alias=True),
-            response_payload=result.raw_response or {'answer': result.text},
+            response_payload=self._compose_response_payload(
+                answer=result.text,
+                citations=retrieval_decision.citations,
+                used_tools=retrieval_decision.used_tools,
+                answer_source=retrieval_decision.answer_source,
+                confidence=retrieval_decision.confidence,
+                raw_payload=result.raw_response,
+            ),
             usage=result.usage,
             duration_ms=latency_ms,
             success_flag=True,
@@ -417,6 +694,10 @@ class ChatService:
             result.provider_code,
             result.usage,
             latency_ms,
+            retrieval_decision.citations,
+            retrieval_decision.used_tools,
+            retrieval_decision.confidence,
+            None,
         )
 
     async def stream(self, db: Session, context: RequestContext, request: ChatCompletionRequest) -> AsyncGenerator[str, None]:
@@ -431,6 +712,9 @@ class ChatService:
             answer = self._build_document_title_action_reply(action_result)
             latency_ms = max(1, int((perf_counter() - action_started_at) * 1000))
             usage = AdapterUsage()
+            citations: list[CitationView] = []
+            used_tools = ['document_title_action']
+            answer_source = 'SYSTEM_ACTION'
             assistant_message = self._create_message(
                 db,
                 session.id,
@@ -443,6 +727,8 @@ class ChatService:
                 provider_code=SYSTEM_PROVIDER_CODE,
             )
             assistant_message.latency_ms = latency_ms
+            self._apply_answer_metadata(assistant_message, citations, used_tools, None, None, answer_source)
+            self._replace_citations(db, assistant_message, citations)
             session.message_count = (session.message_count or 0) + 2
             self._touch_session(session)
             self._save_request_log(
@@ -458,7 +744,14 @@ class ChatService:
                 max_tokens=request.max_tokens,
                 stream=True,
                 request_payload=request.model_dump(by_alias=True),
-                response_payload={'answer': answer, 'document': action_result},
+                response_payload=self._compose_response_payload(
+                    answer=answer,
+                    citations=citations,
+                    used_tools=used_tools,
+                    answer_source=answer_source,
+                    confidence=None,
+                    raw_payload={'document': action_result},
+                ),
                 usage=usage,
                 duration_ms=latency_ms,
                 success_flag=True,
@@ -491,6 +784,85 @@ class ChatService:
 
             return action_stream()
 
+        retrieval_decision = await rag_service.query(request, context)
+        if retrieval_decision.fallback_answer:
+            answer = retrieval_decision.fallback_answer
+            usage = AdapterUsage()
+            assistant_message = self._create_message(
+                db,
+                session.id,
+                context.user_id,
+                ROLE_ASSISTANT,
+                answer,
+                STATUS_SUCCESS,
+                request_id=request_id,
+                model_code=SCOPED_EVIDENCE_GUARD_MODEL,
+                provider_code=SYSTEM_PROVIDER_CODE,
+            )
+            assistant_message.latency_ms = 1
+            self._apply_answer_metadata(
+                assistant_message,
+                retrieval_decision.citations,
+                retrieval_decision.used_tools,
+                retrieval_decision.confidence,
+                None,
+                retrieval_decision.answer_source,
+            )
+            self._replace_citations(db, assistant_message, retrieval_decision.citations)
+            session.message_count = (session.message_count or 0) + 2
+            self._touch_session(session)
+            self._save_request_log(
+                db,
+                request_id=request_id,
+                session_id=session.id,
+                user_message_id=user_message.id,
+                assistant_message_id=assistant_message.id,
+                provider_code=SYSTEM_PROVIDER_CODE,
+                model_code=SCOPED_EVIDENCE_GUARD_MODEL,
+                scene=session.scene,
+                temperature=request.temperature,
+                max_tokens=request.max_tokens,
+                stream=True,
+                request_payload=request.model_dump(by_alias=True),
+                response_payload=self._compose_response_payload(
+                    answer=answer,
+                    citations=retrieval_decision.citations,
+                    used_tools=retrieval_decision.used_tools,
+                    answer_source=retrieval_decision.answer_source,
+                    confidence=retrieval_decision.confidence,
+                ),
+                usage=usage,
+                duration_ms=1,
+                success_flag=True,
+            )
+            db.commit()
+
+            async def scoped_guard_stream() -> AsyncGenerator[str, None]:
+                try:
+                    yield sse_event(
+                        'stream.start',
+                        {
+                            'requestId': request_id,
+                            'sessionId': session.id,
+                            'assistantMessageId': assistant_message.id,
+                        },
+                    )
+                    yield sse_event('stream.delta', {'requestId': request_id, 'delta': answer})
+                    yield sse_event(
+                        'stream.end',
+                        {
+                            'requestId': request_id,
+                            'sessionId': session.id,
+                            'assistantMessageId': assistant_message.id,
+                            'usage': UsageView().model_dump(by_alias=True),
+                            'latencyMs': 1,
+                        },
+                    )
+                finally:
+                    await self.cancellation_store.clear(request_id)
+
+            return scoped_guard_stream()
+
         model = get_model_config(db, request.model_code)
         adapter = get_model_adapter(model)
         assistant_message = self._create_message(
@@ -504,7 +876,15 @@ class ChatService:
             model_code=model.model_code,
             provider_code=model.provider_code,
         )
-        prompt_messages = await build_prompt_messages(db, context, session, request, exclude_message_id=user_message.id)
+        prompt_messages = await build_prompt_messages(
+            db,
+            context,
+            session,
+            request,
+            exclude_message_id=user_message.id,
+            attachment_contexts=[],
+        )
+        prompt_messages = self._inject_context_messages(prompt_messages, retrieval_decision)
         db.commit()
 
         async def event_stream() -> AsyncGenerator[str, None]:
@@ -538,6 +918,15 @@ class ChatService:
                 stored_message.completion_tokens = usage.completion_tokens
                 stored_message.total_tokens = usage.total_tokens
                 stored_message.latency_ms = latency_ms
+                self._apply_answer_metadata(
+                    stored_message,
+                    retrieval_decision.citations,
+                    retrieval_decision.used_tools,
+                    retrieval_decision.confidence,
+                    None,
+                    retrieval_decision.answer_source,
+                )
+                self._replace_citations(db, stored_message, retrieval_decision.citations)
                 stored_session.message_count = (stored_session.message_count or 0) + 2
                 self._touch_session(stored_session)
                 self._save_request_log(
@@ -553,7 +942,13 @@ class ChatService:
                     max_tokens=request.max_tokens,
                     stream=True,
                     request_payload=request.model_dump(by_alias=True),
-                    response_payload={'answer': aggregated},
+                    response_payload=self._compose_response_payload(
+                        answer=aggregated,
+                        citations=retrieval_decision.citations,
+                        used_tools=retrieval_decision.used_tools,
+                        answer_source=retrieval_decision.answer_source,
+                        confidence=retrieval_decision.confidence,
+                    ),
                     usage=usage,
                     duration_ms=latency_ms,
                     success_flag=True,

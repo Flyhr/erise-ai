@@ -187,7 +187,8 @@ class AuthService {
         UserProfileEntity profile = profileByUserId(user.getId());
         CurrentUser currentUser = new CurrentUser(user.getId(), user.getUsername(), user.getRoleCode());
         insertLoginLog(user.getId(), user.getUsername(), ip, userAgent, true);
-        auditLogService.log(currentUser, "AUTH_LOGIN", "USER", user.getId(), Map.of("ip", ip));
+        auditLogService.log(currentUser, "AUTH_LOGIN", "USER", user.getId(),
+                ip == null || ip.isBlank() ? Map.of() : Map.of("ip", ip));
         return buildAuthResponse(currentUser, profile.getDisplayName(), user.getEmail(), profile.getAvatarUrl(),
                 profile.getBio());
     }

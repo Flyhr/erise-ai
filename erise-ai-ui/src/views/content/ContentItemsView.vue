@@ -1,7 +1,6 @@
-﻿<template>
+<template>
   <div class="page-shell">
-    <AppPageHeader :title="`${typeLabel}中心`" eyebrow="结构化内容" :subtitle="pageSubtitle" show-back back-label="返回项目概览"
-      :back-to="`/projects/${projectId}`">
+    <AppPageHeader :title="`${typeLabel}中心`" eyebrow="结构化内容" :subtitle="pageSubtitle" show-back back-label="返回项目概览" :back-to="`/projects/${projectId}`">
       <template #actions>
         <el-button type="primary" @click="createItem">新建{{ typeLabel }}</el-button>
       </template>
@@ -45,30 +44,39 @@
         </el-table-column>
       </AppDataTable>
       <template #footer>
-        <AppEmptyState v-if="!items.length" :title="`还没有${typeLabel}`" description="先创建一个结构化内容实体，后续可在 AI 助理里直接引用。" />
+        <div v-if="items.length" class="content-footer">
+          <span class="page-subtitle">共 {{ total }} 条{{ typeLabel }}记录</span>
+          <CompactPager :page-num="pageNum" :page-size="pageSize" :total="total" @change="handlePageChange" />
+        </div>
+        <AppEmptyState v-else :title="`还没有${typeLabel}`" description="先创建一个结构化内容实体，后续可在 AI 助理里直接引用。" />
       </template>
     </AppSectionCard>
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { createContentItem, deleteContentItem, getContentItems } from '@/api/content'
 import AppDataTable from '@/components/common/AppDataTable.vue'
 import AppEmptyState from '@/components/common/AppEmptyState.vue'
 import AppPageHeader from '@/components/common/AppPageHeader.vue'
 import AppSectionCard from '@/components/common/AppSectionCard.vue'
 import AppStatusTag from '@/components/common/AppStatusTag.vue'
+import CompactPager from '@/components/common/CompactPager.vue'
 import ProjectSubnav from '@/components/common/ProjectSubnav.vue'
 import type { ContentItemSummaryView } from '@/types/models'
 import { formatDateTime } from '@/utils/formatters'
 
 const props = defineProps<{ id: string; type: string }>()
+const route = useRoute()
 const router = useRouter()
 const projectId = Number(props.id)
 const items = ref<ContentItemSummaryView[]>([])
+const pageNum = ref(1)
+const pageSize = 25
+const total = ref(0)
 
 const normalizeType = (value: string) => {
   if (value === 'board') return 'BOARD'
@@ -112,8 +120,36 @@ const createDefaults = () => {
 }
 
 const load = async () => {
-  const page = await getContentItems({ projectId, itemType: contentType.value, pageNum: 1, pageSize: 50 })
+  const page = await getContentItems({ projectId, itemType: contentType.value, pageNum: pageNum.value, pageSize })
   items.value = page.records
+  total.value = page.total
+}
+
+const syncFromRoute = async () => {
+  const nextPage = Number(route.query.pageNum)
+  pageNum.value = Number.isFinite(nextPage) && nextPage > 0 ? nextPage : 1
+  await load()
+}
+
+const pushRoute = async () => {
+  await router.replace({
+    path: route.path,
+    query: {
+      ...(pageNum.value > 1 ? { pageNum: pageNum.value } : {}),
+    },
+  })
+}
+
+const ensureCurrentPage = async () => {
+  if (!items.value.length && total.value > 0 && pageNum.value > 1) {
+    pageNum.value = Math.max(1, Math.ceil(total.value / pageSize))
+    await pushRoute()
+  }
+}
+
+const handlePageChange = async (value: number) => {
+  pageNum.value = value
+  await pushRoute()
 }
 
 const createItem = async () => {
@@ -138,14 +174,30 @@ const removeItem = async (id: number, title: string) => {
   await deleteContentItem(id)
   ElMessage.success(`${typeLabel.value}已删除`)
   await load()
+  await ensureCurrentPage()
 }
 
-onMounted(load)
+onMounted(syncFromRoute)
+
+watch(
+  () => route.fullPath,
+  async () => {
+    await syncFromRoute()
+  },
+)
 </script>
 
 <style scoped>
 .content-row__title {
   font-size: 15px;
   font-weight: 700;
+}
+
+.content-footer {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: center;
+  flex-wrap: wrap;
 }
 </style>

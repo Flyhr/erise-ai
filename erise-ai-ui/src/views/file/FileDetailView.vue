@@ -9,18 +9,17 @@
       </template>
     </AppPageHeader>
 
-    <AppSectionCard title="文件信息" ">
-      <div class=" detail-grid">
-      <div class="detail-item"><span>所属项目</span><strong>{{ projectLabel(file.projectId) }}</strong></div>
-      <div class="detail-item"><span>类型</span><strong>{{ normalizeFileTypeLabel(file.fileExt, file.mimeType) }}</strong>
+    <AppSectionCard title="文件信息">
+      <div class="detail-grid">
+        <div class="detail-item"><span>所属项目</span><strong>{{ projectLabel(file.projectId) }}</strong></div>
+        <div class="detail-item"><span>类型</span><strong>{{ normalizeFileTypeLabel(file.fileExt, file.mimeType) }}</strong></div>
+        <div class="detail-item"><span>大小</span><strong>{{ formatFileSize(file.fileSize) }}</strong></div>
+        <div class="detail-item"><span>上传状态</span><strong>{{ uploadStatusLabel(file.uploadStatus) }}</strong></div>
+        <div class="detail-item"><span>上传时间</span><strong>{{ formatDateTime(file.createdAt) }}</strong></div>
+        <div class="detail-item"><span>更新时间</span><strong>{{ formatDateTime(file.updatedAt) }}</strong></div>
       </div>
-      <div class="detail-item"><span>大小</span><strong>{{ formatFileSize(file.fileSize) }}</strong></div>
-      <div class="detail-item"><span>上传状态</span><strong>{{ uploadStatusLabel(file.uploadStatus) }}</strong></div>
-      <div class="detail-item"><span>上传时间</span><strong>{{ formatDateTime(file.createdAt) }}</strong></div>
-      <div class="detail-item"><span>更新时间</span><strong>{{ formatDateTime(file.updatedAt) }}</strong></div>
-  </div>
-  <div v-if="isOfficeFile" class="page-subtitle">txt 文件会使用轻量文本编辑器打开，doc 和 docx 文件会进入 Office 在线编辑流程。</div>
-  </AppSectionCard>
+      <div v-if="isOfficeFile" class="page-subtitle">txt 文件会使用轻量文本编辑器打开，doc 和 docx 文件会进入 Office 在线编辑流程。</div>
+    </AppSectionCard>
   </div>
 </template>
 
@@ -28,6 +27,7 @@
 import { computed, onMounted, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { downloadFileContent, getFile, previewFileBinary, previewOfficeFile } from '@/api/file'
+import { trackWorkspaceActivity } from '@/api/workspace'
 import AppPageHeader from '@/components/common/AppPageHeader.vue'
 import AppSectionCard from '@/components/common/AppSectionCard.vue'
 import { useProjectDirectory } from '@/composables/useProjectDirectory'
@@ -42,6 +42,15 @@ const isOfficeFile = computed(() => isOfficeEditableFile(file.value?.fileExt))
 onMounted(async () => {
   await loadProjects()
   file.value = await getFile(Number(props.id))
+  try {
+    await trackWorkspaceActivity({
+      assetType: 'FILE',
+      assetId: Number(props.id),
+      actionCode: 'FILE_DETAIL_OPEN',
+    })
+  } catch {
+    // best effort only
+  }
 })
 
 const handlePreview = async () => {

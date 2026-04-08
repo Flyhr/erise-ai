@@ -10,14 +10,14 @@
 - 支持普通回复、SSE 流式回复、取消生成
 - 通过 Java 内部接口读取项目上下文
 
-## 配置文件优先级
+## 配置文件与环境变量
 
-开发态下配置读取优先级已经调整为：
+`AiAssistant` 代码当前通过 `pydantic-settings` 直接读取 `AiAssistant/.env` 和进程环境变量。
 
-1. `.env.dev`
-2. `.env`
+- Docker Compose 模式：由仓库根目录的 `.env.dev` 提供变量，再注入到容器运行时环境。
+- 独立本地启动：优先读取当前进程环境变量，其次读取 `AiAssistant/.env`。
 
-建议从 `.env.dev.example` 复制出 `.env.dev` 并在开发阶段优先维护该文件。
+如果你只修改了 `AiAssistant/.env.dev`，独立启动模式不会自动读取该文件。
 
 ## 独立本地启动
 
@@ -74,6 +74,20 @@ docker compose --env-file .env.dev -f docker-compose.dev.yml up --build
 - `DEEPSEEK_API_KEY`
 - `DEEPSEEK_BASE_URL`
 - `DEFAULT_MODEL_CODE`
+- `EMBEDDING_MODEL`
+- `EMBEDDING_BASE_URL`
+- `EMBEDDING_API_KEY`
+- `QDRANT_URL`
+- `QDRANT_API_KEY`
+- `WEB_SEARCH_PROVIDER`
+- `WEB_SEARCH_MAX_RESULTS`
+- `TAVILY_API_KEY`
+
+联网搜索配置说明：
+
+- `WEB_SEARCH_PROVIDER` 必须填写 provider 名称，目前支持 `tavily` 或 `duckduckgo`
+- `WEB_SEARCH_PROVIDER=tavily` 时必须同时提供 `TAVILY_API_KEY`
+- 不要把 API Key 填到 `WEB_SEARCH_PROVIDER`
 
 ## 健康检查
 

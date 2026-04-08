@@ -72,9 +72,16 @@ def get_model_config(db: Session, requested_model_code: str | None) -> AiModelCo
     settings = get_settings()
     model_code = requested_model_code or settings.default_model_code
     model = db.execute(select(AiModelConfig).where(AiModelConfig.model_code == model_code)).scalar_one_or_none()
-    if model is None or not model.enabled:
+    if model is not None and model.enabled:
+        return model
+    if requested_model_code:
         raise AiServiceError('AI_MODEL_NOT_FOUND', f'Model `{model_code}` is not available', status_code=404)
-    return model
+    fallback = db.execute(
+        select(AiModelConfig).where(AiModelConfig.enabled.is_(True)).order_by(AiModelConfig.priority_no.asc())
+    ).scalars().first()
+    if fallback is None:
+        raise AiServiceError('AI_MODEL_NOT_FOUND', f'Model `{model_code}` is not available', status_code=404)
+    return fallback
 
 
 def get_model_adapter(model: AiModelConfig) -> LlmAdapter:

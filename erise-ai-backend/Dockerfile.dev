@@ -4,6 +4,6 @@ WORKDIR /workspace
 
 COPY settings.xml /root/.m2/settings.xml
 COPY pom.xml ./
-RUN mvn -q -DskipTests dependency:go-offline
+RUN mvn -q -DskipTests dependency:go-offline || true
 
 CMD ["/bin/sh", "/workspace/docker/dev-entrypoint.sh"]

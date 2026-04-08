@@ -13,6 +13,7 @@ import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
 import java.io.IOException;
 import java.time.LocalDateTime;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -83,25 +84,36 @@ class AiService {
     private final ProjectService projectService;
     private final DocumentService documentService;
     private final FileService fileService;
+    private final AiTempFileService aiTempFileService;
+    private final AiRetrievalSettingService aiRetrievalSettingService;
     private final CloudAiClient cloudAiClient;
     private final AuditLogService auditLogService;
     private final ObjectMapper objectMapper;
 
     AiChatResponse chat(AiChatRequest request) {
         CurrentUser currentUser = SecurityUtils.currentUser();
-        Long projectId = resolveProjectId(request);
-        validateProjectAccess(projectId);
+        ResolvedChatContext resolvedContext = resolveChatContext(request);
+        validateProjectAccess(resolvedContext.projectId());
         String requestId = requestId();
-        CloudAiClient.ChatResponse response = cloudAiClient.chat(currentUser, toCompletionRequest(request, projectId), requestId);
+        RetrievalSettings retrievalSettings = aiRetrievalSettingService.resolveEffectiveSettings(
+                request.webSearchEnabled(),
+                request.similarityThreshold(),
+                request.topK()
+        );
+        CloudAiClient.ChatResponse response = cloudAiClient.chat(
+                currentUser,
+                toCompletionRequest(request, resolvedContext, retrievalSettings),
+                requestId
+        );
         auditLogService.log(currentUser, "AI_CHAT", "AI_SESSION", response.sessionId(), Map.of("requestId", response.requestId()));
         return new AiChatResponse(
                 response.sessionId(),
                 response.assistantMessageId(),
                 response.answer(),
-                List.of(),
-                List.of(),
-                null,
-                null,
+                response.citations() == null ? List.of() : response.citations().stream().map(this::toCitationView).toList(),
+                response.usedTools() == null ? List.of() : response.usedTools(),
+                response.confidence(),
+                response.refusedReason(),
                 response.requestId(),
                 response.messageStatus(),
                 response.modelCode(),
@@ -111,11 +123,16 @@ class AiService {
 
     SseEmitter stream(AiChatRequest request) {
         CurrentUser currentUser = SecurityUtils.currentUser();
-        Long projectId = resolveProjectId(request);
-        validateProjectAccess(projectId);
+        ResolvedChatContext resolvedContext = resolveChatContext(request);
+        validateProjectAccess(resolvedContext.projectId());
         String requestId = requestId();
+        RetrievalSettings retrievalSettings = aiRetrievalSettingService.resolveEffectiveSettings(
+                request.webSearchEnabled(),
+                request.similarityThreshold(),
+                request.topK()
+        );
         SseEmitter emitter = new SseEmitter(0L);
-        Disposable subscription = cloudAiClient.stream(currentUser, toCompletionRequest(request, projectId), requestId)
+        Disposable subscription = cloudAiClient.stream(currentUser, toCompletionRequest(request, resolvedContext, retrievalSettings), requestId)
                 .subscribe(
                         event -> sendEvent(emitter, event),
                         error -> {
@@ -157,6 +174,7 @@ class AiService {
     void deleteSession(Long id) {
         CurrentUser currentUser = SecurityUtils.currentUser();
         cloudAiClient.deleteSession(currentUser, id, requestId());
+        aiTempFileService.deleteSessionTempFiles(currentUser.userId(), id);
         auditLogService.log(currentUser, "AI_SESSION_DELETE", "AI_SESSION", id, null);
     }
 
@@ -173,24 +191,6 @@ class AiService {
         }
     }
 
-    private Long resolveProjectId(AiChatRequest request) {
-        Long resolvedProjectId = request.projectId();
-        for (AiAttachmentRequest attachment : normalizeAttachments(request.attachments())) {
-            Long attachmentProjectId = resolveAttachmentProjectId(attachment);
-            if (attachmentProjectId == null) {
-                continue;
-            }
-            if (resolvedProjectId == null) {
-                resolvedProjectId = attachmentProjectId;
-                continue;
-            }
-            if (!resolvedProjectId.equals(attachmentProjectId)) {
-                throw new BizException(ErrorCodes.BAD_REQUEST, "All attached files and documents must belong to the same project");
-            }
-        }
-        return resolvedProjectId;
-    }
-
     private Long resolveAttachmentProjectId(AiAttachmentRequest attachment) {
         return switch (normalizeAttachmentType(attachment.attachmentType())) {
             case "DOCUMENT" -> documentService.detail(attachment.sourceId()).projectId();
@@ -199,25 +199,62 @@ class AiService {
         };
     }
 
-    private String resolveScene(AiChatRequest request, Long projectId) {
-        return normalizeAttachments(request.attachments()).isEmpty()
-                ? (projectId == null ? "general_chat" : "project_chat")
+    private ResolvedChatContext resolveChatContext(AiChatRequest request) {
+        Long resolvedProjectId = request.projectId();
+        List<CloudAiClient.AttachmentRef> resolvedAttachments = new ArrayList<>();
+
+        for (AiAttachmentRequest attachment : normalizeAttachments(request.attachments())) {
+            Long attachmentProjectId = resolveAttachmentProjectId(attachment);
+            resolvedProjectId = mergeResolvedProjectId(resolvedProjectId, attachmentProjectId);
+            resolvedAttachments.add(toAttachmentRef(attachment));
+        }
+
+        for (ResolvedTempFileAttachment tempFile : aiTempFileService.resolveUsableTempFiles(request.sessionId(), request.tempFileIds())) {
+            resolvedProjectId = mergeResolvedProjectId(resolvedProjectId, tempFile.projectId());
+            resolvedAttachments.add(new CloudAiClient.AttachmentRef("TEMP_FILE", tempFile.id(), tempFile.projectId(), request.sessionId(), tempFile.fileName()));
+        }
+
+        return new ResolvedChatContext(resolvedProjectId, resolvedAttachments);
+    }
+
+    private Long mergeResolvedProjectId(Long resolvedProjectId, Long attachmentProjectId) {
+        if (attachmentProjectId == null) {
+            return resolvedProjectId;
+        }
+        if (resolvedProjectId == null) {
+            return attachmentProjectId;
+        }
+        if (!resolvedProjectId.equals(attachmentProjectId)) {
+            throw new BizException(ErrorCodes.BAD_REQUEST, "All attached files and documents must belong to the same project");
+        }
+        return resolvedProjectId;
+    }
+
+    private String resolveScene(ResolvedChatContext context) {
+        return context.attachments().isEmpty()
+                ? (context.projectId() == null ? "general_chat" : "project_chat")
                 : "document_chat";
     }
 
-    private CloudAiClient.ChatCompletionRequest toCompletionRequest(AiChatRequest request, Long projectId) {
+    private CloudAiClient.ChatCompletionRequest toCompletionRequest(AiChatRequest request,
+                                                                    ResolvedChatContext resolvedContext,
+                                                                    RetrievalSettings retrievalSettings) {
         return new CloudAiClient.ChatCompletionRequest(
                 request.sessionId(),
-                resolveScene(request, projectId),
+                resolveScene(resolvedContext),
                 request.modelCode(),
                 request.question(),
                 new CloudAiClient.ChatContext(
-                        projectId,
+                        resolvedContext.projectId(),
                         null,
-                        normalizeAttachments(request.attachments()).stream().map(this::toAttachmentRef).toList()
+                        resolvedContext.attachments()
                 ),
                 0.3,
-                2048
+                2048,
+                request.mode(),
+                retrievalSettings.webSearchEnabled(),
+                retrievalSettings.similarityThreshold(),
+                retrievalSettings.topK()
         );
     }
 
@@ -226,6 +263,7 @@ class AiService {
                 normalizeAttachmentType(attachment.attachmentType()),
                 attachment.sourceId(),
                 attachment.projectId(),
+                null,
                 attachment.title()
         );
     }
@@ -250,13 +288,25 @@ class AiService {
                 message.id(),
                 toRoleCode(message.role()),
                 message.content(),
-                null,
-                null,
-                List.of(),
+                message.confidence(),
+                message.refusedReason(),
+                message.citations() == null ? List.of() : message.citations().stream().map(this::toCitationView).toList(),
                 message.createdAt(),
                 message.messageStatus(),
                 message.errorMessage(),
                 message.requestId()
+        );
+    }
+
+    private AiCitationView toCitationView(CloudAiClient.CitationResponse citation) {
+        return new AiCitationView(
+                citation.sourceType(),
+                citation.sourceId(),
+                citation.sourceTitle(),
+                citation.snippet(),
+                citation.pageNo(),
+                citation.score(),
+                citation.url()
         );
     }
 
@@ -329,13 +379,22 @@ class AiService {
     }
 }
 
-record AiChatRequest(Long projectId, Long sessionId, @NotBlank String question, String modelCode, List<AiAttachmentRequest> attachments) {
+record AiChatRequest(Long projectId,
+                     Long sessionId,
+                     @NotBlank String question,
+                     String modelCode,
+                     String mode,
+                     List<AiAttachmentRequest> attachments,
+                     List<Long> tempFileIds,
+                     Boolean webSearchEnabled,
+                     Double similarityThreshold,
+                     Integer topK) {
 }
 
 record AiAttachmentRequest(@NotBlank String attachmentType, @NotNull Long sourceId, Long projectId, String title) {
 }
 
-record AiCitationView(String sourceType, Long sourceId, String sourceTitle, String snippet, Integer pageNo) {
+record AiCitationView(String sourceType, Long sourceId, String sourceTitle, String snippet, Integer pageNo, Double score, String url) {
 }
 
 record AiChatResponse(
@@ -374,4 +433,7 @@ record AiSessionDetailView(Long id, Long projectId, String title, List<AiMessage
 }
 
 record AiModelView(String providerCode, String modelCode, String modelName, boolean supportStream, Integer maxContextTokens) {
+}
+
+record ResolvedChatContext(Long projectId, List<CloudAiClient.AttachmentRef> attachments) {
 }
