@@ -124,12 +124,43 @@ export interface SearchResultView {
   updatedAt?: string
 }
 
+export interface KnowledgeAssetView {
+  assetType: 'FILE' | 'DOCUMENT'
+  assetId: number
+  projectId?: number
+  title: string
+  summary?: string
+  fileExt?: string
+  mimeType?: string
+  fileSize?: number
+  parseStatus?: string
+  docStatus?: string
+  updatedAt: string
+  createdAt?: string
+}
+
+export interface WorkspaceRecentItemView {
+  assetType: 'FILE' | 'DOCUMENT'
+  assetId: number
+  projectId?: number
+  title: string
+  summary?: string
+  actionCode: string
+  lastActionAt: string
+  fileExt?: string
+  mimeType?: string
+  fileSize?: number
+  docStatus?: string
+}
+
 export interface AiCitationView {
   sourceType: string
   sourceId: number
   sourceTitle: string
   snippet?: string
   pageNo?: number
+  score?: number
+  url?: string
 }
 
 export interface AiChatResponse {
@@ -144,6 +175,24 @@ export interface AiChatResponse {
   messageStatus?: string
   modelCode?: string
   providerCode?: string
+}
+
+export interface AiTempFileView {
+  id: number
+  sessionId: number
+  projectId?: number
+  fileName: string
+  mimeType: string
+  sizeBytes: number
+  parseStatus: string
+  indexStatus: string
+  createdAt: string
+}
+
+export interface AiRetrievalSettingView {
+  similarityThreshold: number
+  topK: number
+  webSearchEnabledDefault: boolean
 }
 
 export type AiAttachmentType = 'DOCUMENT' | 'FILE'

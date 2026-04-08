@@ -253,7 +253,7 @@ const syncProfileFromUser = (user?: {
   email?: string | null
   avatarUrl?: string | null
   bio?: string | null
-}) => {
+} | null) => {
   profile.displayName = user?.displayName || ''
   profile.email = user?.email || ''
   profile.avatarUrl = user?.avatarUrl || ''

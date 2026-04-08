@@ -17,7 +17,7 @@ async def query_knowledge(
     settings = get_settings()
     async with httpx.AsyncClient(timeout=settings.connect_timeout_seconds) as client:
         response = await client.post(
-            f'{settings.java_internal_base_url}/knowledge/query',
+            f'{settings.java_internal_base_url}/knowledge/retrieve',
             headers={
                 'X-Internal-Key': settings.java_api_key,
                 'X-Request-Id': request_id,

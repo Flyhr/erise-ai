@@ -1,19 +1,11 @@
 ﻿<template>
   <div class="workspace-content">
-    <section class="workspace-hero">
-      <div class="workspace-breadcrumb">
-        <!-- <div class="workspace-breadcrumb">
-            <span>首页</span>
-          </div> -->
-        <h1>工作台</h1>
-      </div>
 
-      <div class="workspace-switcher">
-        <button type="button" class="is-selected" @click="showComingSoon('最近浏览')">Recently Viewed</button>
-        <button type="button" @click="showComingSoon('最近编辑')">Recently Edited</button>
-      </div>
-    </section>
-
+    <WorkspaceSearchBar>
+      v-model="searchKeyword"
+      :placeholder="searchPlaceholder"
+      @search="openSearch"
+    </WorkspaceSearchBar>
     <section class="workspace-metric-grid">
       <article class="workspace-chart-card workspace-card">
         <div class="workspace-card-head">
@@ -63,17 +55,21 @@
     <section id="knowledge-base" class="workspace-card workspace-section-card workspace-knowledge-section">
       <div class="workspace-section-head">
         <div>
-          <h2>知识库</h2>
+          <div class="workspace-switcher">
+            <button type="button" :class="{ 'is-selected': recentMode === 'viewed' }"
+              @click="switchRecentMode('viewed')">
+              最近浏览
+            </button>
+            <button type="button" :class="{ 'is-selected': recentMode === 'edited' }"
+              @click="switchRecentMode('edited')">
+              最近编辑
+            </button>
+          </div>
         </div>
+
         <div class="workspace-section-tools">
-          <button type="button" class="workspace-tool-btn" @click="showComingSoon('知识库筛选')">
-            <span class="material-symbols-outlined">filter_list</span>
-            <span>Filter</span>
-          </button>
-          <button type="button" class="workspace-tool-btn" @click="showComingSoon('知识库排序')">
-            <span class="material-symbols-outlined">sort</span>
-            <span>Recent</span>
-          </button>
+          <span class="workspace-section-count">共 {{ recentItems.length }} 条{{ recentMode === 'viewed' ? '浏览' : '编辑'
+          }}记录</span>
         </div>
       </div>
 
@@ -89,31 +85,32 @@
       </div>
 
       <div v-if="knowledgeTab === 'files'">
-        <div v-if="files.length" class="workspace-table-shell">
+        <div v-if="recentItems.length" class="workspace-table-shell">
           <table class="workspace-data-table">
             <thead>
               <tr>
                 <th>文件名</th>
                 <th>项目</th>
                 <th>类型 / 大小</th>
-                <th>更新时间</th>
+                <th>最近操作时间</th>
                 <th class="align-right">操作</th>
               </tr>
             </thead>
             <tbody>
-              <tr v-for="file in files" :key="file.id">
+              <tr v-for="file in recentItems" :key="`${file.assetType}-${file.assetId}`">
                 <td>
-                  <div class="workspace-file-name">{{ file.fileName }}</div>
+                  <div class="workspace-file-name">{{ file.title }}</div>
+                  <div class="workspace-table-desc">{{ recentActionLabel(file.actionCode) }}</div>
                 </td>
                 <td>{{ projectName(file.projectId) }}</td>
                 <td>{{ normalizeFileTypeLabel(file.fileExt, file.mimeType) }} · {{ formatFileSize(file.fileSize) }}</td>
-                <td>{{ formatDateTime(file.updatedAt) }}</td>
+                <td>{{ formatDateTime(file.lastActionAt) }}</td>
                 <td class="align-right">
                   <div class="workspace-inline-actions">
-                    <el-button text @click="router.push(`/files/${file.id}`)">详情</el-button>
+                    <el-button text @click="router.push(`/files/${file.assetId}`)">详情</el-button>
                     <el-button text @click="previewFile(file)">预览</el-button>
                     <el-button v-if="isOfficeEditableFile(file.fileExt)" text
-                      @click="router.push(`/files/${file.id}/edit`)">
+                      @click="router.push(`/files/${file.assetId}/edit`)">
                       编辑
                     </el-button>
                   </div>
@@ -122,47 +119,48 @@
             </tbody>
           </table>
         </div>
-        <AppEmptyState v-else title="还没有文件" description="上传 PDF、Word、Markdown 或 txt 文件后，这里会显示最近更新记录。" />
+        <AppEmptyState v-else title="还没有最近文件记录" description="进入文件详情、预览文件或在线编辑后，这里会展示最近操作记录。" />
       </div>
 
       <div v-else>
-        <div v-if="documents.length" class="workspace-table-shell">
+        <div v-if="recentItems.length" class="workspace-table-shell">
           <table class="workspace-data-table">
             <thead>
               <tr>
                 <th>文档标题</th>
                 <th>项目</th>
                 <th>状态</th>
-                <th>更新时间</th>
+                <th>最近操作时间</th>
                 <th class="align-right">操作</th>
               </tr>
             </thead>
             <tbody>
-              <tr v-for="document in documents" :key="document.id">
+              <tr v-for="document in recentItems" :key="`${document.assetType}-${document.assetId}`">
                 <td>
                   <div class="workspace-file-name">{{ document.title }}</div>
-                  <div class="workspace-table-desc">{{ document.summary || '暂无摘要' }}</div>
+                  <div class="workspace-table-desc">{{ document.summary || recentActionLabel(document.actionCode) }}
+                  </div>
                 </td>
                 <td>{{ projectName(document.projectId) }}</td>
                 <td>
                   <AppStatusTag :label="documentStatusLabel(document.docStatus)"
                     :tone="documentStatusTone(document.docStatus)" />
                 </td>
-                <td>{{ formatDateTime(document.updatedAt) }}</td>
+                <td>{{ formatDateTime(document.lastActionAt) }}</td>
                 <td class="align-right">
                   <div class="workspace-inline-actions">
                     <el-button text
-                      @click="router.push({ path: `/documents/${document.id}/edit`, query: { mode: 'preview' } })">
+                      @click="router.push({ path: `/documents/${document.assetId}/edit`, query: { mode: 'preview' } })">
                       浏览
                     </el-button>
-                    <el-button text @click="router.push(`/documents/${document.id}/edit`)">编辑</el-button>
+                    <el-button text @click="router.push(`/documents/${document.assetId}/edit`)">编辑</el-button>
                   </div>
                 </td>
               </tr>
             </tbody>
           </table>
         </div>
-        <AppEmptyState v-else title="还没有文档" description="可以先在文档中心创建文档，或从项目内进入结构化编辑流程。" />
+        <AppEmptyState v-else title="还没有最近文档记录" description="浏览文档、进入编辑页或保存发布后，这里会展示最近操作记录。" />
       </div>
     </section>
   </div>
@@ -173,16 +171,16 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
-import { ElMessage, ElMessageBox } from 'element-plus'
+import { ElMessage } from 'element-plus'
+import { getWorkspaceRecent } from '@/api/workspace'
 import { getProjects } from '@/api/project'
 import { getSessions } from '@/api/ai'
-import { getDocuments } from '@/api/document'
-import { getFiles, previewFileBinary, previewOfficeFile } from '@/api/file'
+import { previewFileBinary, previewOfficeFile } from '@/api/file'
 import AppEmptyState from '@/components/common/AppEmptyState.vue'
 import AppStatusTag from '@/components/common/AppStatusTag.vue'
-import type { AiSessionSummaryView, DocumentSummaryView, FileView, ProjectDetailView } from '@/types/models'
+import type { AiSessionSummaryView, ProjectDetailView, WorkspaceRecentItemView } from '@/types/models'
 import {
   documentStatusLabel,
   documentStatusTone,
@@ -192,14 +190,15 @@ import {
   normalizeFileTypeLabel,
   resolveErrorMessage,
 } from '@/utils/formatters'
+import WorkspaceSearchBar from '@/components/common/WorkspaceSearchBar.vue'
 
 const router = useRouter()
 const projectTotal = ref(0)
 const projects = ref<ProjectDetailView[]>([])
 const sessions = ref<AiSessionSummaryView[]>([])
-const documents = ref<DocumentSummaryView[]>([])
-const files = ref<FileView[]>([])
+const recentItems = ref<WorkspaceRecentItemView[]>([])
 const knowledgeTab = ref<'files' | 'documents'>('files')
+const recentMode = ref<'viewed' | 'edited'>('viewed')
 
 const projectLookup = computed(() => new Map(projects.value.map((project) => [project.id, project.name])))
 const totalFiles = computed(() => projects.value.reduce((sum, project) => sum + project.fileCount, 0))
@@ -226,44 +225,68 @@ const projectBars = computed(() => {
 const projectName = (projectId?: number) =>
   projectId ? projectLookup.value.get(projectId) || `项目 #${projectId}` : '未绑定项目'
 
-const showComingSoon = (feature: string) => {
-  ElMessageBox.alert(`${feature} 当前功能还未开发`, '提示', {
-    confirmButtonText: '确定',
-    type: 'info',
-  })
-}
+const recentActionLabel = (actionCode?: string) =>
+  ({
+    FILE_PREVIEW: '最近预览',
+    FILE_DETAIL_OPEN: '最近查看详情',
+    FILE_EDIT_OPEN: '最近进入编辑',
+    FILE_EDIT_SAVE: '最近保存文件',
+    DOCUMENT_VIEW: '最近浏览',
+    DOCUMENT_EDIT_OPEN: '最近进入编辑',
+    DOCUMENT_SAVE: '最近保存文档',
+    DOCUMENT_PUBLISH: '最近发布文档',
+  })[actionCode || ''] || '最近操作'
 
-const previewFile = async (file: FileView) => {
+const previewFile = async (file: WorkspaceRecentItemView) => {
   try {
     if (isOfficeEditableFile(file.fileExt)) {
-      await previewOfficeFile(file.id)
+      await previewOfficeFile(file.assetId)
       return
     }
-    await previewFileBinary(file.id)
+    await previewFileBinary(file.assetId)
   } catch (error) {
     ElMessage.error(resolveErrorMessage(error, '文件预览失败，请稍后重试'))
   }
 }
 
+const loadRecent = async () => {
+  const page = await getWorkspaceRecent({
+    mode: recentMode.value,
+    assetType: knowledgeTab.value === 'files' ? 'FILE' : 'DOCUMENT',
+    pageNum: 1,
+    pageSize: 6,
+  })
+  recentItems.value = page.records
+}
+
+const switchRecentMode = async (mode: 'viewed' | 'edited') => {
+  if (recentMode.value === mode) {
+    return
+  }
+  recentMode.value = mode
+  await loadRecent()
+}
+
 const load = async () => {
   try {
-    const [projectPage, aiSessions, documentPage, filePage] = await Promise.all([
+    const [projectPage, aiSessions] = await Promise.all([
       getProjects({ pageNum: 1, pageSize: 8 }),
       getSessions(),
-      getDocuments({ pageNum: 1, pageSize: 6 }),
-      getFiles({ pageNum: 1, pageSize: 6 }),
     ])
     projectTotal.value = projectPage.total
     projects.value = projectPage.records
     sessions.value = aiSessions.slice(0, 6)
-    documents.value = documentPage.records
-    files.value = filePage.records
+    await loadRecent()
   } catch (error) {
     ElMessage.error(resolveErrorMessage(error, '工作台数据加载失败，请稍后重试'))
   }
 }
 
 onMounted(load)
+
+watch(knowledgeTab, async () => {
+  await loadRecent()
+})
 </script>
 
 <style scoped>
@@ -336,6 +359,12 @@ onMounted(load)
   margin: 0;
   font-size: 14px;
   line-height: 1.7;
+}
+
+.workspace-section-count {
+  color: #667085;
+  font-size: 13px;
+  font-weight: 600;
 }
 
 .workspace-switcher {

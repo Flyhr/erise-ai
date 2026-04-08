@@ -115,7 +115,7 @@ const errorText = ref('')
 const captcha = reactive({ captchaId: '', captchaImage: '' })
 const form = reactive({
   username: '',
-  // displayName: '',
+  displayName: '',
   email: '',
   password: '',
   captchaCode: ''

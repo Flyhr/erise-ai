@@ -26,9 +26,10 @@ public class KnowledgeController {
     public ApiResponse<PageResponse<KnowledgeAssetView>> assets(@RequestParam(required = false) String type,
                                                                 @RequestParam(required = false) Long projectId,
                                                                 @RequestParam(required = false) String q,
+                                                                @RequestParam(required = false, defaultValue = "false") boolean knowledgeOnly,
                                                                 @RequestParam(defaultValue = "1") long pageNum,
                                                                 @RequestParam(defaultValue = "10") long pageSize) {
-        return ApiResponse.success(knowledgeQueryService.assets(type, projectId, q, pageNum, pageSize));
+        return ApiResponse.success(knowledgeQueryService.assets(type, projectId, q, knowledgeOnly, pageNum, pageSize));
     }
 }
 
@@ -39,14 +40,14 @@ class KnowledgeQueryService {
     private final JdbcTemplate jdbcTemplate;
     private final ProjectService projectService;
 
-    PageResponse<KnowledgeAssetView> assets(String type, Long projectId, String keyword, long pageNum, long pageSize) {
+    PageResponse<KnowledgeAssetView> assets(String type, Long projectId, String keyword, boolean knowledgeOnly, long pageNum, long pageSize) {
         var currentUser = SecurityUtils.currentUser();
         if (projectId != null) {
             projectService.requireAccessibleProject(projectId);
         }
 
         List<Object> params = new ArrayList<>();
-        String unionSql = buildUnionSql(type, projectId, keyword, currentUser.userId(), currentUser.isAdmin(), params);
+        String unionSql = buildUnionSql(type, projectId, keyword, knowledgeOnly, currentUser.userId(), currentUser.isAdmin(), params);
         String countSql = "select count(*) from (" + unionSql + ") assets";
         long total = jdbcTemplate.queryForObject(countSql, Long.class, params.toArray());
 
@@ -64,6 +65,7 @@ class KnowledgeQueryService {
     private String buildUnionSql(String type,
                                  Long projectId,
                                  String keyword,
+                                 boolean knowledgeOnly,
                                  Long userId,
                                  boolean admin,
                                  List<Object> params) {
@@ -71,7 +73,7 @@ class KnowledgeQueryService {
         boolean includeDocuments = type == null || type.isBlank() || "DOCUMENT".equalsIgnoreCase(type);
         List<String> parts = new ArrayList<>();
         if (includeFiles) {
-            parts.add(fileSql(projectId, keyword, userId, admin, params));
+            parts.add(fileSql(projectId, keyword, knowledgeOnly, userId, admin, params));
         }
         if (includeDocuments) {
             parts.add(documentSql(projectId, keyword, userId, admin, params));
@@ -99,6 +101,7 @@ class KnowledgeQueryService {
 
     private String fileSql(Long projectId,
                            String keyword,
+                           boolean knowledgeOnly,
                            Long userId,
                            boolean admin,
                            List<Object> params) {
@@ -130,6 +133,9 @@ class KnowledgeQueryService {
         if (keyword != null && !keyword.isBlank()) {
             sql.append(" and f.file_name like ? ");
             params.add("%" + keyword.trim() + "%");
+        }
+        if (knowledgeOnly) {
+            sql.append(" and lower(coalesce(f.file_ext, '')) in ('doc', 'docx', 'pdf', 'md', 'txt') ");
         }
         return sql.toString();
     }

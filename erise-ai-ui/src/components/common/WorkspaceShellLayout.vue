@@ -17,7 +17,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, ref, watch } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { ElMessageBox } from 'element-plus'
 import { RouterView, useRoute, useRouter } from 'vue-router'
 import WorkspaceNavigationShell from '@/components/common/WorkspaceNavigationShell.vue'
@@ -36,6 +36,7 @@ watch(
 const activeNav = computed<'dashboard' | 'projects' | 'knowledge' | 'ai'>(() => {
   const path = route.path
   if (path.startsWith('/ai')) return 'ai'
+  if (path.startsWith('/knowledge')) return 'knowledge'
   if (path.startsWith('/projects')) return 'projects'
   if (path.startsWith('/workspace')) return 'dashboard'
   return 'dashboard'
@@ -62,16 +63,8 @@ const goDashboard = async () => {
 }
 
 const goKnowledge = async () => {
-  if (!route.path.startsWith('/workspace')) {
-    await router.push('/workspace')
+  if (!route.path.startsWith('/knowledge')) {
+    await router.push('/knowledge')
   }
-
-  await nextTick()
-  window.setTimeout(() => {
-    document.getElementById('knowledge-base')?.scrollIntoView({
-      behavior: 'smooth',
-      block: 'start',
-    })
-  }, 50)
 }
 </script>

@@ -12,8 +12,11 @@ import FileDetailView from "@/views/file/FileDetailView.vue";
 import OfficeFileEditView from "@/views/file/OfficeFileEditView.vue";
 import DocumentsView from "@/views/document/DocumentsView.vue";
 import DocumentEditView from "@/views/document/DocumentEditView.vue";
+// import ContentItemsView from "@/views/content/ContentItemsView.vue";
 import ContentItemsView from "@/views/content/ContentItemsView.vue";
+
 import ContentItemEditView from "@/views/content/ContentItemEditView.vue";
+import KnowledgeBaseView from "@/views/knowledge/KnowledgeBaseView.vue";
 import SearchView from "@/views/search/SearchView.vue";
 import AiView from "@/views/ai/AiView.vue";
 import ProfileView from "@/views/settings/ProfileView.vue";
@@ -37,7 +40,15 @@ const router = createRouter({
         description: "进入 Erise 知识工作台。",
       },
     },
-
+    {
+      path: "/ai",
+      component: AiView,
+      props: true,
+      meta: {
+        title: "项目 AI",
+        description: "基于项目上下文和引用发起 AI 对话。",
+      },
+    },
     // ======================
     // 🔥 独立个人资料页
     // ======================
@@ -73,15 +84,7 @@ const router = createRouter({
             description: "集中查看最近项目、文档、文件和 AI 会话。",
           },
         },
-        {
-          path: "/projects/:id/ai",
-          component: AiView,
-          props: true,
-          meta: {
-            title: "项目 AI",
-            description: "基于项目上下文和引用发起 AI 对话。",
-          },
-        },
+
         {
           path: "/projects/:id",
           component: ProjectDetailView,
@@ -119,6 +122,14 @@ const router = createRouter({
           },
         },
 
+        {
+          path: "/knowledge",
+          component: KnowledgeBaseView,
+          meta: {
+            title: "知识库",
+            description: "集中查看知识文件与在线文档。",
+          },
+        },
         {
           path: "/files",
           component: FilesView,

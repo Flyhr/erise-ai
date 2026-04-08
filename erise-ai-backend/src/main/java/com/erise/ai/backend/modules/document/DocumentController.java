@@ -91,7 +91,7 @@ class DocumentService {
     private final DocumentContentMapper documentContentMapper;
     private final DocumentVersionMapper documentVersionMapper;
     private final ProjectService projectService;
-    private final KnowledgeService knowledgeService;
+    private final RagKnowledgeService ragKnowledgeService;
     private final AuditLogService auditLogService;
 
     PageResponse<DocumentSummaryView> page(Long projectId, String keyword, long pageNum, long pageSize) {
@@ -163,14 +163,7 @@ class DocumentService {
         document.setTitle(title);
         document.setUpdatedBy(document.getOwnerUserId());
         documentMapper.updateById(document);
-        knowledgeService.replaceForSource(
-                document.getOwnerUserId(),
-                document.getProjectId(),
-                "DOCUMENT",
-                document.getId(),
-                document.getTitle(),
-                knowledgeService.splitText(content.getPlainText(), null)
-        );
+        syncRagKnowledge(document, content.getPlainText());
         return toInternalContext(document, content);
     }
 
@@ -189,14 +182,7 @@ class DocumentService {
         content.setUpdatedBy(currentUser.userId());
         documentContentMapper.updateById(content);
 
-        knowledgeService.replaceForSource(
-                document.getOwnerUserId(),
-                document.getProjectId(),
-                "DOCUMENT",
-                document.getId(),
-                document.getTitle(),
-                knowledgeService.splitText(request.plainText(), null)
-        );
+        syncRagKnowledge(document, request.plainText());
         auditLogService.log(currentUser, "DOCUMENT_SAVE", "DOCUMENT", id, request);
         return toDetail(document, content);
     }
@@ -224,14 +210,7 @@ class DocumentService {
         document.setUpdatedBy(currentUser.userId());
         documentMapper.updateById(document);
 
-        knowledgeService.replaceForSource(
-                document.getOwnerUserId(),
-                document.getProjectId(),
-                "DOCUMENT",
-                document.getId(),
-                document.getTitle(),
-                knowledgeService.splitText(content.getPlainText(), null)
-        );
+        syncRagKnowledge(document, content.getPlainText());
         auditLogService.log(currentUser, "DOCUMENT_PUBLISH", "DOCUMENT", id, java.util.Map.of("versionNo", nextVersion));
         return detail(id);
     }
@@ -263,8 +242,22 @@ class DocumentService {
         documentMapper.deleteById(id);
         documentContentMapper.delete(new LambdaQueryWrapper<DocumentContentEntity>().eq(DocumentContentEntity::getDocumentId, id));
         documentVersionMapper.delete(new LambdaQueryWrapper<DocumentVersionEntity>().eq(DocumentVersionEntity::getDocumentId, id));
-        knowledgeService.deleteForSource(document.getProjectId(), "DOCUMENT", id);
+        ragKnowledgeService.deleteKbSource(document.getOwnerUserId(), document.getProjectId(), "DOCUMENT", id);
         auditLogService.log(currentUser, "DOCUMENT_DELETE", "DOCUMENT", id, null);
+    }
+
+    private void syncRagKnowledge(DocumentEntity document, String plainText) {
+        try {
+            ragKnowledgeService.replaceKbSource(
+                    document.getOwnerUserId(),
+                    document.getProjectId(),
+                    "DOCUMENT",
+                    document.getId(),
+                    document.getTitle(),
+                    ragKnowledgeService.splitText(plainText, null)
+            );
+        } catch (RuntimeException ignored) {
+        }
     }
 
     DocumentEntity requireExistingDocument(Long id) {

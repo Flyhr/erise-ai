@@ -90,7 +90,7 @@ class OfficeFileService {
     private final FileEditContentMapper fileEditContentMapper;
     private final ProjectService projectService;
     private final MinioStorageClient storageClient;
-    private final KnowledgeService knowledgeService;
+    private final RagKnowledgeService ragKnowledgeService;
     private final AuditLogService auditLogService;
 
     EditableOfficeFileView detail(Long fileId) {
@@ -151,14 +151,17 @@ class OfficeFileService {
     }
 
     private void syncKnowledge(FileEntity file, String plainText, Long operatorUserId) {
-        knowledgeService.replaceForSource(
-                file.getOwnerUserId(),
-                file.getProjectId(),
-                "FILE",
-                file.getId(),
-                file.getFileName(),
-                knowledgeService.splitText(plainText, null)
-        );
+        try {
+            ragKnowledgeService.replaceKbSource(
+                    file.getOwnerUserId(),
+                    file.getProjectId(),
+                    "FILE",
+                    file.getId(),
+                    file.getFileName(),
+                    ragKnowledgeService.splitText(plainText, null)
+            );
+        } catch (RuntimeException ignored) {
+        }
         file.setParseStatus("SUCCESS");
         file.setIndexStatus("SUCCESS");
         file.setUpdatedBy(operatorUserId);

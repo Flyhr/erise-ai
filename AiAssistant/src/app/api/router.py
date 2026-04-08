@@ -2,7 +2,7 @@
 
 from fastapi import APIRouter
 
-from src.app.api.v1 import chat, health, messages, models, sessions
+from src.app.api.v1 import chat, health, messages, models, rag, sessions
 from src.app.core.config import get_settings
 
 
@@ -13,4 +13,5 @@ internal_router.include_router(models.router)
 internal_router.include_router(sessions.router)
 internal_router.include_router(messages.router)
 internal_router.include_router(chat.router)
+internal_router.include_router(rag.router)
 api_router.include_router(internal_router)

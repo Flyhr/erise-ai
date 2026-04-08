@@ -30,5 +30,9 @@ async def fetch_file_context(file_id: int, request_id: str) -> dict[str, object]
     return await _request('GET', f'/files/{file_id}/context', request_id)
 
 
+async def fetch_temp_file_context(temp_file_id: int, request_id: str) -> dict[str, object] | None:
+    return await _request('GET', f'/ai/temp-files/{temp_file_id}/context', request_id)
+
+
 async def update_document_title(document_id: int, title: str, request_id: str) -> dict[str, object] | None:
     return await _request('POST', f'/documents/{document_id}/title', request_id, {'title': title})

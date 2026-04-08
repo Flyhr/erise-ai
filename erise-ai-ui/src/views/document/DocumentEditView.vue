@@ -96,6 +96,7 @@ import { computed, nextTick, onMounted, reactive, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { useRoute, useRouter } from 'vue-router'
 import { getDocument, publishDocument, updateDocument } from '@/api/document'
+import { trackWorkspaceActivity } from '@/api/workspace'
 import AppEmptyState from '@/components/common/AppEmptyState.vue'
 import AppPageHeader from '@/components/common/AppPageHeader.vue'
 import AppSectionCard from '@/components/common/AppSectionCard.vue'
@@ -253,6 +254,15 @@ onMounted(async () => {
   detailStatus.value = detail.docStatus
   createdAt.value = detail.createdAt
   updatedAt.value = detail.updatedAt
+  try {
+    await trackWorkspaceActivity({
+      assetType: 'DOCUMENT',
+      assetId: documentId,
+      actionCode: isPreview.value ? 'DOCUMENT_VIEW' : 'DOCUMENT_EDIT_OPEN',
+    })
+  } catch {
+    // best effort only
+  }
 })
 </script>
 

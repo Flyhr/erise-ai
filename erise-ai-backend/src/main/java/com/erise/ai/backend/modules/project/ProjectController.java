@@ -38,8 +38,10 @@ public class ProjectController {
 
     @GetMapping
     public ApiResponse<PageResponse<ProjectDetailView>> page(@RequestParam(defaultValue = "1") long pageNum,
-                                                             @RequestParam(defaultValue = "10") long pageSize) {
-        return ApiResponse.success(projectService.page(pageNum, pageSize));
+                                                             @RequestParam(defaultValue = "10") long pageSize,
+                                                             @RequestParam(required = false) String q,
+                                                             @RequestParam(required = false) String status) {
+        return ApiResponse.success(projectService.page(pageNum, pageSize, q, status));
     }
 
     @PostMapping
@@ -77,12 +79,20 @@ class ProjectService {
     private final ProjectMapper projectMapper;
     private final JdbcTemplate jdbcTemplate;
     private final AuditLogService auditLogService;
+    private final RagKnowledgeService ragKnowledgeService;
 
-    PageResponse<ProjectDetailView> page(long pageNum, long pageSize) {
+    PageResponse<ProjectDetailView> page(long pageNum, long pageSize, String keyword, String status) {
         var currentUser = SecurityUtils.currentUser();
+        String trimmedKeyword = keyword == null ? null : keyword.trim();
+        String trimmedStatus = status == null ? null : status.trim();
         Page<ProjectEntity> page = projectMapper.selectPage(Page.of(pageNum, pageSize),
                 new LambdaQueryWrapper<ProjectEntity>()
                         .eq(!currentUser.isAdmin(), ProjectEntity::getOwnerUserId, currentUser.userId())
+                        .and(trimmedKeyword != null && !trimmedKeyword.isEmpty(), wrapper -> wrapper
+                                .like(ProjectEntity::getName, trimmedKeyword)
+                                .or()
+                                .like(ProjectEntity::getDescription, trimmedKeyword))
+                        .eq(trimmedStatus != null && !trimmedStatus.isEmpty(), ProjectEntity::getProjectStatus, trimmedStatus)
                         .orderByDesc(ProjectEntity::getUpdatedAt));
         var records = page.getRecords().stream().map(this::toView).toList();
         return PageResponse.of(records, pageNum, pageSize, page.getTotal());
@@ -139,6 +149,10 @@ class ProjectService {
     void delete(Long id) {
         var currentUser = SecurityUtils.currentUser();
         ProjectEntity entity = requireAccessibleProject(id);
+        try {
+            ragKnowledgeService.deleteProjectSources(currentUser.userId(), entity.getId());
+        } catch (RuntimeException ignored) {
+        }
         entity.setUpdatedBy(currentUser.userId());
         projectMapper.deleteById(entity.getId());
         auditLogService.log(currentUser, "PROJECT_DELETE", "PROJECT", id, null);

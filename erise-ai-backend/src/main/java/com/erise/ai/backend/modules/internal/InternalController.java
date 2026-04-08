@@ -21,10 +21,17 @@ public class InternalController {
     private final ProjectService projectService;
     private final DocumentService documentService;
     private final FileService fileService;
+    private final AiTempFileService aiTempFileService;
 
     @PostMapping("/knowledge/retrieve")
     public ApiResponse<java.util.List<SearchResultView>> retrieveKnowledge(@Valid @RequestBody InternalKnowledgeRequest request) {
-        return ApiResponse.success(searchService.retrieveKnowledge(request.userId(), request.projectId(), request.keyword(), request.limit()));
+        return ApiResponse.success(searchService.retrieveKnowledge(
+                request.userId(),
+                request.projectScopeIds(),
+                request.attachments(),
+                request.keyword(),
+                request.limit()
+        ));
     }
 
     @GetMapping("/projects/{id}/context")
@@ -47,9 +54,21 @@ public class InternalController {
     public ApiResponse<InternalFileContextView> fileContext(@PathVariable Long id) {
         return ApiResponse.success(fileService.internalContext(id));
     }
+
+    @GetMapping("/ai/temp-files/{id}/context")
+    public ApiResponse<InternalAiTempFileContextView> tempFileContext(@PathVariable Long id) {
+        return ApiResponse.success(aiTempFileService.internalContext(id));
+    }
 }
 
-record InternalKnowledgeRequest(@NotNull Long userId, @NotNull Long projectId, @NotBlank String keyword, int limit) {
+record InternalKnowledgeRequest(@NotNull Long userId,
+                                java.util.List<Long> projectScopeIds,
+                                java.util.List<InternalKnowledgeAttachment> attachments,
+                                @NotBlank String keyword,
+                                int limit) {
+}
+
+record InternalKnowledgeAttachment(@NotBlank String attachmentType, @NotNull Long sourceId, Long sessionId) {
 }
 
 record InternalDocumentTitleUpdateRequest(@NotBlank String title) {

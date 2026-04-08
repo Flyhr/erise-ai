@@ -6,6 +6,6 @@ ENV PYTHONUNBUFFERED=1
 ENV PYTHONDONTWRITEBYTECODE=1
 
 COPY requirements.txt ./
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --default-timeout=180 --no-cache-dir -r requirements.txt
 
 CMD ["/bin/sh", "/workspace/docker/dev-entrypoint.sh"]

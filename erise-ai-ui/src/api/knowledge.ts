@@ -5,6 +5,7 @@ export const getKnowledgeAssets = (params: {
   type?: 'FILE' | 'DOCUMENT'
   projectId?: number
   q?: string
+  knowledgeOnly?: boolean
   pageNum?: number
   pageSize?: number
 }) => http.get<never, PageResponse<KnowledgeAssetView>>('/v1/knowledge/assets', { params })

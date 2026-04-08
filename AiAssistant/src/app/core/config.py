@@ -1,19 +1,25 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 from functools import lru_cache
 
+from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+SUPPORTED_WEB_SEARCH_PROVIDERS = {'duckduckgo', 'tavily'}
 
 
 class Settings(BaseSettings):
     app_name: str = 'erise-ai-chat-service'
     app_env: str = 'dev'
     api_prefix: str = '/internal/ai/chat'
+
     mysql_dsn: str = 'sqlite:///./ai_chat.db'
     redis_url: str = 'redis://localhost:6379/0'
     internal_service_token: str = 'change-this-in-production'
     java_internal_base_url: str = 'http://localhost:8080/internal/v1'
     java_internal_api_key: str | None = None
+
     openai_api_key: str = ''
     openai_base_url: str = 'https://api.openai.com/v1'
     openai_model: str = 'gpt-4.1-mini'
@@ -21,6 +27,26 @@ class Settings(BaseSettings):
     deepseek_base_url: str = 'https://api.deepseek.com/v1'
     deepseek_model: str = 'deepseek-chat'
     default_model_code: str = 'deepseek-chat'
+
+    qdrant_url: str = 'http://localhost:6333'
+    qdrant_api_key: str = ''
+    qdrant_kb_collection: str = 'kb_chunks'
+    qdrant_temp_collection: str = 'temp_chunks'
+
+    embedding_model: str = 'text-embedding-3-small'
+    embedding_base_url: str | None = None
+    embedding_api_key: str = ''
+    embedding_version: str = 'v1'
+    embedding_dimensions: int = 1536
+
+    rag_top_k: int = 5
+    rag_keyword_top_k: int = 5
+    rag_similarity_threshold: float = 0.75
+
+    web_search_provider: str = ''
+    web_search_max_results: int = 5
+    tavily_api_key: str = ''
+
     context_history_limit: int = 8
     request_body_char_limit: int = 12000
     session_page_size: int = 20
@@ -32,15 +58,43 @@ class Settings(BaseSettings):
     default_org_id: int = 0
     sqlite_echo: bool = False
 
-    model_config = SettingsConfigDict(env_file=('.env.dev', '.env'), env_file_encoding='utf-8', extra='ignore')
+    model_config = SettingsConfigDict(
+        env_file='.env',
+        env_file_encoding='utf-8',
+        extra='ignore',
+    )
 
-    @property
-    def blocked_term_list(self) -> list[str]:
-        return [item.strip().lower() for item in self.blocked_terms.split(',') if item.strip()]
+    @model_validator(mode='after')
+    def validate_web_search_settings(self) -> 'Settings':
+        provider = (self.web_search_provider or '').strip().lower()
+        if not provider:
+            self.web_search_provider = ''
+            return self
+        if provider not in SUPPORTED_WEB_SEARCH_PROVIDERS:
+            raise ValueError(
+                "WEB_SEARCH_PROVIDER must be one of: duckduckgo, tavily. "
+                "Use the provider name, not an API key."
+            )
+        if provider == 'tavily' and not (self.tavily_api_key or '').strip():
+            raise ValueError('TAVILY_API_KEY is required when WEB_SEARCH_PROVIDER=tavily')
+        self.web_search_provider = provider
+        return self
 
     @property
     def java_api_key(self) -> str:
         return self.java_internal_api_key or self.internal_service_token
+
+    @property
+    def resolved_embedding_api_key(self) -> str:
+        return self.embedding_api_key or self.openai_api_key or self.deepseek_api_key
+
+    @property
+    def resolved_embedding_base_url(self) -> str:
+        return self.embedding_base_url or self.openai_base_url
+
+    @property
+    def blocked_term_list(self) -> list[str]:
+        return [item.strip() for item in self.blocked_terms.split(',') if item.strip()]
 
 
 @lru_cache(maxsize=1)

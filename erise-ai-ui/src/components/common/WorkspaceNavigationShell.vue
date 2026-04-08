@@ -10,12 +10,6 @@
           <div class="workspace-brand-subtitle">{{ brandSubtitle }}</div>
         </div>
       </div>
-
-      <button class="workspace-create-btn" type="button" @click="$emit('create')">
-        <span class="material-symbols-outlined">add</span>
-        <span>{{ createText }}</span>
-      </button>
-
       <nav class="workspace-side-nav">
         <button type="button" :class="['workspace-side-link', { 'is-active': activeNav === 'dashboard' }]"
           @click="$emit('navigate-dashboard')">
@@ -49,7 +43,7 @@
     </aside>
 
     <section class="workspace-main-panel">
-      <header class="workspace-topbar">
+      <!-- <header class="workspace-topbar">
         <div class="workspace-search-box">
           <span class="material-symbols-outlined">search</span>
           <input :value="modelValue" type="text" :placeholder="searchPlaceholder" @input="onInput"
@@ -71,7 +65,7 @@
             <div class="workspace-user-avatar">{{ userAvatar }}</div>
           </button>
         </div>
-      </header>
+      </header> -->
 
       <div class="workspace-shell-content">
         <slot />
@@ -99,10 +93,10 @@ interface Props {
 withDefaults(defineProps<Props>(), {
   modelValue: '',
   activeNav: 'dashboard',
-  brandTitle: 'Erise Workbench',
+  brandTitle: 'Erise Ai 知识库',
   brandSubtitle: 'The Digital Curator',
   createText: 'New Entry',
-  footerTitle: '知识工作台',
+  footerTitle: 'Erise AI 知识库V1.0',
   footerCopy: 'Premium Account',
   footerAvatar: 'ER',
   userName: '个人资料',

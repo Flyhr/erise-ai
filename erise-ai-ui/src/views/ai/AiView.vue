@@ -7,7 +7,7 @@
       :user-name="activeModel?.modelName || 'AI 助理'" :user-role="sessionStatusText"
       :user-avatar="(activeModel?.modelName || 'A').slice(0, 1)" search-placeholder="搜索项目、知识库、文件或 AI 会话..."
       @create="resetConversation" @navigate-dashboard="router.push('/workspace')"
-      @navigate-projects="router.push('/projects')" @navigate-knowledge="router.push('/files')"
+      @navigate-projects="router.push('/projects')" @navigate-knowledge="router.push('/knowledge')"
       @navigate-ai="router.push('/ai')" @search="openSearch" @notify="showComingSoon('通知中心')"
       @settings="router.push('/settings/profile')" @profile="router.push('/settings/profile')">
       <div class="workspace-shell-card app-card">
@@ -15,20 +15,25 @@
           <aside class="conversation-history">
             <div class="conversation-history__head">
               <div>
-                <div class="section-eyebrow">Chat History</div>
                 <h3>会话列表</h3>
               </div>
               <button type="button" class="soft-chip" :disabled="sending" @click="resetConversation">新对话</button>
             </div>
 
             <div class="knowledge-card">
-              <div class="knowledge-card__head">
-                <span class="section-eyebrow">Knowledge Base</span>
-                <button type="button" class="mini-link" @click="openAttachmentPicker">添加文件</button>
-              </div>
+              <!-- <div class="knowledge-card__head"> -->
+              <!-- <span class="section-eyebrow">Knowledge Base</span> -->
+              <!-- <button type="button" class="mini-link" @click="openAttachmentPicker">添加文件</button> -->
+              <!-- </div> -->
               <div class="knowledge-subtabs">
-                <button type="button" class="knowledge-subtabs__item is-active"
-                  @click="openAttachmentPicker">文件</button>
+                <span class="section-eyebrow">知识库文件</span>
+
+                <!-- <button type="button" class="knowledge-subtabs__item is-active"
+                  @click="openAttachmentPicker">添加文件</button> -->
+                <!-- <button type="button" class="knowledge-subtabs__item" :disabled="sending || uploadingTempFile"
+                  @click="triggerTempFileUpload">
+                  {{ uploadingTempFile ? '上传中...' : '上传临时文件' }}
+                </button> -->
               </div>
               <div v-if="selectedAttachments.length" class="knowledge-selected">
                 <button v-for="attachment in selectedAttachments.filter((item) => item.attachmentType === 'FILE')"
@@ -42,7 +47,30 @@
                   还有其它类型资料已附加
                 </button>
               </div>
-              <div v-else class="knowledge-empty">还没有附加知识库文件，点击“添加文件”即可将资料带入当前对话。</div>
+              <div v-else class="knowledge-empty">还没有附加知识库文件。</div>
+
+              <div class="knowledge-temp">
+                <div class="knowledge-temp__head">
+                  <span class="section-eyebrow">临时文件</span>
+                  <!-- <span class="section-caption">{{ activeSessionId ? '仅当前会话可见' : '发送首条消息后可上传' }}</span> -->
+                </div>
+                <div v-if="tempFiles.length" class="temp-file-list">
+                  <div v-for="tempFile in tempFiles" :key="tempFile.id" class="temp-file-chip"
+                    :class="tempFileSurfaceClass(tempFile)">
+                    <div class="temp-file-chip__copy">
+                      <strong>{{ tempFile.fileName }}</strong>
+                      <small>{{ tempFileStatusLabel(tempFile) }}</small>
+                    </div>
+                    <button type="button" class="temp-file-chip__remove" :disabled="sending || uploadingTempFile"
+                      @click="removeTempFile(tempFile)">
+                      ×
+                    </button>
+                  </div>
+                </div>
+                <div v-else class="knowledge-empty">
+                  {{ activeSessionId ? '当前会话还没有临时文件。' : '当前会话还没有临时文件' }}
+                </div>
+              </div>
             </div>
 
             <div class="thread-list thread-list--history">
@@ -62,13 +90,11 @@
           </aside>
 
           <section class="chat-stage">
-            <div class="chat-stage__header">
-              <div>
-                <div class="section-eyebrow">AI Assistant</div>
+            <!-- <div class="chat-stage__header"> -->
+            <!-- <div>
                 <h2>{{ activeSessionSummary?.title || 'Architectural Assistant' }}</h2>
-                <p>{{ pageSubtitleText }}</p>
-              </div>
-              <div class="chat-stage__meta">
+              </div> -->
+            <!-- <div class="chat-stage__meta">
                 <button type="button" class="model-chip" :disabled="sending" @click="showUnavailable('模型高级设置')">
                   <span class="material-symbols-outlined">data_object</span>
                   <span>{{ modelHeaderTitle }}</span>
@@ -77,8 +103,8 @@
                   <span class="run-chip__dot"></span>
                   <span>{{ sessionStatusText }}</span>
                 </div>
-              </div>
-            </div>
+              </div> -->
+            <!-- </div> -->
 
             <section ref="messageListRef" class="message-board" :class="{ 'is-empty': !messages.length }">
               <div class="message-board__inner">
@@ -119,12 +145,18 @@
                           <button v-for="citation in message.citations"
                             :key="`${citation.sourceType}-${citation.sourceId}-${citation.pageNo || 'na'}`"
                             type="button" class="citation-card" @click="openCitation(citation)">
-                            <strong>{{ citation.sourceTitle }}</strong>
-                            <span>
-                              {{ citationSourceLabel(citation.sourceType) }}
-                              <template v-if="citation.pageNo"> · 第 {{ citation.pageNo }} 页</template>
-                            </span>
-                            <small>{{ citation.snippet || '暂无引用摘录' }}</small>
+                            <template v-if="citation.sourceType === 'WEB'">
+                              <strong class="citation-card__title citation-card__title--single">{{ citation.sourceTitle
+                              }}</strong>
+                            </template>
+                            <template v-else>
+                              <strong class="citation-card__title">{{ citation.sourceTitle }}</strong>
+                              <span>
+                                {{ citationSourceLabel(citation.sourceType) }}
+                                <template v-if="citation.pageNo"> · 第 {{ citation.pageNo }} 页</template>
+                              </span>
+                              <small>{{ citation.snippet || '暂无引用摘录' }}</small>
+                            </template>
                           </button>
                         </div>
 
@@ -164,16 +196,25 @@
                 <div class="composer-box__toptools">
                   <button type="button" class="toolbar-ghost" :disabled="sending" @click="openAttachmentPicker">
                     <span class="material-symbols-outlined">attach_file</span>
-                    <span>文件</span>
+                    <span>知识库文件</span>
+                  </button>
+                  <button type="button" class="toolbar-ghost" :disabled="sending || uploadingTempFile"
+                    @click="triggerTempFileUpload">
+                    <span class="material-symbols-outlined">note_add</span>
+                    <span>{{ uploadingTempFile ? '上传中' : '临时文件' }}</span>
                   </button>
                   <button type="button" class="toolbar-ghost" @click="showUnavailable('图片上传')">
                     <span class="material-symbols-outlined">image</span>
                     <span>图片</span>
                   </button>
-                  <button type="button" class="toolbar-ghost" @click="showUnavailable('高级模型选择')">
+                  <div class="toolbar-model-picker">
                     <span class="material-symbols-outlined">tune</span>
-                    <span>模型配置</span>
-                  </button>
+                    <el-select v-model="selectedModelCode" size="small" class="toolbar-model-select"
+                      :disabled="sending || loadingModels || !modelChoices.length" placeholder="选择模型">
+                      <el-option v-for="model in modelChoices" :key="model.modelCode"
+                        :label="`${model.modelName} · ${model.providerCode}`" :value="model.modelCode" />
+                    </el-select>
+                  </div>
                 </div>
 
                 <div class="composer-box__content">
@@ -186,9 +227,12 @@
                       <button type="button" class="toolbar-chip" disabled>{{ modelProviderLabel }}</button>
                       <button v-if="selectedProjectDisplay" type="button" class="toolbar-chip" disabled>{{
                         selectedProjectDisplay
-                      }}</button>
+                        }}</button>
                       <button v-if="selectedAttachments.length" type="button" class="toolbar-chip" disabled>
                         已附加 {{ selectedAttachments.length }} 份资料
+                      </button>
+                      <button v-if="tempFiles.length" type="button" class="toolbar-chip" disabled>
+                        临时文件 {{ indexedTempFiles.length }}/{{ tempFiles.length }}
                       </button>
                     </div>
                     <div class="composer-box__right-tools">
@@ -272,6 +316,9 @@
         </div>
       </template>
     </el-dialog>
+
+    <input ref="tempFileInputRef" hidden type="file" accept=".doc,.docx,.pdf,.md,.txt,.csv,.json"
+      @change="handleTempFilePicked" />
   </div>
 </template>
 
@@ -280,7 +327,18 @@ import dayjs from 'dayjs'
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { useRoute, useRouter } from 'vue-router'
-import { cancelChat, chat, deleteSession, getModels, getSession, getSessions } from '@/api/ai'
+import {
+  cancelChat,
+  chat,
+  deleteSession,
+  deleteTempFile,
+  getModels,
+  getRetrievalSettings,
+  getSession,
+  getSessions,
+  getTempFiles,
+  uploadTempFile,
+} from '@/api/ai'
 import type { AiChatPayload } from '@/api/ai'
 import { getDocuments } from '@/api/document'
 import { getFiles } from '@/api/file'
@@ -293,7 +351,9 @@ import type {
   AiCitationView,
   AiMessageView,
   AiModelView,
+  AiRetrievalSettingView,
   AiSessionSummaryView,
+  AiTempFileView,
   DocumentSummaryView,
   FileView,
   ProjectDetailView,
@@ -325,6 +385,12 @@ interface DraftAttachmentOption {
   sourceId: number
   title: string
 }
+
+const DEFAULT_RETRIEVAL_SETTINGS: AiRetrievalSettingView = {
+  similarityThreshold: 0.75,
+  topK: 5,
+  webSearchEnabledDefault: false,
+}
 const showComingSoon = (feature: string) => {
   ElMessageBox.alert(`${feature} 当前功能还未开发`, '提示', {
     confirmButtonText: '确定',
@@ -346,6 +412,8 @@ const attachmentKeyOf = (attachment: Pick<AiAttachmentPayload, 'attachmentType' 
 const citationSourceLabel = (sourceType?: string) => ({
   DOCUMENT: '文档',
   FILE: '文件',
+  TEMP_FILE: '临时文件',
+  WEB: '网页',
   SHEET: '表格',
   BOARD: '画板',
   DATA_TABLE: '数据表',
@@ -356,6 +424,19 @@ const fileParseStatusLabel = (status?: string) => ({
   COMPLETED: '已完成',
   FAILED: '失败',
 }[status || ''] || status || '待处理')
+const formatBytes = (size?: number) => {
+  const value = Number(size || 0)
+  if (!Number.isFinite(value) || value <= 0) {
+    return '0 B'
+  }
+  if (value < 1024) {
+    return `${value} B`
+  }
+  if (value < 1024 * 1024) {
+    return `${(value / 1024).toFixed(1)} KB`
+  }
+  return `${(value / (1024 * 1024)).toFixed(1)} MB`
+}
 
 const errorMessageOf = (error: unknown) => {
   const candidate = error as { response?: { data?: { message?: string; msg?: string } }; message?: string }
@@ -416,14 +497,18 @@ const currentRequestId = ref('')
 const searchKeyword = ref('')
 const question = ref('')
 const sending = ref(false)
+const uploadingTempFile = ref(false)
 const activeSessionId = ref<number | undefined>()
 const selectedProjectId = ref<number | undefined>()
 const draftProjectId = ref<number | undefined>()
 const selectedAttachments = ref<AiAttachmentPayload[]>([])
+const tempFiles = ref<AiTempFileView[]>([])
+const retrievalSettings = ref<AiRetrievalSettingView>({ ...DEFAULT_RETRIEVAL_SETTINGS })
 const draftAttachmentKeys = ref<string[]>([])
 const networkError = ref('')
 const messageListRef = ref<HTMLDivElement | null>(null)
 const composerRef = ref<HTMLTextAreaElement | null>(null)
+const tempFileInputRef = ref<HTMLInputElement | null>(null)
 const sendStartedAt = ref<number>()
 const clockNow = ref(Date.now())
 
@@ -433,11 +518,11 @@ const projectLookup = computed(() => new Map(selectableProjects.value.map((proje
 const activeProjectId = computed(() => routeProjectId.value || selectedProjectId.value)
 const activeProject = computed(() => (activeProjectId.value ? projectLookup.value.get(activeProjectId.value) : undefined))
 const selectedProjectDisplay = computed(() => activeProject.value?.name || (activeProjectId.value ? `项目 #${activeProjectId.value}` : ''))
-const pageSubtitleText = computed(() =>
-  routeProjectId.value
-    ? '围绕当前项目上下文、知识库文件与会话记录发起连续协作。'
-    : '选择项目、附加资料，像 ChatGPT 一样持续对话与分析。',
+const indexedTempFiles = computed(() => tempFiles.value.filter((item) => item.indexStatus === 'INDEXED'))
+const hasScopedContext = computed(() =>
+  Boolean(activeProjectId.value || selectedAttachments.value.length || indexedTempFiles.value.length),
 )
+
 const baseAiPath = computed(() => (props.id ? `/projects/${props.id}/ai` : '/ai'))
 const visibleSessions = computed(() => {
   if (!projectLocked.value || !routeProjectId.value) {
@@ -445,12 +530,17 @@ const visibleSessions = computed(() => {
   }
   return sessions.value.filter((session) => session.projectId === routeProjectId.value || session.id === activeSessionId.value)
 })
+const modelChoices = computed(() => {
+  const preferredProviders = new Set(['openai', 'deepseek'])
+  const filtered = availableModels.value.filter((model) => preferredProviders.has((model.providerCode || '').toLowerCase()))
+  return filtered.length ? filtered : availableModels.value
+})
 const activeSessionSummary = computed(() => sessions.value.find((session) => session.id === activeSessionId.value))
 const activeModel = computed(() => {
-  if (!availableModels.value.length) {
+  if (!modelChoices.value.length) {
     return undefined
   }
-  return availableModels.value.find((model) => model.modelCode === selectedModelCode.value) || availableModels.value[0]
+  return modelChoices.value.find((model) => model.modelCode === selectedModelCode.value) || modelChoices.value[0]
 })
 // const sessionTitleText = computed(() => activeSessionSummary.value?.title || (messages.value.length ? '当前对话' : '开始一段新对话'))
 const sessionStatusText = computed(() => {
@@ -464,8 +554,8 @@ const sessionStatusText = computed(() => {
 })
 const composerPlaceholder = computed(() =>
   routeProjectId.value
-    ? '围绕当前项目继续提问，或先附加文档/文件后再发起指令。'
-    : '输入你的问题，或先附加项目资料。按 Shift + Enter 可换行。',
+    ? '围绕当前项目继续提问，或先附加文档、文件、临时资料后再发起指令。'
+    : '输入你的问题，或先附加项目资料与临时文件。',
 )
 const runningSeconds = computed(() => {
   if (!sending.value || !sendStartedAt.value) {
@@ -478,12 +568,39 @@ const modelHeaderTitle = computed(() => activeModel.value?.modelName || '未选�
 const modelProviderLabel = computed(() => activeModel.value?.providerCode || (loadingModels.value ? '加载中' : '模型服务'))
 // const modelModeLabel = computed(() => (activeModel.value?.supportStream === false ? '普通回复' : '流式回复'))
 const quickPrompts = computed(() => [
-  selectedAttachments.value.length ? '总结我发送给你的文档和文件主要内容' : '基于当前项目上下文，帮我梳理下一步工作重点',
+  selectedAttachments.value.length || indexedTempFiles.value.length
+    ? '总结我发送给你的文档、文件和临时资料主要内容'
+    : '基于当前项目上下文，帮我梳理下一步工作重点',
   '将发送给你的文档标题改为：“测试ai修改文档功能”',
   '根据这些附件列出重点、风险和待办',
 ])
 
 let tickHandle: number | undefined
+let tempFilePollHandle: number | undefined
+
+const isTempFileReady = (file: AiTempFileView) => file.indexStatus === 'INDEXED' || file.parseStatus === 'INDEXED'
+const isTempFileFailed = (file: AiTempFileView) => ['FAILED', 'DELETED'].includes(file.indexStatus) || ['FAILED', 'DELETED'].includes(file.parseStatus)
+const isTempFilePending = (file: AiTempFileView) =>
+  !isTempFileReady(file) && !isTempFileFailed(file) && ['PENDING', 'PROCESSING'].includes(file.indexStatus || file.parseStatus)
+
+const tempFileStatusLabel = (file: AiTempFileView) => {
+  if (isTempFileReady(file)) {
+    return `已可引用 · ${formatBytes(file.sizeBytes)}`
+  }
+  if (isTempFileFailed(file)) {
+    return `处理失败 · ${formatBytes(file.sizeBytes)}`
+  }
+  if (file.indexStatus === 'PROCESSING' || file.parseStatus === 'PROCESSING') {
+    return `处理中 · ${formatBytes(file.sizeBytes)}`
+  }
+  return `待处理 · ${formatBytes(file.sizeBytes)}`
+}
+
+const tempFileSurfaceClass = (file: AiTempFileView) => ({
+  'is-ready': isTempFileReady(file),
+  'is-pending': isTempFilePending(file),
+  'is-failed': isTempFileFailed(file),
+})
 
 const toUiMessage = (message: AiMessageView): UiMessage => ({
   id: String(message.id),
@@ -551,6 +668,24 @@ const stopClock = () => {
   }
 }
 
+const stopTempFilePolling = () => {
+  if (tempFilePollHandle) {
+    window.clearInterval(tempFilePollHandle)
+    tempFilePollHandle = undefined
+  }
+}
+
+const startTempFilePolling = (sessionId: number) => {
+  stopTempFilePolling()
+  tempFilePollHandle = window.setInterval(() => {
+    if (activeSessionId.value !== sessionId) {
+      stopTempFilePolling()
+      return
+    }
+    void refreshTempFiles(sessionId)
+  }, 3000)
+}
+
 const persistAttachmentState = (sessionId?: number) => {
   if (!sessionId) {
     return
@@ -594,6 +729,38 @@ const loadProjects = async (silent = true) => {
     const page = await getProjects({ pageNum: 1, pageSize: 100 })
     selectableProjects.value = page.records
   } catch (error) {
+    if (!silent) {
+      ElMessage.error(errorMessageOf(error))
+    }
+  }
+}
+
+const loadRetrievalPreference = async () => {
+  try {
+    retrievalSettings.value = await getRetrievalSettings()
+  } catch {
+    retrievalSettings.value = { ...DEFAULT_RETRIEVAL_SETTINGS }
+  }
+}
+
+const refreshTempFiles = async (sessionId = activeSessionId.value, silent = true) => {
+  if (!sessionId) {
+    tempFiles.value = []
+    stopTempFilePolling()
+    return
+  }
+
+  try {
+    const records = await getTempFiles(sessionId)
+    tempFiles.value = records
+    if (records.some(isTempFilePending)) {
+      startTempFilePolling(sessionId)
+    } else {
+      stopTempFilePolling()
+    }
+  } catch (error) {
+    tempFiles.value = []
+    stopTempFilePolling()
     if (!silent) {
       ElMessage.error(errorMessageOf(error))
     }
@@ -687,6 +854,71 @@ const removeAttachment = (attachment: AiAttachmentPayload) => {
   persistAttachmentState(activeSessionId.value)
 }
 
+const ensureTempFileSession = () => {
+  if (activeSessionId.value) {
+    return true
+  }
+  ElMessage.info('请先发送一条消息创建会话，再上传临时文件。')
+  return false
+}
+
+const triggerTempFileUpload = () => {
+  if (!ensureTempFileSession() || sending.value || uploadingTempFile.value) {
+    return
+  }
+  tempFileInputRef.value?.click()
+}
+
+const handleTempFilePicked = async (event: Event) => {
+  const input = event.target as HTMLInputElement
+  const file = input.files?.[0]
+  if (!file) {
+    return
+  }
+  if (!ensureTempFileSession()) {
+    input.value = ''
+    return
+  }
+
+  const formData = new FormData()
+  formData.append('file', file)
+  formData.append('sessionId', String(activeSessionId.value))
+  if (activeProjectId.value) {
+    formData.append('projectId', String(activeProjectId.value))
+  }
+
+  uploadingTempFile.value = true
+  try {
+    const uploaded = await uploadTempFile(formData)
+    tempFiles.value = [uploaded, ...tempFiles.value.filter((item) => item.id !== uploaded.id)]
+    if (isTempFilePending(uploaded)) {
+      startTempFilePolling(uploaded.sessionId)
+    }
+    ElMessage.success('临时文件已加入当前会话，正在解析。')
+  } catch (error) {
+    ElMessage.error(errorMessageOf(error))
+  } finally {
+    uploadingTempFile.value = false
+    input.value = ''
+  }
+}
+
+const removeTempFile = async (file: AiTempFileView) => {
+  try {
+    await ElMessageBox.confirm(`确定从当前会话移除“${file.fileName}”吗？`, '删除临时文件', { type: 'warning' })
+    await deleteTempFile(file.id)
+    tempFiles.value = tempFiles.value.filter((item) => item.id !== file.id)
+    if (activeSessionId.value) {
+      await refreshTempFiles(activeSessionId.value)
+    }
+    ElMessage.success('临时文件已删除')
+  } catch (error) {
+    if (error !== 'cancel' && error !== 'close') {
+      ElMessage.error(errorMessageOf(error))
+    }
+  }
+}
+
 const refreshSessions = async () => {
   sessions.value = await getSessions()
 }
@@ -700,8 +932,12 @@ const refreshModels = async () => {
       selectedModelCode.value = ''
       return
     }
-    if (!models.some((model) => model.modelCode === selectedModelCode.value)) {
-      selectedModelCode.value = models[0].modelCode
+    const visibleModels = models.filter((model) => ['openai', 'deepseek'].includes((model.providerCode || '').toLowerCase()))
+    const fallbackModels = visibleModels.length ? visibleModels : models
+    const preferredModel =
+      fallbackModels.find((model) => (model.providerCode || '').toLowerCase() === 'deepseek') || fallbackModels[0]
+    if (!fallbackModels.some((model) => model.modelCode === selectedModelCode.value)) {
+      selectedModelCode.value = preferredModel.modelCode
     }
   } catch (error) {
     availableModels.value = []
@@ -751,6 +987,7 @@ const applyChatResponse = async (response: AiChatResponse, userMessage: UiMessag
     selectedModelCode.value = response.modelCode
   }
   await syncSessionRoute(response.sessionId)
+  await refreshTempFiles(response.sessionId)
   await refreshSessions()
 }
 
@@ -762,12 +999,15 @@ const syncFromRoute = async () => {
       activeSessionId.value = detail.id
       messages.value = detail.messages.map(toUiMessage)
       restoreAttachmentState(detail.id, detail.projectId)
+      await refreshTempFiles(detail.id)
       networkError.value = ''
       await scrollToBottom()
       return
     } catch (error) {
       messages.value = []
       activeSessionId.value = undefined
+      tempFiles.value = []
+      stopTempFilePolling()
       restoreAttachmentState(undefined, routeProjectId.value)
       networkError.value = errorMessageOf(error)
       await router.replace(buildAiLocation())
@@ -777,6 +1017,8 @@ const syncFromRoute = async () => {
 
   activeSessionId.value = undefined
   messages.value = []
+  tempFiles.value = []
+  stopTempFilePolling()
   restoreAttachmentState(undefined, routeProjectId.value)
   networkError.value = ''
 }
@@ -793,10 +1035,12 @@ const resetConversation = async () => {
   networkError.value = ''
   attachmentDialogVisible.value = false
   selectedAttachments.value = []
+  tempFiles.value = []
   selectedProjectId.value = routeProjectId.value || preservedProjectId
   draftProjectId.value = selectedProjectId.value
   draftAttachmentKeys.value = []
   draftAttachmentOptions.value = []
+  stopTempFilePolling()
   await router.push(buildAiLocation())
   await resizeComposer()
 }
@@ -971,7 +1215,12 @@ const send = async (presetQuestion?: string) => {
     sessionId: activeSessionId.value,
     question: text,
     modelCode: selectedModelCode.value || undefined,
+    mode: hasScopedContext.value ? 'SCOPED' : 'GENERAL',
     attachments: selectedAttachments.value.length ? selectedAttachments.value : undefined,
+    tempFileIds: indexedTempFiles.value.length ? indexedTempFiles.value.map((item) => item.id) : undefined,
+    webSearchEnabled: retrievalSettings.value.webSearchEnabledDefault,
+    similarityThreshold: retrievalSettings.value.similarityThreshold,
+    topK: retrievalSettings.value.topK,
   }
 
   const useStream = activeModel.value?.supportStream !== false
@@ -1006,6 +1255,7 @@ const send = async (presetQuestion?: string) => {
           const detail = await getSession(donePayload.sessionId)
           messages.value = detail.messages.map(toUiMessage)
           restoreAttachmentState(detail.id, detail.projectId)
+          await refreshTempFiles(donePayload.sessionId)
         }
         await refreshSessions()
       },
@@ -1057,6 +1307,18 @@ const openCitation = async (citation: AiCitationView) => {
   }
   if (citation.sourceType === 'FILE') {
     await router.push(`/files/${citation.sourceId}`)
+    return
+  }
+  if (citation.sourceType === 'WEB') {
+    if (citation.url) {
+      window.open(citation.url, '_blank', 'noopener,noreferrer')
+      return
+    }
+    ElMessage.info('当前网页引用未提供可打开的链接')
+    return
+  }
+  if (citation.sourceType === 'TEMP_FILE') {
+    ElMessage.info('临时文件引用暂不支持直接预览，请在当前会话的临时文件区查看。')
     return
   }
   if (['SHEET', 'BOARD', 'DATA_TABLE'].includes(citation.sourceType)) {
@@ -1113,12 +1375,13 @@ watch(
 )
 
 onMounted(async () => {
-  await Promise.allSettled([refreshSessions(), refreshModels(), loadProjects()])
+  await Promise.allSettled([refreshSessions(), refreshModels(), loadProjects(), loadRetrievalPreference()])
   await resizeComposer()
 })
 
 onBeforeUnmount(() => {
   stopClock()
+  stopTempFilePolling()
 })
 </script>
 
@@ -1353,7 +1616,8 @@ onBeforeUnmount(() => {
 .toolbar-ghost:hover,
 .soft-chip:hover,
 .selection-chip:hover,
-.model-chip:hover {
+.model-chip:hover,
+.temp-file-chip__remove:hover {
   background: #e6e8ef;
 }
 
@@ -1417,6 +1681,11 @@ onBeforeUnmount(() => {
   color: #5f6775;
 }
 
+.section-caption {
+  color: #7a8392;
+  font-size: 12px;
+}
+
 .conversation-history__head h3,
 .chat-stage__header h2 {
   margin: 4px 0 0;
@@ -1441,6 +1710,7 @@ onBeforeUnmount(() => {
   gap: 10px;
 }
 
+
 .knowledge-subtabs__item,
 .mini-link {
   padding: 0;
@@ -1452,13 +1722,91 @@ onBeforeUnmount(() => {
 .knowledge-subtabs__item.is-active {
   padding: 8px 12px;
   border-radius: 999px;
-  background: rgba(64, 158, 255, 0.12);
+  background: rgba(233, 233, 234, 0.6);
+}
+
+.knowledge-subtabs__item:hover {
+
+  background: rgba(213, 213, 213, 0.6);
 }
 
 .knowledge-selected {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
+}
+
+.knowledge-temp {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.knowledge-temp__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.temp-file-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.temp-file-chip {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: center;
+  padding: 10px 12px;
+  border-radius: 14px;
+  border: 1px solid rgba(192, 199, 212, 0.45);
+  background: #fff;
+}
+
+.temp-file-chip.is-ready {
+  border-color: rgba(40, 108, 0, 0.16);
+  background: rgba(85, 175, 40, 0.08);
+}
+
+.temp-file-chip.is-pending {
+  border-color: rgba(0, 96, 169, 0.14);
+  background: rgba(64, 158, 255, 0.08);
+}
+
+.temp-file-chip.is-failed {
+  border-color: rgba(186, 26, 26, 0.16);
+  background: rgba(217, 107, 107, 0.08);
+}
+
+.temp-file-chip__copy {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.temp-file-chip__copy strong {
+  color: #181c20;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.temp-file-chip__copy small {
+  color: #5f6775;
+}
+
+.temp-file-chip__remove {
+  width: 28px;
+  height: 28px;
+  border: 0;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.78);
+  color: #5f6775;
+  cursor: pointer;
 }
 
 .mini-link--block {
@@ -1470,9 +1818,11 @@ onBeforeUnmount(() => {
   display: flex;
   flex: 1;
   min-height: 0;
+  max-height: calc(100dvh - 420px);
   flex-direction: column;
   gap: 10px;
   overflow-y: auto;
+  padding-right: 4px;
 }
 
 .thread-item {
@@ -1533,11 +1883,14 @@ onBeforeUnmount(() => {
   min-width: 0;
   min-height: 0;
   flex-direction: column;
+  overflow: hidden;
   background: linear-gradient(180deg, rgba(255, 255, 255, 0.92), rgba(248, 249, 255, 0.96));
 }
 
 .chat-stage__header {
   padding: 22px 24px 16px;
+  border-bottom: 1px solid;
+  /* background: #286c00; */
 }
 
 .run-chip,
@@ -1701,6 +2054,9 @@ onBeforeUnmount(() => {
 }
 
 .composer-wrap--architect {
+  position: sticky;
+  bottom: 0;
+  z-index: 3;
   padding: 18px 24px 24px;
   background: linear-gradient(180deg, rgba(248, 249, 255, 0), rgba(248, 249, 255, 1) 34%);
 }
@@ -1727,6 +2083,20 @@ onBeforeUnmount(() => {
   border-radius: 12px;
   background: transparent;
   color: #404752;
+}
+
+.toolbar-model-picker {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border-radius: 12px;
+  background: #f1f3fa;
+  color: #404752;
+}
+
+.toolbar-model-select {
+  width: 240px;
 }
 
 .composer-box__content {
@@ -1789,6 +2159,18 @@ onBeforeUnmount(() => {
   background: #fff;
   border: 1px solid rgba(192, 199, 212, 0.45);
   text-align: left;
+}
+
+.citation-card__title {
+  color: #181c20;
+  font-weight: 700;
+}
+
+.citation-card__title--single {
+  display: block;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .attachment-dialog--modern,
@@ -1933,6 +2315,10 @@ onBeforeUnmount(() => {
     border-right: 0;
     border-bottom: 1px solid rgba(192, 199, 212, 0.45);
   }
+
+  .thread-list--history {
+    max-height: 320px;
+  }
 }
 
 @media (max-width: 720px) {
@@ -1952,6 +2338,10 @@ onBeforeUnmount(() => {
   .composer-box__toptools,
   .architect-topbar__actions {
     flex-wrap: wrap;
+  }
+
+  .toolbar-model-select {
+    width: 180px;
   }
 
   .transcript-item,
