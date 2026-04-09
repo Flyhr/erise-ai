@@ -3,7 +3,7 @@
     <aside class="workspace-side-panel">
       <div class="workspace-brand-card">
         <div class="workspace-brand-mark">
-          <span class="material-symbols-outlined">architecture</span>
+          <span class="material-symbols-outlined">auto_awesome</span>
         </div>
         <div>
           <div class="workspace-brand-title">{{ brandTitle }}</div>

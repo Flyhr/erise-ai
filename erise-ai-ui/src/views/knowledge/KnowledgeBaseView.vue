@@ -55,7 +55,7 @@
           </template>
         </el-table-column>
 
-        <el-table-column v-if="activeTab === 'files'" label="知识状态" min-width="140">
+        <el-table-column v-if="activeTab === 'files'" label="文件状态" min-width="140">
           <template #default="{ row }">
             <KnowledgeSyncStatus :parse-status="row.parseStatus" :index-status="row.indexStatus"
               :can-retry="isKnowledgeFailed(row.parseStatus, row.indexStatus)" @retry="retryKnowledgeAsset(row)" />

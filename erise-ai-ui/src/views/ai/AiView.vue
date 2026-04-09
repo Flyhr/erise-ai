@@ -1,6 +1,6 @@
 <template>
   <div class="page-shell ai-admin-page">
-    <WorkspaceNavigationShell v-model="searchKeyword" active-nav="ai" brand-title="Erise AI"
+    <WorkspaceNavigationShell v-model="searchKeyword" active-nav="ai" brand-title="Erise Ai 知识库"
       brand-subtitle="The Digital Curator" create-text="新建对话" :footer-title="selectedProjectDisplay || '知识工作台'"
       :footer-copy="activeModel?.providerCode || 'Premium Account'"
       :footer-avatar="(selectedProjectDisplay || 'ER').slice(0, 2).toUpperCase()"
