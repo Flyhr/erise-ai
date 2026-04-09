@@ -68,3 +68,7 @@ erise-ai-ui/.env.dev
 
 # Deployment
 deploy/env/*.local
+
+AiAssistant/tmp_ocr_test/scan_like.pdf
+erise-ai-backend/src/test/java/com/erise/ai/backend/BackendApplicationSmokeTest.java
+erise-ai-backend/src/test/java/com/erise/ai/backend/modules/RagIngestSupportTest.java
