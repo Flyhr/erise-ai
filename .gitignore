@@ -1,7 +1,8 @@
 .env*
 .env.dev*
 !.env.example
-.AGENTS
+AGENTS.md
+docs/
 .Aissistant/docs/
 .erise-ai-backend/docs/
 .erise-ai-cloud/docs/
@@ -44,9 +45,11 @@ test-results/
 build/
 target/
 erise-ai-backend/target/
-erise-ai-cloud/target/
+erise-ai-cloud/
 
-# Docker / local runtime
+erise-ai-cloud/target/
+erise-ai-ui/tests/
+# Docker 
 data/
 docker-data/
 
