@@ -2,11 +2,8 @@
 .env.dev*
 !.env.example
 AGENTS.md
+
 docs/
-.Aissistant/docs/
-.erise-ai-backend/docs/
-.erise-ai-cloud/docs/
-.erise-ai-ui/docs/
 
 
 
@@ -19,8 +16,6 @@ docs/
 .DS_Store
 .env
 .env.dev
-AiAssistant/.env.dev
-erise-ai-ui/.env.dev
 
 # Python
 __pycache__/
@@ -31,6 +26,12 @@ __pycache__/
 AiAssistant/*.db
 AiAssistant/.coverage
 AiAssistant/.venv/
+AiAssistant/.env.dev
+AiAssistant/tmp/
+Aissistant/docs/
+AiAssistant/INSTALL_NOTE.md
+AiAssistant/README.md
+AiAssistant/tests/
 # Node
 node_modules/
 dist/
@@ -46,9 +47,10 @@ build/
 target/
 erise-ai-backend/target/
 erise-ai-cloud/
-
 erise-ai-cloud/target/
 erise-ai-ui/tests/
+.erise-ai-backend/docs/
+
 # Docker 
 data/
 docker-data/
@@ -61,5 +63,8 @@ erise-ai-ui/coverage/
 erise-ai-ui/playwright-report/
 erise-ai-ui/test-results/
 erise-ai-ui/tests/
+erise-ai-ui/.env.dev
+.erise-ai-ui/docs/
+
 # Deployment
 deploy/env/*.local
