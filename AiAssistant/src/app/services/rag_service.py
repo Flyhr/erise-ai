@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import logging
 from dataclasses import dataclass
 from typing import Any
 
@@ -23,6 +24,9 @@ from src.app.services.embedding_service import embedding_service
 from src.app.services.web_search_service import search_web
 
 
+logger = logging.getLogger(__name__)
+
+
 @dataclass(slots=True)
 class RetrievalDecision:
     answer_source: str
@@ -30,7 +34,6 @@ class RetrievalDecision:
     used_tools: list[str]
     confidence: float | None
     context_messages: list[dict[str, str]]
-    fallback_answer: str | None = None
 
 
 class RagService:
@@ -131,30 +134,29 @@ class RagService:
         )
         confidence = private_hits[0].score if private_hits else None
         top_hits = private_hits[:top_k]
+        used_tools: list[str] = ['private_knowledge']
 
         if top_hits and confidence is not None and confidence >= threshold:
             return RetrievalDecision(
                 answer_source='PRIVATE_KNOWLEDGE',
                 citations=[self._to_citation(hit) for hit in top_hits],
-                used_tools=['private_knowledge'],
+                used_tools=used_tools,
                 confidence=confidence,
                 context_messages=[{'role': 'system', 'content': self._build_private_context(top_hits, mode)}],
             )
 
-        if mode == 'SCOPED':
-            return RetrievalDecision(
-                answer_source='PRIVATE_KNOWLEDGE',
-                citations=[],
-                used_tools=['private_knowledge'],
-                confidence=confidence,
-                context_messages=[],
-                fallback_answer='范围内依据不足，当前选定范围内没有足够依据支持回答。',
-            )
+        auxiliary_citations = [self._to_citation(hit) for hit in top_hits] if top_hits else []
+        auxiliary_messages = (
+            [{'role': 'system', 'content': self._build_auxiliary_private_context(top_hits, mode)}]
+            if top_hits
+            else []
+        )
 
         if bool(request.web_search_enabled):
-            web_hits = await search_web(request.message)
+            used_tools.append('web_search')
+            web_hits = await self._safe_web_search(request.message)
             if web_hits:
-                citations = [
+                web_citations = [
                     CitationView(
                         source_type='WEB',
                         source_id=index + 1,
@@ -167,20 +169,24 @@ class RagService:
                 ]
                 return RetrievalDecision(
                     answer_source='WEB_SEARCH',
-                    citations=citations,
-                    used_tools=['web_search'],
+                    citations=web_citations + auxiliary_citations,
+                    used_tools=used_tools,
                     confidence=confidence,
-                    context_messages=[{'role': 'system', 'content': self._build_web_context(web_hits)}],
+                    context_messages=auxiliary_messages + [{
+                        'role': 'system',
+                        'content': self._build_web_context(web_hits, bool(auxiliary_citations)),
+                    }],
                 )
 
+        used_tools.append('general_knowledge')
         return RetrievalDecision(
             answer_source='GENERAL_KNOWLEDGE',
-            citations=[],
-            used_tools=['general_knowledge'],
+            citations=auxiliary_citations,
+            used_tools=used_tools,
             confidence=confidence,
-            context_messages=[{
+            context_messages=auxiliary_messages + [{
                 'role': 'system',
-                'content': '当前未命中足够可靠的私有知识，也没有可用的联网搜索结果。请明确以通用知识回答，不要伪造引用。',
+                'content': self._build_general_context(bool(request.web_search_enabled), bool(auxiliary_citations)),
             }],
         )
 
@@ -235,6 +241,13 @@ class RagService:
         try:
             return await self._keyword_search(request, context, top_k, mode)
         except Exception:
+            return []
+
+    async def _safe_web_search(self, query: str) -> list[Any]:
+        try:
+            return await search_web(query)
+        except Exception as exception:
+            logger.warning('Web search failed for query=%r: %s', query, exception, exc_info=True)
             return []
 
     async def _vector_search(
@@ -401,10 +414,10 @@ class RagService:
     def _build_private_context(self, hits: list[RagQueryHit], mode: str) -> str:
         lines = [
             '以下资料来自私有知识库，请优先依据这些资料回答。',
-            '如果资料不足，请明确说明依据不足，不要补造引用。',
+            '如果资料不足，可以继续参考后续提供的联网结果或通用知识，但不要伪造范围内引用。',
         ]
         if mode == 'SCOPED':
-            lines.append('当前为指定范围模式，只能使用当前范围内的资料。')
+            lines.append('当前为指定范围模式：私有检索仅限当前项目、已选知识库文件或临时文件。')
         lines.append('')
         for index, item in enumerate(hits, start=1):
             lines.append(f'资料 {index}: {item.source_title}')
@@ -415,18 +428,48 @@ class RagService:
             lines.append('')
         return '\n'.join(lines).strip()
 
-    def _build_web_context(self, hits: list[Any]) -> str:
+    def _build_auxiliary_private_context(self, hits: list[RagQueryHit], mode: str) -> str:
         lines = [
-            '以下资料来自联网搜索，请优先依据这些网页摘要回答。',
+            '以下资料来自私有知识库，但当前相关性不足以单独支撑答案。',
+            '请把它们仅作为辅助参考，不要将其当作主依据或扩写成确定结论。',
+        ]
+        if mode == 'SCOPED':
+            lines.append('这些私有资料仍然来自当前指定范围，仅可辅助补充背景。')
+        lines.append('')
+        for index, item in enumerate(hits, start=1):
+            lines.append(f'辅助资料 {index}: {item.source_title}')
+            if item.page_no is not None:
+                lines.append(f'页码: {item.page_no}')
+            lines.append(f'相关片段: {item.snippet}')
+            lines.append(f'相似度: {item.score:.3f}')
+            lines.append('')
+        return '\n'.join(lines).strip()
+
+    def _build_web_context(self, hits: list[Any], has_auxiliary_private: bool) -> str:
+        lines = [
+            '以下资料来自联网搜索，请将联网结果作为本次回答的主依据。',
             '请只引用真实链接，不要编造站点来源。',
             '',
         ]
+        if has_auxiliary_private:
+            lines.insert(1, '当前还附带了弱相关私有资料，它们只能作为辅助背景，不可替代联网证据。')
         for index, item in enumerate(hits, start=1):
             lines.append(f'网页 {index}: {item.title}')
             lines.append(f'链接: {item.url}')
             lines.append(f'摘要: {item.snippet}')
             lines.append('')
         return '\n'.join(lines).strip()
+
+    def _build_general_context(self, web_search_enabled: bool, has_auxiliary_private: bool) -> str:
+        lines: list[str] = []
+        if has_auxiliary_private:
+            lines.append('当前存在弱相关的私有资料，可作为辅助背景，但不能作为主依据。')
+        if web_search_enabled:
+            lines.append('本轮联网搜索未返回可用结果或搜索失败，请改用通用知识作为主依据回答。')
+        else:
+            lines.append('本轮未开启联网搜索，请直接使用通用知识作为主依据回答。')
+        lines.append('不要伪造引用；如果确实使用了上方私有资料，只能基于已提供片段做有限补充。')
+        return '\n'.join(lines)
 
     def _normalized_mode(self, mode: str | None) -> str:
         normalized = (mode or 'GENERAL').strip().upper()

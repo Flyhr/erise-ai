@@ -131,6 +131,18 @@ const router = createRouter({
           },
         },
         {
+          path: "/search",
+          component: SearchView,
+          meta: {
+            title: "搜索",
+            description: "统一检索文件、文档与结构化内容。",
+          },
+        },
+        {
+          path: "/workspace/search",
+          redirect: (to: any) => ({ path: "/search", query: to.query }),
+        },
+        {
           path: "/files",
           component: FilesView,
           meta: { title: "文件", description: "跨项目浏览、筛选和上传文件。" },

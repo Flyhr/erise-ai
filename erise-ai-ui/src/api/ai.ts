@@ -3,6 +3,7 @@ import type {
   AiAttachmentPayload,
   AiChatResponse,
   AiModelView,
+  AiRetrievalSettingUpdateView,
   AiRetrievalSettingView,
   AiSessionDetailView,
   AiSessionSummaryView,
@@ -22,6 +23,18 @@ export interface AiChatPayload {
   topK?: number
 }
 
+export interface AiCreateSessionPayload {
+  projectId?: number
+  scene?: string
+  title?: string
+}
+
+export interface AiUpdateRetrievalSettingsPayload {
+  similarityThreshold: number
+  topK: number
+  webSearchEnabledDefault: boolean
+}
+
 export const chat = (payload: AiChatPayload) =>
   http.post<never, AiChatResponse>('/v1/ai/chat', payload)
 
@@ -29,6 +42,9 @@ export const cancelChat = (requestId: string) =>
   http.post<never, void>(`/v1/ai/chat/${requestId}/cancel`)
 
 export const getSessions = () => http.get<never, AiSessionSummaryView[]>('/v1/ai/sessions')
+
+export const createSession = (payload: AiCreateSessionPayload) =>
+  http.post<never, AiSessionSummaryView>('/v1/ai/sessions', payload)
 
 export const getSession = (id: number) => http.get<never, AiSessionDetailView>(`/v1/ai/sessions/${id}`)
 
@@ -51,5 +67,11 @@ export const getTempFiles = (sessionId: number) =>
 export const deleteTempFile = (id: number) =>
   http.delete<never, void>(`/v1/ai/temp-files/${id}`)
 
+export const retryTempFile = (id: number) =>
+  http.post<never, AiTempFileView>(`/v1/ai/temp-files/${id}/retry`)
+
 export const getRetrievalSettings = () =>
   http.get<never, AiRetrievalSettingView>('/v1/ai/settings/retrieval')
+
+export const updateRetrievalSettings = (payload: AiUpdateRetrievalSettingsPayload) =>
+  http.put<never, AiRetrievalSettingUpdateView>('/v1/ai/settings/retrieval', payload)

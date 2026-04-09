@@ -14,6 +14,20 @@ from src.app.models.ai_prompt_template import AiPromptTemplate
 from src.app.schemas.model import ModelView
 
 
+PREFERRED_PROVIDER_ORDER = {
+    'DEEPSEEK': 0,
+    'OPENAI': 1,
+}
+
+
+def _model_sort_key(model: AiModelConfig) -> tuple[int, int, str]:
+    return (
+        PREFERRED_PROVIDER_ORDER.get((model.provider_code or '').upper(), 9),
+        int(model.priority_no or 999),
+        model.model_code,
+    )
+
+
 def bootstrap_defaults() -> None:
     settings = get_settings()
     from src.app.db.session import SessionLocal
@@ -54,8 +68,9 @@ def bootstrap_defaults() -> None:
 
 def list_enabled_models(db: Session) -> list[ModelView]:
     models = db.execute(
-        select(AiModelConfig).where(AiModelConfig.enabled.is_(True)).order_by(AiModelConfig.priority_no.asc())
+        select(AiModelConfig).where(AiModelConfig.enabled.is_(True))
     ).scalars().all()
+    models = sorted(models, key=_model_sort_key)
     return [
         ModelView(
             provider_code=item.provider_code,
@@ -70,18 +85,28 @@ def list_enabled_models(db: Session) -> list[ModelView]:
 
 def get_model_config(db: Session, requested_model_code: str | None) -> AiModelConfig:
     settings = get_settings()
-    model_code = requested_model_code or settings.default_model_code
-    model = db.execute(select(AiModelConfig).where(AiModelConfig.model_code == model_code)).scalar_one_or_none()
-    if model is not None and model.enabled:
-        return model
     if requested_model_code:
-        raise AiServiceError('AI_MODEL_NOT_FOUND', f'Model `{model_code}` is not available', status_code=404)
-    fallback = db.execute(
-        select(AiModelConfig).where(AiModelConfig.enabled.is_(True)).order_by(AiModelConfig.priority_no.asc())
-    ).scalars().first()
-    if fallback is None:
-        raise AiServiceError('AI_MODEL_NOT_FOUND', f'Model `{model_code}` is not available', status_code=404)
-    return fallback
+        model = db.execute(select(AiModelConfig).where(AiModelConfig.model_code == requested_model_code)).scalar_one_or_none()
+        if model is not None and model.enabled:
+            return model
+        raise AiServiceError('AI_MODEL_NOT_FOUND', f'Model `{requested_model_code}` is not available', status_code=404)
+    default_model = db.execute(select(AiModelConfig).where(AiModelConfig.model_code == settings.default_model_code)).scalar_one_or_none()
+    if default_model is not None and default_model.enabled and (default_model.provider_code or '').upper() == 'DEEPSEEK':
+        return default_model
+    deepseek_models = db.execute(
+        select(AiModelConfig).where(
+            AiModelConfig.enabled.is_(True),
+            AiModelConfig.provider_code == 'DEEPSEEK',
+        )
+    ).scalars().all()
+    deepseek_models = sorted(deepseek_models, key=_model_sort_key)
+    if deepseek_models:
+        return deepseek_models[0]
+    raise AiServiceError(
+        'AI_MODEL_NOT_FOUND',
+        'Default DeepSeek model is not available. Please configure a DeepSeek model or choose an explicit fallback model.',
+        status_code=404,
+    )
 
 
 def get_model_adapter(model: AiModelConfig) -> LlmAdapter:

@@ -4,6 +4,7 @@ import com.baomidou.mybatisplus.annotation.IdType;
 import com.baomidou.mybatisplus.annotation.TableId;
 import com.baomidou.mybatisplus.annotation.TableName;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.baomidou.mybatisplus.core.mapper.BaseMapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.erise.ai.backend.common.api.ApiResponse;
@@ -96,6 +97,11 @@ public class FileController {
     @GetMapping("/{id}")
     public ApiResponse<FileView> detail(@PathVariable Long id) {
         return ApiResponse.success(fileService.detail(id));
+    }
+
+    @PostMapping("/{id}/retry-parse")
+    public ApiResponse<FileView> retryParse(@PathVariable Long id) {
+        return ApiResponse.success(fileService.retryParse(id));
     }
 
     @GetMapping("/{id}/preview")
@@ -209,6 +215,36 @@ class FileService {
         return toView(requireAccessibleFile(fileId));
     }
 
+    FileView retryParse(Long fileId) {
+        var currentUser = SecurityUtils.currentUser();
+        FileEntity entity = requireAccessibleFile(fileId);
+        if (!indexable(entity)) {
+            throw new BizException(ErrorCodes.BAD_REQUEST, "This file type does not support knowledge parsing");
+        }
+        if (!isFailedStatus(entity.getParseStatus()) && !isFailedStatus(entity.getIndexStatus())) {
+            throw new BizException(ErrorCodes.BAD_REQUEST, "Only failed files can be retried");
+        }
+        FileParseTaskEntity latestTask = fileParseTaskMapper.selectOne(new LambdaQueryWrapper<FileParseTaskEntity>()
+                .eq(FileParseTaskEntity::getFileId, fileId)
+                .orderByDesc(FileParseTaskEntity::getUpdatedAt)
+                .orderByDesc(FileParseTaskEntity::getId)
+                .last("limit 1"));
+        if (latestTask == null) {
+            enqueueParseTask(entity, currentUser.userId());
+        } else {
+            latestTask.setTaskStatus("PENDING");
+            latestTask.setRetryCount(0);
+            latestTask.setLastError(null);
+            latestTask.setUpdatedBy(currentUser.userId());
+            fileParseTaskMapper.updateById(latestTask);
+        }
+        entity.setParseStatus("PENDING");
+        entity.setIndexStatus("PENDING");
+        entity.setUpdatedBy(currentUser.userId());
+        fileMapper.updateById(entity);
+        return toView(entity);
+    }
+
     InternalFileContextView internalContext(Long fileId) {
         FileEntity entity = requireExistingFile(fileId);
         return new InternalFileContextView(
@@ -219,6 +255,8 @@ class FileService {
                 entity.getMimeType(),
                 loadPlainTextForContext(fileId, entity),
                 entity.getParseStatus(),
+                entity.getIndexStatus(),
+                latestParseError(entity.getId(), entity.getParseStatus(), entity.getIndexStatus()),
                 entity.getUpdatedAt()
         );
     }
@@ -306,6 +344,7 @@ class FileService {
     }
 
     FileView toView(FileEntity entity) {
+        String parseErrorMessage = latestParseError(entity.getId(), entity.getParseStatus(), entity.getIndexStatus());
         return new FileView(
                 entity.getId(),
                 entity.getProjectId(),
@@ -316,9 +355,30 @@ class FileService {
                 entity.getUploadStatus(),
                 entity.getParseStatus(),
                 entity.getIndexStatus(),
+                parseErrorMessage,
                 entity.getCreatedAt(),
                 entity.getUpdatedAt()
         );
+    }
+
+    private String latestParseError(Long fileId, String parseStatus, String indexStatus) {
+        boolean failed = "FAILED".equalsIgnoreCase(parseStatus) || "FAILED".equalsIgnoreCase(indexStatus);
+        if (!failed) {
+            return null;
+        }
+        FileParseTaskEntity task = fileParseTaskMapper.selectOne(new LambdaQueryWrapper<FileParseTaskEntity>()
+                .eq(FileParseTaskEntity::getFileId, fileId)
+                .orderByDesc(FileParseTaskEntity::getUpdatedAt)
+                .orderByDesc(FileParseTaskEntity::getId)
+                .last("limit 1"));
+        if (task == null || task.getLastError() == null || task.getLastError().isBlank()) {
+            return null;
+        }
+        return task.getLastError();
+    }
+
+    private boolean isFailedStatus(String status) {
+        return "FAILED".equalsIgnoreCase(status) || "DELETED".equalsIgnoreCase(status);
     }
 
     private String loadPlainTextForContext(Long fileId, FileEntity entity) {
@@ -329,13 +389,17 @@ class FileService {
             return stored.getPlainText();
         }
         try (InputStream stream = storageClient.getObject(entity.getStorageKey())) {
-            return storedTextExtractionSupport.extractPlainText(entity.getFileExt(), stream);
-        } catch (IOException exception) {
-            throw new BizException(ErrorCodes.FILE_ERROR, "File context load failed: " + exception.getMessage());
+            return storedTextExtractionSupport.extractPlainText(entity.getOwnerUserId(), entity.getFileName(), entity.getFileExt(), stream);
+        } catch (Exception exception) {
+            return "";
         }
     }
 
     void handleParseTask(FileParseTaskEntity task) {
+        if (!claimParseTask(task.getId())) {
+            return;
+        }
+        task.setTaskStatus("PROCESSING");
         FileEntity file = fileMapper.selectById(task.getFileId());
         if (file == null) {
             task.setTaskStatus("FAILED");
@@ -343,31 +407,101 @@ class FileService {
             fileParseTaskMapper.updateById(task);
             return;
         }
+        markFileProcessing(file);
         try (InputStream stream = storageClient.getObject(file.getStorageKey())) {
             List<RagKnowledgeService.ChunkInput> chunks = extractChunks(file, stream);
+            if (chunks.isEmpty()) {
+                throw new BizException(ErrorCodes.FILE_ERROR, "No readable text content was extracted");
+            }
             ragKnowledgeService.replaceKbSource(file.getOwnerUserId(), file.getProjectId(), "FILE", file.getId(), file.getFileName(), chunks);
             file.setParseStatus("SUCCESS");
             file.setIndexStatus("SUCCESS");
             file.setUpdatedBy(file.getOwnerUserId());
             fileMapper.updateById(file);
             task.setTaskStatus("SUCCESS");
+            task.setLastError(null);
             task.setUpdatedBy(file.getOwnerUserId());
             fileParseTaskMapper.updateById(task);
         } catch (Exception exception) {
-            task.setRetryCount(task.getRetryCount() + 1);
-            task.setLastError(exception.getMessage());
-            task.setTaskStatus(task.getRetryCount() >= 3 ? "FAILED" : "PENDING");
+            int nextRetryCount = (task.getRetryCount() == null ? 0 : task.getRetryCount()) + 1;
+            String errorMessage = parseTaskErrorMessage(exception);
+            boolean retryable = isRetryableParseError(errorMessage);
+            boolean exhausted = nextRetryCount >= 3;
+            task.setRetryCount(nextRetryCount);
+            task.setLastError(errorMessage);
+            task.setTaskStatus(!retryable || exhausted ? "FAILED" : "PENDING");
             task.setUpdatedBy(file.getOwnerUserId());
             fileParseTaskMapper.updateById(task);
-            file.setParseStatus("FAILED");
-            file.setIndexStatus("FAILED");
-            file.setUpdatedBy(file.getOwnerUserId());
-            fileMapper.updateById(file);
+            if (!retryable || exhausted) {
+                markFileFailed(file, errorMessage);
+            } else {
+                markFileRetryPending(file);
+            }
         }
+    }
+
+    private void markFileProcessing(FileEntity file) {
+        file.setParseStatus("PROCESSING");
+        file.setIndexStatus("PROCESSING");
+        file.setUpdatedBy(file.getOwnerUserId());
+        fileMapper.updateById(file);
+    }
+
+    private void markFileRetryPending(FileEntity file) {
+        file.setParseStatus("PROCESSING");
+        file.setIndexStatus("PROCESSING");
+        file.setUpdatedBy(file.getOwnerUserId());
+        fileMapper.updateById(file);
+    }
+
+    private void markFileFailed(FileEntity file, String errorMessage) {
+        file.setParseStatus("FAILED");
+        file.setIndexStatus("FAILED");
+        file.setUpdatedBy(file.getOwnerUserId());
+        fileMapper.updateById(file);
+    }
+
+    private String parseTaskErrorMessage(Exception exception) {
+        if (exception == null || exception.getMessage() == null || exception.getMessage().isBlank()) {
+            return "File parsing failed";
+        }
+        return exception.getMessage();
+    }
+
+    private boolean isRetryableParseError(String message) {
+        String normalized = message == null ? "" : message.toLowerCase(Locale.ROOT);
+        return normalized.contains("service unavailable")
+                || normalized.contains("temporarily unavailable")
+                || normalized.contains("dependency unavailable")
+                || normalized.contains("dependency is unavailable")
+                || normalized.contains("ocr service unavailable")
+                || normalized.contains("ocr engine is unavailable")
+                || normalized.contains("ocr dependency is unavailable")
+                || (normalized.contains("ocr") && normalized.contains("unavailable"))
+                || normalized.contains("timeout")
+                || normalized.contains("timed out")
+                || normalized.contains("connection refused")
+                || normalized.contains("connection reset")
+                || normalized.contains("connection aborted")
+                || normalized.contains("i/o error")
+                || normalized.contains("network is unreachable");
     }
 
     private boolean indexable(FileEntity entity) {
         return entity.getFileExt() != null && INDEXABLE_TYPES.contains(entity.getFileExt().toLowerCase(Locale.ROOT));
+    }
+
+    private boolean claimParseTask(Long taskId) {
+        if (taskId == null) {
+            return false;
+        }
+        return fileParseTaskMapper.update(
+                null,
+                new LambdaUpdateWrapper<FileParseTaskEntity>()
+                        .eq(FileParseTaskEntity::getId, taskId)
+                        .eq(FileParseTaskEntity::getTaskStatus, "PENDING")
+                        .set(FileParseTaskEntity::getTaskStatus, "PROCESSING")
+        ) > 0;
     }
 
     private void validateUpload(MultipartFile file, FileEntity entity) {
@@ -387,7 +521,7 @@ class FileService {
     private void enqueueParseTask(FileEntity entity, Long operatorUserId) {
         Long existingCount = fileParseTaskMapper.selectCount(new LambdaQueryWrapper<FileParseTaskEntity>()
                 .eq(FileParseTaskEntity::getFileId, entity.getId())
-                .in(FileParseTaskEntity::getTaskStatus, List.of("PENDING", "SUCCESS")));
+                .in(FileParseTaskEntity::getTaskStatus, List.of("PENDING", "PROCESSING", "SUCCESS")));
         if (existingCount != null && existingCount > 0) {
             return;
         }
@@ -434,7 +568,7 @@ class FileService {
     }
 
     private List<RagKnowledgeService.ChunkInput> extractChunks(FileEntity file, InputStream stream) throws IOException {
-        return storedTextExtractionSupport.extractChunks(file.getFileExt(), stream);
+        return storedTextExtractionSupport.extractChunks(file.getOwnerUserId(), file.getFileName(), file.getFileExt(), stream);
     }
 
     private List<RagKnowledgeService.ChunkInput> extractPdf(InputStream stream) throws IOException {
@@ -753,7 +887,7 @@ class FileParseWorker {
         for (FileEntity file : files) {
             Long existingCount = fileParseTaskMapper.selectCount(new LambdaQueryWrapper<FileParseTaskEntity>()
                     .eq(FileParseTaskEntity::getFileId, file.getId())
-                    .in(FileParseTaskEntity::getTaskStatus, List.of("PENDING", "SUCCESS")));
+                    .in(FileParseTaskEntity::getTaskStatus, List.of("PENDING", "PROCESSING", "SUCCESS")));
             if (existingCount != null && existingCount > 0) {
                 continue;
             }
@@ -868,6 +1002,7 @@ record FileView(
         String uploadStatus,
         String parseStatus,
         String indexStatus,
+        String parseErrorMessage,
         java.time.LocalDateTime createdAt,
         java.time.LocalDateTime updatedAt
 ) {
@@ -887,6 +1022,8 @@ record InternalFileContextView(
         String mimeType,
         String plainText,
         String parseStatus,
+        String indexStatus,
+        String parseErrorMessage,
         java.time.LocalDateTime updatedAt
 ) {
 }

@@ -4,6 +4,7 @@ import type { ContentItemDetailView, ContentItemSummaryView, PageResponse } from
 export const getContentItems = (params: {
   projectId: number
   itemType?: 'SHEET' | 'BOARD' | 'DATA_TABLE'
+  q?: string
   pageNum?: number
   pageSize?: number
 }) => http.get<never, PageResponse<ContentItemSummaryView>>('/v1/contents', { params })

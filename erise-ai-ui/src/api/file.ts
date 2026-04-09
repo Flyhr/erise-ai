@@ -31,6 +31,9 @@ export const completeUpload = (fileId: number) =>
 
 export const getFile = (id: number) => http.get<never, FileView>(`/v1/files/${id}`)
 
+export const retryFileParse = (id: number) =>
+  http.post<never, FileView>(`/v1/files/${id}/retry-parse`)
+
 export const bindFileTags = (id: number, tags: string[]) =>
   http.post<never, { id: number; name: string; color?: string }[]>(`/v1/files/${id}/tags`, { tags })
 

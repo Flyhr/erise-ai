@@ -11,6 +11,9 @@ import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.List;
 import lombok.RequiredArgsConstructor;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.core.io.ByteArrayResource;
 import org.springframework.core.ParameterizedTypeReference;
 import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpHeaders;
@@ -18,8 +21,12 @@ import org.springframework.http.HttpMethod;
 import org.springframework.http.MediaType;
 import org.springframework.http.client.reactive.ReactorClientHttpConnector;
 import org.springframework.http.codec.ServerSentEvent;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Component;
+import org.springframework.util.LinkedMultiValueMap;
+import org.springframework.util.MultiValueMap;
 import org.springframework.web.client.RestClientException;
+import org.springframework.web.client.RestClientResponseException;
 import org.springframework.web.client.RestTemplate;
 import org.springframework.web.reactive.function.client.WebClient;
 import org.springframework.web.util.UriComponentsBuilder;
@@ -30,6 +37,9 @@ import reactor.netty.http.client.HttpClient;
 @RequiredArgsConstructor
 public class CloudAiClient {
 
+    private static final Logger log = LoggerFactory.getLogger(CloudAiClient.class);
+
+    @Qualifier("aiRestTemplate")
     private final RestTemplate restTemplate;
     private final ObjectMapper objectMapper;
     private final WebClient.Builder webClientBuilder = WebClient.builder();
@@ -71,6 +81,10 @@ public class CloudAiClient {
         return get(user, url, requestId, new TypeReference<PageResult<SessionSummaryResponse>>() { });
     }
 
+    public SessionSummaryResponse createSession(CurrentUser user, SessionCreateRequest request, String requestId) {
+        return post(user, "/internal/ai/chat/sessions", request, requestId, SessionSummaryResponse.class);
+    }
+
     public SessionDetailResponse session(CurrentUser user, Long sessionId, String requestId) {
         return get(user, properties.getCloud().getBaseUrl() + "/internal/ai/chat/sessions/" + sessionId, requestId, new TypeReference<SessionDetailResponse>() { });
     }
@@ -91,6 +105,29 @@ public class CloudAiClient {
         return post(userId, "/internal/ai/chat/rag/index/delete", request, requestId, RagIndexDeleteResponse.class);
     }
 
+    public PdfOcrResponse extractPdfText(Long userId, String fileName, byte[] bytes, String requestId) {
+        try {
+            MultiValueMap<String, Object> body = new LinkedMultiValueMap<>();
+            body.add("file", new ByteArrayResource(bytes) {
+                @Override
+                public String getFilename() {
+                    return fileName;
+                }
+            });
+            HttpEntity<MultiValueMap<String, Object>> entity = new HttpEntity<>(body, buildHeaders(userId, requestId, MediaType.MULTIPART_FORM_DATA));
+            String payload = restTemplate.exchange(
+                    properties.getCloud().getBaseUrl() + "/internal/ai/chat/ocr/pdf-text",
+                    HttpMethod.POST,
+                    entity,
+                    String.class
+            ).getBody();
+            return readData(payload, PdfOcrResponse.class);
+        } catch (RestClientException exception) {
+            log.warn("AI OCR request failed for file {}", fileName, exception);
+            throw new BizException(ErrorCodes.AI_ERROR, extractRestClientMessage(exception, "AI OCR service unavailable"));
+        }
+    }
+
     private <T> T post(CurrentUser user, String path, Object body, String requestId, Class<T> type) {
         return post(user.userId(), path, body, requestId, type);
     }
@@ -106,7 +143,8 @@ public class CloudAiClient {
             ).getBody();
             return readData(payload, type);
         } catch (RestClientException exception) {
-            throw new BizException(ErrorCodes.AI_ERROR, "AI service unavailable: " + exception.getMessage());
+            log.warn("AI POST request failed: path={}", path, exception);
+            throw new BizException(ErrorCodes.AI_ERROR, extractRestClientMessage(exception, "AI service unavailable"));
         }
     }
 
@@ -116,7 +154,8 @@ public class CloudAiClient {
             String payload = restTemplate.exchange(url, HttpMethod.DELETE, entity, String.class).getBody();
             return readData(payload, type);
         } catch (RestClientException exception) {
-            throw new BizException(ErrorCodes.AI_ERROR, "AI service unavailable: " + exception.getMessage());
+            log.warn("AI DELETE request failed: url={}", url, exception);
+            throw new BizException(ErrorCodes.AI_ERROR, extractRestClientMessage(exception, "AI service unavailable"));
         }
     }
 
@@ -126,7 +165,8 @@ public class CloudAiClient {
             String payload = restTemplate.exchange(url, HttpMethod.GET, entity, String.class).getBody();
             return readData(payload, type);
         } catch (RestClientException exception) {
-            throw new BizException(ErrorCodes.AI_ERROR, "AI service unavailable: " + exception.getMessage());
+            log.warn("AI GET request failed: url={}", url, exception);
+            throw new BizException(ErrorCodes.AI_ERROR, extractRestClientMessage(exception, "AI service unavailable"));
         }
     }
 
@@ -135,8 +175,12 @@ public class CloudAiClient {
     }
 
     private HttpHeaders buildHeaders(Long userId, String requestId) {
+        return buildHeaders(userId, requestId, MediaType.APPLICATION_JSON);
+    }
+
+    private HttpHeaders buildHeaders(Long userId, String requestId, MediaType contentType) {
         HttpHeaders headers = new HttpHeaders();
-        headers.setContentType(MediaType.APPLICATION_JSON);
+        headers.setContentType(contentType);
         headers.set("X-Internal-Service-Token", properties.getInternal().getApiKey());
         headers.set("X-Internal-Key", properties.getInternal().getApiKey());
         headers.set("X-User-Id", String.valueOf(userId));
@@ -149,7 +193,7 @@ public class CloudAiClient {
         try {
             JsonNode root = objectMapper.readTree(body);
             if (root.path("code").asInt(-1) != 0) {
-                throw new BizException(ErrorCodes.AI_ERROR, root.path("msg").asText("AI request failed"));
+                throw new BizException(ErrorCodes.AI_ERROR, normalizeAiMessage(root.path("msg").asText("AI request failed")));
             }
             return objectMapper.treeToValue(root.path("data"), type);
         } catch (BizException exception) {
@@ -163,7 +207,7 @@ public class CloudAiClient {
         try {
             JsonNode root = objectMapper.readTree(body);
             if (root.path("code").asInt(-1) != 0) {
-                throw new BizException(ErrorCodes.AI_ERROR, root.path("msg").asText("AI request failed"));
+                throw new BizException(ErrorCodes.AI_ERROR, normalizeAiMessage(root.path("msg").asText("AI request failed")));
             }
             return objectMapper.convertValue(root.path("data"), type);
         } catch (BizException exception) {
@@ -176,10 +220,59 @@ public class CloudAiClient {
     private String extractMessage(String body) {
         try {
             JsonNode root = objectMapper.readTree(body);
-            return root.path("msg").asText("AI stream unavailable");
+            return normalizeAiMessage(root.path("msg").asText("AI stream unavailable"));
         } catch (Exception exception) {
-            return body == null || body.isBlank() ? "AI stream unavailable" : body;
+            return normalizeAiMessage(body == null || body.isBlank() ? "AI stream unavailable" : body);
         }
+    }
+
+    private String extractRestClientMessage(RestClientException exception, String fallbackMessage) {
+        if (exception instanceof RestClientResponseException responseException) {
+            String body = responseException.getResponseBodyAsString();
+            if (body != null && !body.isBlank()) {
+                String message = extractMessage(body);
+                if (message != null && !message.isBlank()) {
+                    return message;
+                }
+            }
+        }
+        String message = exception.getMessage();
+        if (message == null || message.isBlank()) {
+            return fallbackMessage;
+        }
+        return normalizeAiMessage(fallbackMessage + ": " + message);
+    }
+
+    private String normalizeAiMessage(String message) {
+        if (message == null || message.isBlank()) {
+            return "AI service unavailable";
+        }
+        String normalized = message.trim();
+        String lower = normalized.toLowerCase();
+        if (lower.contains("insufficient_quota") || (lower.contains("quota") && lower.contains("exceeded"))) {
+            return "AI provider quota exceeded. Please verify the configured provider quota or switch to DeepSeek.";
+        }
+        if (lower.contains("timeout") || lower.contains("timed out")) {
+            return "AI service timeout. Please retry in a moment.";
+        }
+        if (lower.contains("connection refused")
+                || lower.contains("connection reset")
+                || lower.contains("connection aborted")
+                || lower.contains("i/o error")
+                || lower.contains("network is unreachable")) {
+            return "AI service is temporarily unreachable. Please retry in a moment.";
+        }
+        if (lower.contains("duplicate entry") && lower.contains("uk_ea_rag_chunk_source_chunk")) {
+            return "RAG chunk metadata was written twice. Please retry the indexing task.";
+        }
+        return normalized;
+    }
+
+    public record SessionCreateRequest(
+            Long projectId,
+            String scene,
+            String title
+    ) {
     }
 
     public record ChatCompletionRequest(
@@ -246,6 +339,15 @@ public class CloudAiClient {
     public record RagIndexDeleteResponse(
             Boolean deleted,
             String collectionName
+    ) {
+    }
+
+    public record PdfOcrResponse(
+            String text,
+            List<String> pageTexts,
+            Integer pageCount,
+            Boolean usedOcr,
+            String engine
     ) {
     }
 

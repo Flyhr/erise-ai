@@ -60,6 +60,16 @@
                     <div class="temp-file-chip__copy">
                       <strong>{{ tempFile.fileName }}</strong>
                       <small>{{ tempFileStatusLabel(tempFile) }}</small>
+                      <small v-if="tempFile.parseErrorMessage" class="temp-file-chip__error">{{ tempFile.parseErrorMessage }}</small>
+                      <button
+                        v-if="isTempFileFailed(tempFile)"
+                        type="button"
+                        class="temp-file-chip__retry"
+                        :disabled="sending || uploadingTempFile"
+                        @click="retryFailedTempFile(tempFile)"
+                      >
+                        重新解析
+                      </button>
                     </div>
                     <button type="button" class="temp-file-chip__remove" :disabled="sending || uploadingTempFile"
                       @click="removeTempFile(tempFile)">
@@ -90,21 +100,38 @@
           </aside>
 
           <section class="chat-stage">
-            <!-- <div class="chat-stage__header"> -->
-            <!-- <div>
-                <h2>{{ activeSessionSummary?.title || 'Architectural Assistant' }}</h2>
-              </div> -->
-            <!-- <div class="chat-stage__meta">
-                <button type="button" class="model-chip" :disabled="sending" @click="showUnavailable('模型高级设置')">
+            <div class="chat-stage__header">
+              <div>
+                <p class="section-eyebrow">当前会话</p>
+                <h2>{{ sessionTitleText }}</h2>
+              </div>
+              <div class="chat-stage__meta">
+                <div class="header-model-chip">
                   <span class="material-symbols-outlined">data_object</span>
-                  <span>{{ modelHeaderTitle }}</span>
-                </button>
+                  <div class="header-model-chip__copy">
+                    <strong>{{ headerModelName }}</strong>
+                    <small>{{ headerProviderName }}</small>
+                  </div>
+                </div>
+                <div class="web-search-toggle">
+                  <span class="web-search-toggle__label">联网搜索</span>
+                  <el-switch
+                    v-model="retrievalSettings.webSearchEnabledDefault"
+                    size="small"
+                    inline-prompt
+                    active-text="开"
+                    inactive-text="关"
+                    :loading="savingRetrievalSettings"
+                    :disabled="sending || savingRetrievalSettings"
+                    @change="handleWebSearchToggle"
+                  />
+                </div>
                 <div class="run-chip" :class="{ 'is-live': sending }">
                   <span class="run-chip__dot"></span>
-                  <span>{{ sessionStatusText }}</span>
+                  <span>{{ thinkingStatusText }}</span>
                 </div>
-              </div> -->
-            <!-- </div> -->
+              </div>
+            </div>
 
             <section ref="messageListRef" class="message-board" :class="{ 'is-empty': !messages.length }">
               <div class="message-board__inner">
@@ -132,6 +159,12 @@
                           class="thinking-dots">
                           <span></span><span></span><span></span>
                         </div>
+                        <div
+                          v-else-if="message.roleCode === 'ASSISTANT'"
+                          class="transcript-item__content transcript-item__content--markdown"
+                          :class="{ 'is-collapsed': isCollapsed(message) }"
+                          v-html="renderAssistantContent(message.content || '...')">
+                        </div>
                         <div v-else class="transcript-item__content" :class="{ 'is-collapsed': isCollapsed(message) }">
                           {{ message.content || '...' }}
                         </div>
@@ -142,22 +175,42 @@
 
                         <div v-if="message.citations?.length" class="citation-panel citation-panel--modern">
                           <div class="citation-panel__title">引用来源</div>
-                          <button v-for="citation in message.citations"
-                            :key="`${citation.sourceType}-${citation.sourceId}-${citation.pageNo || 'na'}`"
-                            type="button" class="citation-card" @click="openCitation(citation)">
-                            <template v-if="citation.sourceType === 'WEB'">
-                              <strong class="citation-card__title citation-card__title--single">{{ citation.sourceTitle
-                              }}</strong>
-                            </template>
-                            <template v-else>
-                              <strong class="citation-card__title">{{ citation.sourceTitle }}</strong>
+                          <div v-if="privateCitationGroups(message).length" class="citation-panel__section">
+                            <div class="citation-panel__section-title">知识库 / 附件</div>
+                            <button
+                              v-for="group in privateCitationGroups(message)"
+                              :key="group.key"
+                              type="button"
+                              class="citation-card"
+                              @click="openCitation(group.representative)">
+                              <strong class="citation-card__title">{{ group.title }}</strong>
                               <span>
-                                {{ citationSourceLabel(citation.sourceType) }}
-                                <template v-if="citation.pageNo"> · 第 {{ citation.pageNo }} 页</template>
+                                {{ citationSourceLabel(group.sourceType) }}
+                                <template v-if="group.pageLabel"> · {{ group.pageLabel }}</template>
                               </span>
-                              <small>{{ citation.snippet || '暂无引用摘录' }}</small>
-                            </template>
-                          </button>
+                              <small>{{ group.snippet || '暂无引用摘录' }}</small>
+                            </button>
+                          </div>
+                          <div v-if="visibleWebCitationGroups(message).length" class="citation-panel__section">
+                            <div class="citation-panel__section-title">联网搜索</div>
+                            <button
+                              v-for="group in visibleWebCitationGroups(message)"
+                              :key="group.key"
+                              type="button"
+                              class="citation-card citation-card--web"
+                              @click="openCitation(group.representative)">
+                              <strong class="citation-card__title citation-card__title--single">{{ group.title }}</strong>
+                              <span>{{ group.urlLabel }}</span>
+                              <small>{{ group.snippet || '打开网页引用' }}</small>
+                            </button>
+                            <button
+                              v-if="hiddenWebCitationCount(message)"
+                              type="button"
+                              class="citation-panel__toggle"
+                              @click="toggleCitationExpansion(message)">
+                              {{ message.citationsExpanded ? '收起网页引用' : `展开剩余 ${hiddenWebCitationCount(message)} 条网页引用` }}
+                            </button>
+                          </div>
                         </div>
 
                         <button v-if="isCollapsible(message)" type="button" class="transcript-item__toggle"
@@ -212,7 +265,7 @@
                     <el-select v-model="selectedModelCode" size="small" class="toolbar-model-select"
                       :disabled="sending || loadingModels || !modelChoices.length" placeholder="选择模型">
                       <el-option v-for="model in modelChoices" :key="model.modelCode"
-                        :label="`${model.modelName} · ${model.providerCode}`" :value="model.modelCode" />
+                        :label="modelOptionLabel(model)" :value="model.modelCode" />
                     </el-select>
                   </div>
                 </div>
@@ -227,7 +280,7 @@
                       <button type="button" class="toolbar-chip" disabled>{{ modelProviderLabel }}</button>
                       <button v-if="selectedProjectDisplay" type="button" class="toolbar-chip" disabled>{{
                         selectedProjectDisplay
-                        }}</button>
+                      }}</button>
                       <button v-if="selectedAttachments.length" type="button" class="toolbar-chip" disabled>
                         已附加 {{ selectedAttachments.length }} 份资料
                       </button>
@@ -275,12 +328,15 @@
             <div v-if="!draftProjectId" class="attachment-panel__empty">请先选择项目。</div>
             <div v-else-if="loadingAttachmentOptions" class="attachment-panel__empty">正在加载文件列表...</div>
             <div v-else-if="draftFiles.length" class="attachment-panel__list">
-              <label v-for="file in draftFiles" :key="`file-${file.id}`" class="attachment-option">
+              <label v-for="file in draftFiles" :key="`file-${file.id}`" class="attachment-option"
+                :class="{ 'is-disabled': !canAttachKnowledgeFile(file) }">
                 <input type="checkbox" :checked="draftAttachmentSelected('FILE', file.id)"
-                  @change="toggleDraftAttachment('FILE', file.id, file.fileName)" />
+                  :disabled="!canAttachKnowledgeFile(file)"
+                  @change="toggleDraftFileAttachment(file)" />
                 <span class="attachment-option__copy">
                   <strong>{{ file.fileName }}</strong>
-                  <small>{{ file.fileExt.toUpperCase() }} · {{ fileParseStatusLabel(file.parseStatus) }}</small>
+                  <small>{{ knowledgeFileStatusText(file) }}</small>
+                  <small v-if="file.parseErrorMessage" class="attachment-option__error">{{ file.parseErrorMessage }}</small>
                 </span>
               </label>
             </div>
@@ -324,6 +380,7 @@
 
 <script setup lang="ts">
 import dayjs from 'dayjs'
+import MarkdownIt from 'markdown-it'
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { useRoute, useRouter } from 'vue-router'
@@ -337,6 +394,8 @@ import {
   getSession,
   getSessions,
   getTempFiles,
+  retryTempFile,
+  updateRetrievalSettings,
   uploadTempFile,
 } from '@/api/ai'
 import type { AiChatPayload } from '@/api/ai'
@@ -358,6 +417,7 @@ import type {
   FileView,
   ProjectDetailView,
 } from '@/types/models'
+import { knowledgeReadinessLabel, resolveKnowledgeReadiness, sortAiModelsByPreference } from '@/utils/formatters'
 
 type MessageStatus = 'sent' | 'sending' | 'streaming' | 'failed'
 
@@ -372,18 +432,34 @@ interface UiMessage {
   pendingQuestion?: string
   errorMessage?: string
   expanded?: boolean
+  citationsExpanded?: boolean
   citations?: AiCitationView[]
+  modelCode?: string
+  providerCode?: string
+  latencyMs?: number
 }
 
 interface StreamDonePayload {
   sessionId?: number
   messageId?: number
+  latencyMs?: number
 }
 
 interface DraftAttachmentOption {
   attachmentType: 'DOCUMENT' | 'FILE'
   sourceId: number
   title: string
+}
+
+interface CitationGroup {
+  key: string
+  sourceType: string
+  title: string
+  snippet?: string
+  representative: AiCitationView
+  pageNumbers: number[]
+  pageLabel?: string
+  urlLabel?: string
 }
 
 const DEFAULT_RETRIEVAL_SETTINGS: AiRetrievalSettingView = {
@@ -406,6 +482,23 @@ const parseNumber = (value: unknown) => {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : undefined
 }
 
+const markdownRenderer = new MarkdownIt({
+  html: false,
+  linkify: true,
+  breaks: true,
+})
+
+const defaultLinkRenderer =
+  markdownRenderer.renderer.rules.link_open ||
+  ((tokens, idx, options, _env, self) => self.renderToken(tokens, idx, options))
+
+markdownRenderer.renderer.rules.link_open = (tokens, idx, options, env, self) => {
+  const token = tokens[idx]
+  token.attrSet('target', '_blank')
+  token.attrSet('rel', 'noopener noreferrer')
+  return defaultLinkRenderer(tokens, idx, options, env, self)
+}
+
 const buildLocalId = (prefix: string) => `${prefix}-${Date.now()}-${Math.random().toString(16).slice(2)}`
 const attachmentStorageKey = (sessionId: number) => `erise-ai-attachments:${sessionId}`
 const attachmentKeyOf = (attachment: Pick<AiAttachmentPayload, 'attachmentType' | 'sourceId'>) => `${attachment.attachmentType}:${attachment.sourceId}`
@@ -418,12 +511,6 @@ const citationSourceLabel = (sourceType?: string) => ({
   BOARD: '画板',
   DATA_TABLE: '数据表',
 }[sourceType || ''] || sourceType || '引用来源')
-const fileParseStatusLabel = (status?: string) => ({
-  PENDING: '待解析',
-  PROCESSING: '解析中',
-  COMPLETED: '已完成',
-  FAILED: '失败',
-}[status || ''] || status || '待处理')
 const formatBytes = (size?: number) => {
   const value = Number(size || 0)
   if (!Number.isFinite(value) || value <= 0) {
@@ -498,6 +585,7 @@ const searchKeyword = ref('')
 const question = ref('')
 const sending = ref(false)
 const uploadingTempFile = ref(false)
+const savingRetrievalSettings = ref(false)
 const activeSessionId = ref<number | undefined>()
 const selectedProjectId = ref<number | undefined>()
 const draftProjectId = ref<number | undefined>()
@@ -518,9 +606,8 @@ const projectLookup = computed(() => new Map(selectableProjects.value.map((proje
 const activeProjectId = computed(() => routeProjectId.value || selectedProjectId.value)
 const activeProject = computed(() => (activeProjectId.value ? projectLookup.value.get(activeProjectId.value) : undefined))
 const selectedProjectDisplay = computed(() => activeProject.value?.name || (activeProjectId.value ? `项目 #${activeProjectId.value}` : ''))
-const indexedTempFiles = computed(() => tempFiles.value.filter((item) => item.indexStatus === 'INDEXED'))
 const hasScopedContext = computed(() =>
-  Boolean(activeProjectId.value || selectedAttachments.value.length || indexedTempFiles.value.length),
+  Boolean(activeProjectId.value || selectedAttachments.value.length || tempFiles.value.length),
 )
 
 const baseAiPath = computed(() => (props.id ? `/projects/${props.id}/ai` : '/ai'))
@@ -533,16 +620,22 @@ const visibleSessions = computed(() => {
 const modelChoices = computed(() => {
   const preferredProviders = new Set(['openai', 'deepseek'])
   const filtered = availableModels.value.filter((model) => preferredProviders.has((model.providerCode || '').toLowerCase()))
-  return filtered.length ? filtered : availableModels.value
+  return sortAiModelsByPreference(filtered.length ? filtered : availableModels.value)
 })
 const activeSessionSummary = computed(() => sessions.value.find((session) => session.id === activeSessionId.value))
 const activeModel = computed(() => {
   if (!modelChoices.value.length) {
     return undefined
   }
-  return modelChoices.value.find((model) => model.modelCode === selectedModelCode.value) || modelChoices.value[0]
+  return (
+    modelChoices.value.find((model) => model.modelCode === selectedModelCode.value) ||
+    modelChoices.value.find((model) => (model.providerCode || '').toLowerCase() === 'deepseek')
+  )
 })
-// const sessionTitleText = computed(() => activeSessionSummary.value?.title || (messages.value.length ? '当前对话' : '开始一段新对话'))
+const lastAssistantMessage = computed(() =>
+  [...messages.value].reverse().find((message) => message.roleCode === 'ASSISTANT'),
+)
+const sessionTitleText = computed(() => activeSessionSummary.value?.title || (messages.value.length ? '当前对话' : '开始一段新对话'))
 const sessionStatusText = computed(() => {
   if (sending.value) {
     return `AI 正在回复 (${runningSeconds.value}s)`
@@ -564,8 +657,30 @@ const runningSeconds = computed(() => {
   return Math.max(1, Math.floor((clockNow.value - sendStartedAt.value) / 1000))
 })
 const canSend = computed(() => Boolean(question.value.trim()) && !sending.value)
-const modelHeaderTitle = computed(() => activeModel.value?.modelName || '未选择模型')
 const modelProviderLabel = computed(() => activeModel.value?.providerCode || (loadingModels.value ? '加载中' : '模型服务'))
+const headerModelName = computed(() => {
+  const modelCode = lastAssistantMessage.value?.modelCode
+  if (modelCode) {
+    const matched = modelChoices.value.find((model) => model.modelCode === modelCode)
+    if (matched?.modelName) {
+      return matched.modelName
+    }
+  }
+  return activeModel.value?.modelName || '未选择模型'
+})
+const headerProviderName = computed(() =>
+  lastAssistantMessage.value?.providerCode || activeModel.value?.providerCode || (loadingModels.value ? '加载中' : '模型服务'),
+)
+const thinkingStatusText = computed(() => {
+  if (sending.value) {
+    return `思考中 ${runningSeconds.value}s`
+  }
+  const latencyMs = lastAssistantMessage.value?.latencyMs
+  if (latencyMs && latencyMs > 0) {
+    return latencyMs >= 1000 ? `思考耗时 ${(latencyMs / 1000).toFixed(latencyMs >= 10000 ? 0 : 1)}s` : `思考耗时 ${latencyMs}ms`
+  }
+  return sessionStatusText.value
+})
 // const modelModeLabel = computed(() => (activeModel.value?.supportStream === false ? '普通回复' : '流式回复'))
 const quickPrompts = computed(() => [
   selectedAttachments.value.length || indexedTempFiles.value.length
@@ -578,22 +693,14 @@ const quickPrompts = computed(() => [
 let tickHandle: number | undefined
 let tempFilePollHandle: number | undefined
 
-const isTempFileReady = (file: AiTempFileView) => file.indexStatus === 'INDEXED' || file.parseStatus === 'INDEXED'
-const isTempFileFailed = (file: AiTempFileView) => ['FAILED', 'DELETED'].includes(file.indexStatus) || ['FAILED', 'DELETED'].includes(file.parseStatus)
-const isTempFilePending = (file: AiTempFileView) =>
-  !isTempFileReady(file) && !isTempFileFailed(file) && ['PENDING', 'PROCESSING'].includes(file.indexStatus || file.parseStatus)
+const tempFileState = (file: AiTempFileView) => resolveKnowledgeReadiness(file.parseStatus, file.indexStatus)
+const isTempFileReady = (file: AiTempFileView) => tempFileState(file) === 'ready'
+const isTempFileFailed = (file: AiTempFileView) => tempFileState(file) === 'failed'
+const isTempFilePending = (file: AiTempFileView) => ['pending', 'processing'].includes(tempFileState(file))
+const indexedTempFiles = computed(() => tempFiles.value.filter((item) => isTempFileReady(item)))
 
 const tempFileStatusLabel = (file: AiTempFileView) => {
-  if (isTempFileReady(file)) {
-    return `已可引用 · ${formatBytes(file.sizeBytes)}`
-  }
-  if (isTempFileFailed(file)) {
-    return `处理失败 · ${formatBytes(file.sizeBytes)}`
-  }
-  if (file.indexStatus === 'PROCESSING' || file.parseStatus === 'PROCESSING') {
-    return `处理中 · ${formatBytes(file.sizeBytes)}`
-  }
-  return `待处理 · ${formatBytes(file.sizeBytes)}`
+  return `${knowledgeReadinessLabel(file.parseStatus, file.indexStatus)} · ${formatBytes(file.sizeBytes)}`
 }
 
 const tempFileSurfaceClass = (file: AiTempFileView) => ({
@@ -601,6 +708,29 @@ const tempFileSurfaceClass = (file: AiTempFileView) => ({
   'is-pending': isTempFilePending(file),
   'is-failed': isTempFileFailed(file),
 })
+
+const attachmentFocusedQuestion = (value: string) =>
+  /(这个|这份|该|上传的|附加的|发给你的).{0,8}(文档|文件|附件|资料|pdf)|(?:总结|概括|介绍|解释|说明).{0,8}(文档|文件|附件|pdf)|(?:this|the)\s+(?:document|file|attachment|pdf)|(?:uploaded|attached)\s+(?:document|file|pdf)/i.test(value)
+
+const knowledgeFileState = (file: FileView) => resolveKnowledgeReadiness(file.parseStatus, file.indexStatus)
+
+const canAttachKnowledgeFile = (file: FileView) => knowledgeFileState(file) === 'ready'
+
+const knowledgeFileStatusText = (file: FileView) => {
+  const fileType = (file.fileExt || 'file').toUpperCase()
+  return `${fileType} · ${knowledgeReadinessLabel(file.parseStatus, file.indexStatus)}`
+}
+
+const modelOptionLabel = (model: AiModelView) => {
+  const provider = (model.providerCode || '').toUpperCase()
+  if (provider === 'DEEPSEEK') {
+    return `${model.modelName} · DeepSeek 默认推荐`
+  }
+  if (provider === 'OPENAI') {
+    return `${model.modelName} · OpenAI 备用可选`
+  }
+  return `${model.modelName} · ${model.providerCode}`
+}
 
 const toUiMessage = (message: AiMessageView): UiMessage => ({
   id: String(message.id),
@@ -612,8 +742,100 @@ const toUiMessage = (message: AiMessageView): UiMessage => ({
   status: message.status === 'streaming' ? 'streaming' : 'sent',
   errorMessage: message.errorMessage,
   expanded: false,
+  citationsExpanded: false,
   citations: message.citations || [],
+  modelCode: message.modelCode,
+  providerCode: message.providerCode,
+  latencyMs: message.latencyMs,
 })
+
+const renderAssistantContent = (content: string) => markdownRenderer.render(content || '...')
+
+const pageLabelFromNumbers = (pageNumbers: number[]) => {
+  if (!pageNumbers.length) {
+    return ''
+  }
+  const sorted = [...pageNumbers].sort((left, right) => left - right)
+  return `第 ${sorted.join('、')} 页`
+}
+
+const urlLabelOf = (url?: string) => {
+  if (!url) {
+    return '网页引用'
+  }
+  try {
+    return new URL(url).hostname
+  } catch {
+    return url
+  }
+}
+
+const citationGroupsOf = (message: UiMessage) => {
+  const privateGroups = new Map<string, CitationGroup>()
+  const webGroups = new Map<string, CitationGroup>()
+
+  for (const citation of message.citations || []) {
+    if (citation.sourceType === 'WEB') {
+      const key = citation.url || `WEB:${citation.sourceId}:${citation.sourceTitle}`
+      const existing = webGroups.get(key)
+      if (existing) {
+        if (!existing.snippet && citation.snippet) {
+          existing.snippet = citation.snippet
+        }
+        continue
+      }
+      webGroups.set(key, {
+        key,
+        sourceType: citation.sourceType,
+        title: citation.sourceTitle || citation.url || '网页引用',
+        snippet: citation.snippet,
+        representative: citation,
+        pageNumbers: [],
+        urlLabel: urlLabelOf(citation.url),
+      })
+      continue
+    }
+
+    const key = `${citation.sourceType}:${citation.sourceId}`
+    const existing = privateGroups.get(key)
+    if (existing) {
+      if (citation.pageNo && !existing.pageNumbers.includes(citation.pageNo)) {
+        existing.pageNumbers.push(citation.pageNo)
+        existing.pageLabel = pageLabelFromNumbers(existing.pageNumbers)
+      }
+      if (!existing.snippet && citation.snippet) {
+        existing.snippet = citation.snippet
+      }
+      continue
+    }
+    const pageNumbers = citation.pageNo ? [citation.pageNo] : []
+    privateGroups.set(key, {
+      key,
+      sourceType: citation.sourceType,
+      title: citation.sourceTitle || `${citationSourceLabel(citation.sourceType)} #${citation.sourceId}`,
+      snippet: citation.snippet,
+      representative: citation,
+      pageNumbers,
+      pageLabel: pageLabelFromNumbers(pageNumbers) || undefined,
+    })
+  }
+
+  return {
+    privateGroups: Array.from(privateGroups.values()),
+    webGroups: Array.from(webGroups.values()),
+  }
+}
+
+const privateCitationGroups = (message: UiMessage) => citationGroupsOf(message).privateGroups
+const webCitationGroups = (message: UiMessage) => citationGroupsOf(message).webGroups
+const visibleWebCitationGroups = (message: UiMessage) => {
+  const groups = webCitationGroups(message)
+  return message.citationsExpanded ? groups : groups.slice(0, 2)
+}
+const hiddenWebCitationCount = (message: UiMessage) => Math.max(webCitationGroups(message).length - 2, 0)
+const toggleCitationExpansion = (message: UiMessage) => {
+  message.citationsExpanded = !message.citationsExpanded
+}
 
 const isCollapsible = (message: UiMessage) => message.content.length > 560 || (message.content.match(/\n/g)?.length ?? 0) > 12
 const isCollapsed = (message: UiMessage) => isCollapsible(message) && !message.expanded
@@ -743,6 +965,31 @@ const loadRetrievalPreference = async () => {
   }
 }
 
+const handleWebSearchToggle = async (value: string | number | boolean) => {
+  const nextValue = Boolean(value)
+  const previousValue = !nextValue
+  savingRetrievalSettings.value = true
+  try {
+    retrievalSettings.value = {
+      ...retrievalSettings.value,
+      webSearchEnabledDefault: nextValue,
+    }
+    await updateRetrievalSettings({
+      similarityThreshold: retrievalSettings.value.similarityThreshold,
+      topK: retrievalSettings.value.topK,
+      webSearchEnabledDefault: nextValue,
+    })
+  } catch (error) {
+    retrievalSettings.value = {
+      ...retrievalSettings.value,
+      webSearchEnabledDefault: previousValue,
+    }
+    ElMessage.error(errorMessageOf(error))
+  } finally {
+    savingRetrievalSettings.value = false
+  }
+}
+
 const refreshTempFiles = async (sessionId = activeSessionId.value, silent = true) => {
   if (!sessionId) {
     tempFiles.value = []
@@ -825,6 +1072,14 @@ const toggleDraftAttachment = (attachmentType: 'DOCUMENT' | 'FILE', sourceId: nu
   }
 }
 
+const toggleDraftFileAttachment = (file: FileView) => {
+  if (!canAttachKnowledgeFile(file)) {
+    ElMessage.warning(file.parseErrorMessage || '当前文件尚未完成解析，暂时不能加入对话')
+    return
+  }
+  toggleDraftAttachment('FILE', file.id, file.fileName)
+}
+
 const clearAttachmentSelection = () => {
   draftAttachmentKeys.value = []
   if (!projectLocked.value) {
@@ -903,6 +1158,19 @@ const handleTempFilePicked = async (event: Event) => {
   }
 }
 
+const retryFailedTempFile = async (file: AiTempFileView) => {
+  try {
+    const retried = await retryTempFile(file.id)
+    tempFiles.value = [retried, ...tempFiles.value.filter((item) => item.id !== retried.id)]
+    if (isTempFilePending(retried)) {
+      startTempFilePolling(retried.sessionId)
+    }
+    ElMessage.success('临时文件已重新进入解析队列。')
+  } catch (error) {
+    ElMessage.error(errorMessageOf(error))
+  }
+}
+
 const removeTempFile = async (file: AiTempFileView) => {
   try {
     await ElMessageBox.confirm(`确定从当前会话移除“${file.fileName}”吗？`, '删除临时文件', { type: 'warning' })
@@ -926,18 +1194,16 @@ const refreshSessions = async () => {
 const refreshModels = async () => {
   loadingModels.value = true
   try {
-    const models = await getModels()
+    const models = sortAiModelsByPreference(await getModels())
     availableModels.value = models
     if (!models.length) {
       selectedModelCode.value = ''
       return
     }
-    const visibleModels = models.filter((model) => ['openai', 'deepseek'].includes((model.providerCode || '').toLowerCase()))
-    const fallbackModels = visibleModels.length ? visibleModels : models
-    const preferredModel =
-      fallbackModels.find((model) => (model.providerCode || '').toLowerCase() === 'deepseek') || fallbackModels[0]
-    if (!fallbackModels.some((model) => model.modelCode === selectedModelCode.value)) {
-      selectedModelCode.value = preferredModel.modelCode
+    const deepseekModels = models.filter((model) => (model.providerCode || '').toLowerCase() === 'deepseek')
+    const preferredModel = deepseekModels[0]
+    if (!models.some((model) => model.modelCode === selectedModelCode.value)) {
+      selectedModelCode.value = preferredModel?.modelCode || ''
     }
   } catch (error) {
     availableModels.value = []
@@ -955,7 +1221,7 @@ const openSearch = async () => {
   const keyword = searchKeyword.value.trim()
   await router.push({
     path: '/search',
-    query: keyword ? { keyword } : {},
+    query: keyword ? { q: keyword } : {},
   })
 }
 
@@ -983,6 +1249,9 @@ const applyChatResponse = async (response: AiChatResponse, userMessage: UiMessag
   assistantMessage.content = response.answer
   assistantMessage.refusedReason = response.refusedReason
   assistantMessage.citations = response.citations || []
+  assistantMessage.modelCode = response.modelCode
+  assistantMessage.providerCode = response.providerCode
+  assistantMessage.latencyMs = response.latencyMs
   if (response.modelCode && availableModels.value.some((model) => model.modelCode === response.modelCode)) {
     selectedModelCode.value = response.modelCode
   }
@@ -1179,6 +1448,33 @@ const send = async (presetQuestion?: string) => {
     return
   }
 
+  if (!selectedAttachments.value.length && !indexedTempFiles.value.length && tempFiles.value.some(isTempFilePending) && attachmentFocusedQuestion(text)) {
+    const now = new Date().toISOString()
+    question.value = ''
+    messages.value.push(
+      {
+        id: buildLocalId('user'),
+        roleCode: 'USER',
+        content: text,
+        createdAt: now,
+        status: 'sent',
+        pendingQuestion: text,
+        expanded: false,
+      },
+      {
+        id: buildLocalId('assistant'),
+        roleCode: 'ASSISTANT',
+        content: '你刚添加的资料还在解析中，暂时还不能作为可靠上下文。等解析完成后再问“这个文档写了什么”之类的问题，我会优先基于该资料回答。',
+        createdAt: now,
+        status: 'sent',
+        expanded: false,
+      },
+    )
+    await resizeComposer()
+    await scrollToBottom()
+    return
+  }
+
   question.value = ''
   networkError.value = ''
   await resizeComposer()
@@ -1217,7 +1513,7 @@ const send = async (presetQuestion?: string) => {
     modelCode: selectedModelCode.value || undefined,
     mode: hasScopedContext.value ? 'SCOPED' : 'GENERAL',
     attachments: selectedAttachments.value.length ? selectedAttachments.value : undefined,
-    tempFileIds: indexedTempFiles.value.length ? indexedTempFiles.value.map((item) => item.id) : undefined,
+    tempFileIds: tempFiles.value.length ? tempFiles.value.map((item) => item.id) : undefined,
     webSearchEnabled: retrievalSettings.value.webSearchEnabledDefault,
     similarityThreshold: retrievalSettings.value.similarityThreshold,
     topK: retrievalSettings.value.topK,
@@ -1250,6 +1546,7 @@ const send = async (presetQuestion?: string) => {
         userMessage.status = 'sent'
         assistantMessage.status = 'sent'
         assistantMessage.serverId = donePayload.messageId
+        assistantMessage.latencyMs = donePayload.latencyMs
         await syncSessionRoute(donePayload.sessionId)
         if (donePayload.sessionId) {
           const detail = await getSession(donePayload.sessionId)
@@ -1387,8 +1684,10 @@ onBeforeUnmount(() => {
 
 <style scoped>
 .workspace-shell-card {
-  min-height: calc(100dvh - 148px);
+  height: calc(128dvh - 148px);
   overflow: hidden;
+  display: flex;
+  flex-direction: column;
   border: 1px solid rgba(192, 199, 212, 0.5);
   background: #f8f9ff;
   box-shadow: 0 24px 64px rgba(0, 96, 169, 0.08);
@@ -1640,17 +1939,20 @@ onBeforeUnmount(() => {
   display: grid;
   grid-template-columns: 300px minmax(0, 1fr);
   flex: 1;
+  height: 100%;
   min-height: 0;
+  overflow: hidden;
 }
 
 .conversation-history {
   display: flex;
-  min-height: 0;
+  height: 100%;
   flex-direction: column;
   gap: 16px;
   padding: 20px;
   background: #f1f3fa;
   border-right: 1px solid rgba(192, 199, 212, 0.45);
+  overflow: hidden;
 }
 
 .conversation-history__head,
@@ -1799,6 +2101,21 @@ onBeforeUnmount(() => {
   color: #5f6775;
 }
 
+.temp-file-chip__error {
+  color: #ba1a1a !important;
+}
+
+.temp-file-chip__retry {
+  width: fit-content;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: #005ea6;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 600;
+}
+
 .temp-file-chip__remove {
   width: 28px;
   height: 28px;
@@ -1818,7 +2135,6 @@ onBeforeUnmount(() => {
   display: flex;
   flex: 1;
   min-height: 0;
-  max-height: calc(100dvh - 420px);
   flex-direction: column;
   gap: 10px;
   overflow-y: auto;
@@ -1869,6 +2185,10 @@ onBeforeUnmount(() => {
   color: #5f6775;
 }
 
+.attachment-option__error {
+  color: #ba1a1a;
+}
+
 .thread-item__delete {
   width: 34px;
   height: 34px;
@@ -1880,17 +2200,60 @@ onBeforeUnmount(() => {
 
 .chat-stage {
   display: flex;
-  min-width: 0;
+  width: 100%;
+  height: 100%;
   min-height: 0;
   flex-direction: column;
   overflow: hidden;
+  position: relative;
   background: linear-gradient(180deg, rgba(255, 255, 255, 0.92), rgba(248, 249, 255, 0.96));
 }
 
 .chat-stage__header {
   padding: 22px 24px 16px;
-  border-bottom: 1px solid;
-  /* background: #286c00; */
+  border-bottom: 1px solid rgba(192, 199, 212, 0.45);
+}
+
+.chat-stage__meta {
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.header-model-chip,
+.web-search-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  border-radius: 14px;
+  background: #f1f3fa;
+  color: #404752;
+}
+
+.header-model-chip {
+  max-width: min(320px, 100%);
+}
+
+.header-model-chip__copy {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+}
+
+.header-model-chip__copy strong,
+.header-model-chip__copy small {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.header-model-chip__copy strong {
+  color: #181c20;
+}
+
+.web-search-toggle__label {
+  font-size: 13px;
+  font-weight: 700;
 }
 
 .run-chip,
@@ -1920,16 +2283,20 @@ onBeforeUnmount(() => {
 }
 
 .message-board {
-  flex: 1;
+  flex: 1 1 auto;
   min-height: 0;
   overflow-y: auto;
-  padding: 0 24px 24px;
+  padding: 0 24px 16px;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+  scroll-padding-bottom: 220px;
 }
 
 .message-board__inner {
   min-height: 100%;
   display: flex;
   flex-direction: column;
+  padding-bottom: 8px;
 }
 
 .transcript-list--modern {
@@ -1993,6 +2360,87 @@ onBeforeUnmount(() => {
   box-shadow: 0 10px 28px rgba(0, 96, 169, 0.05);
 }
 
+.transcript-item__content {
+  line-height: 1.75;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.transcript-item__content.is-collapsed {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 12;
+}
+
+.transcript-item__content--markdown {
+  white-space: normal;
+}
+
+.transcript-item__content--markdown :deep(p),
+.transcript-item__content--markdown :deep(ul),
+.transcript-item__content--markdown :deep(ol),
+.transcript-item__content--markdown :deep(blockquote),
+.transcript-item__content--markdown :deep(pre) {
+  margin: 0 0 12px;
+}
+
+.transcript-item__content--markdown :deep(p:last-child),
+.transcript-item__content--markdown :deep(ul:last-child),
+.transcript-item__content--markdown :deep(ol:last-child),
+.transcript-item__content--markdown :deep(blockquote:last-child),
+.transcript-item__content--markdown :deep(pre:last-child) {
+  margin-bottom: 0;
+}
+
+.transcript-item__content--markdown :deep(h1),
+.transcript-item__content--markdown :deep(h2),
+.transcript-item__content--markdown :deep(h3),
+.transcript-item__content--markdown :deep(h4) {
+  margin: 18px 0 10px;
+  color: #181c20;
+  line-height: 1.35;
+}
+
+.transcript-item__content--markdown :deep(ul),
+.transcript-item__content--markdown :deep(ol) {
+  padding-left: 20px;
+}
+
+.transcript-item__content--markdown :deep(li + li) {
+  margin-top: 6px;
+}
+
+.transcript-item__content--markdown :deep(code) {
+  padding: 2px 6px;
+  border-radius: 8px;
+  background: rgba(24, 28, 32, 0.08);
+  font-size: 12px;
+}
+
+.transcript-item__content--markdown :deep(pre) {
+  padding: 14px;
+  overflow-x: auto;
+  border-radius: 14px;
+  background: rgba(24, 28, 32, 0.92);
+  color: #f5f7fa;
+}
+
+.transcript-item__content--markdown :deep(pre code) {
+  padding: 0;
+  background: transparent;
+  color: inherit;
+}
+
+.transcript-item__content--markdown :deep(a) {
+  color: #0060a9;
+  text-decoration: none;
+}
+
+.transcript-item__content--markdown :deep(a:hover) {
+  text-decoration: underline;
+}
+
 .transcript-item.is-user .transcript-item__body {
   background: rgba(64, 158, 255, 0.08);
   border: 1px solid rgba(64, 158, 255, 0.18);
@@ -2054,10 +2502,13 @@ onBeforeUnmount(() => {
 }
 
 .composer-wrap--architect {
+  flex-shrink: 0;
+  margin-top: auto;
   position: sticky;
   bottom: 0;
-  z-index: 3;
+  z-index: 4;
   padding: 18px 24px 24px;
+  border-top: 1px solid rgba(192, 199, 212, 0.28);
   background: linear-gradient(180deg, rgba(248, 249, 255, 0), rgba(248, 249, 255, 1) 34%);
 }
 
@@ -2150,6 +2601,26 @@ onBeforeUnmount(() => {
   margin-top: 14px;
 }
 
+.citation-panel__section {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.citation-panel__section-title {
+  font-size: 12px;
+  font-weight: 700;
+  color: #404752;
+}
+
+.citation-panel__toggle {
+  align-self: flex-start;
+  padding: 0;
+  background: transparent;
+  color: #0060a9;
+  font-weight: 700;
+}
+
 .citation-card {
   display: flex;
   flex-direction: column;
@@ -2159,6 +2630,10 @@ onBeforeUnmount(() => {
   background: #fff;
   border: 1px solid rgba(192, 199, 212, 0.45);
   text-align: left;
+}
+
+.citation-card--web {
+  background: rgba(255, 255, 255, 0.92);
 }
 
 .citation-card__title {
@@ -2223,6 +2698,11 @@ onBeforeUnmount(() => {
   padding: 10px 12px;
   border-radius: 14px;
   background: #fff;
+}
+
+.attachment-option.is-disabled {
+  background: #f6f8fc;
+  opacity: 0.78;
 }
 
 .attachment-option__copy {

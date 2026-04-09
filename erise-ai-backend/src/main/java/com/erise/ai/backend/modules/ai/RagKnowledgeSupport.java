@@ -14,9 +14,11 @@ import java.security.MessageDigest;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.regex.Pattern;
 import lombok.Data;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 @Service
 @RequiredArgsConstructor
@@ -24,7 +26,6 @@ class RagKnowledgeService {
 
     private static final String SCOPE_KB = "KB";
     private static final String SCOPE_TEMP = "TEMP";
-    private static final String STATUS_PENDING = "PENDING";
     private static final String STATUS_PROCESSING = "PROCESSING";
     private static final String STATUS_READY = "READY";
     private static final String STATUS_FAILED = "FAILED";
@@ -35,6 +36,11 @@ class RagKnowledgeService {
     private static final int TARGET_CHUNK_SIZE = 420;
     private static final int MAX_CHUNK_SIZE = 500;
     private static final int OVERLAP_SIZE = 60;
+    private static final Pattern PARAGRAPH_SPLITTER = Pattern.compile("\\n\\s*\\n+");
+    private static final Pattern LINE_SPLITTER = Pattern.compile("\\n+");
+    private static final Pattern SENTENCE_SPLITTER = Pattern.compile("(?<=[。！？!?；;])");
+    private static final Pattern CLAUSE_SPLITTER = Pattern.compile("(?<=[，,:：])");
+    private static final Pattern WORD_SPLITTER = Pattern.compile("\\s+");
 
     private final RagSourceMapper ragSourceMapper;
     private final RagChunkMapper ragChunkMapper;
@@ -42,6 +48,7 @@ class RagKnowledgeService {
     private final CloudAiClient cloudAiClient;
     private final ObjectMapper objectMapper;
 
+    @Transactional
     void replaceKbSource(Long ownerUserId,
                          Long projectId,
                          String sourceType,
@@ -51,6 +58,7 @@ class RagKnowledgeService {
         replaceSource(SCOPE_KB, ownerUserId, projectId, 0L, sourceType, sourceId, sourceTitle, chunks);
     }
 
+    @Transactional
     void replaceTempSource(Long ownerUserId,
                            Long projectId,
                            Long sessionId,
@@ -60,10 +68,12 @@ class RagKnowledgeService {
         replaceSource(SCOPE_TEMP, ownerUserId, projectId, sessionId, "TEMP_FILE", sourceId, sourceTitle, chunks);
     }
 
+    @Transactional
     void deleteKbSource(Long ownerUserId, Long projectId, String sourceType, Long sourceId) {
         deleteSource(SCOPE_KB, ownerUserId, projectId, 0L, sourceType, sourceId);
     }
 
+    @Transactional
     void deleteTempSource(Long ownerUserId, Long sessionId, Long sourceId) {
         deleteSource(SCOPE_TEMP, ownerUserId, null, sessionId, "TEMP_FILE", sourceId);
     }
@@ -83,46 +93,33 @@ class RagKnowledgeService {
     }
 
     List<ChunkInput> splitText(String text, Integer pageNo) {
-        List<ChunkInput> chunks = new ArrayList<>();
         if (text == null || text.isBlank()) {
-            return chunks;
+            return List.of();
         }
-        String normalized = text.replace("\r", "").trim();
-        String[] rawParagraphs = normalized.split("\\n\\s*\\n+");
-        List<String> paragraphs = new ArrayList<>();
-        for (String rawParagraph : rawParagraphs) {
-            String trimmed = rawParagraph.trim();
-            if (!trimmed.isBlank()) {
-                paragraphs.add(trimmed);
-            }
+        String normalized = normalizeSourceText(text);
+        if (normalized.isBlank()) {
+            return List.of();
         }
-        if (paragraphs.isEmpty()) {
+        List<SemanticBlock> blocks = mergeHeadingBlocks(buildSemanticBlocks(normalized));
+        if (blocks.isEmpty()) {
             return List.of(new ChunkInput(0, normalized, pageNo, null));
         }
+        return buildChunks(blocks, pageNo);
+    }
 
-        int chunkIndex = 0;
-        String currentSection = null;
-        StringBuilder buffer = new StringBuilder();
-        for (String paragraph : paragraphs) {
-            if (isLikelyHeading(paragraph)) {
-                currentSection = paragraph;
-            }
-            if (buffer.length() == 0) {
-                buffer.append(paragraph);
-                continue;
-            }
-            if (buffer.length() + 2 + paragraph.length() <= TARGET_CHUNK_SIZE) {
-                buffer.append("\n\n").append(paragraph);
-                continue;
-            }
-            chunkIndex = flushBuffer(chunks, chunkIndex, buffer, pageNo, currentSection);
-            if (buffer.length() > 0) {
-                buffer.append("\n\n");
-            }
-            buffer.append(paragraph);
+    private List<ChunkInput> normalizeChunks(List<ChunkInput> chunks) {
+        if (chunks == null || chunks.isEmpty()) {
+            return List.of();
         }
-        flushBuffer(chunks, chunkIndex, buffer, pageNo, currentSection);
-        return chunks;
+        List<ChunkInput> normalized = new ArrayList<>();
+        int nextChunkIndex = 0;
+        for (ChunkInput chunk : chunks) {
+            if (chunk == null || chunk.chunkText() == null || chunk.chunkText().isBlank()) {
+                continue;
+            }
+            normalized.add(new ChunkInput(nextChunkIndex++, chunk.chunkText().trim(), chunk.pageNo(), chunk.sectionPath()));
+        }
+        return normalized;
     }
 
     private void replaceSource(String scopeType,
@@ -133,7 +130,9 @@ class RagKnowledgeService {
                                Long sourceId,
                                String sourceTitle,
                                List<ChunkInput> chunks) {
-        RagSourceEntity source = upsertSource(scopeType, ownerUserId, projectId, sessionId, sourceType, sourceId, sourceTitle);
+        Long normalizedSessionId = normalizeSessionId(sessionId);
+        List<ChunkInput> normalizedChunks = normalizeChunks(chunks);
+        RagSourceEntity source = upsertSource(scopeType, ownerUserId, projectId, normalizedSessionId, sourceType, sourceId, sourceTitle);
         RagTaskEntity task = createTask(source, ownerUserId, projectId, sessionId, sourceType, sourceId, TASK_TYPE_INDEX);
         try {
             CloudAiClient.RagIndexUpsertResponse response = cloudAiClient.upsertRagIndex(
@@ -142,11 +141,11 @@ class RagKnowledgeService {
                             ownerUserId,
                             scopeType,
                             projectId,
-                            sessionId,
+                            normalizedSessionId,
                             sourceType,
                             sourceId,
                             sourceTitle,
-                            chunks == null ? List.of() : chunks.stream()
+                            normalizedChunks.stream()
                                     .map(item -> new CloudAiClient.RagChunkRequest(
                                             item.chunkIndex(),
                                             item.chunkText(),
@@ -163,12 +162,12 @@ class RagKnowledgeService {
             String collectionName = response == null || response.collectionName() == null
                     ? defaultCollection(scopeType)
                     : response.collectionName();
-            for (ChunkInput chunk : chunks == null ? List.<ChunkInput>of() : chunks) {
+            for (ChunkInput chunk : normalizedChunks) {
                 RagChunkEntity entity = new RagChunkEntity();
                 entity.setRagSourceId(source.getId());
                 entity.setOwnerUserId(ownerUserId);
                 entity.setProjectId(projectId);
-                entity.setSessionId(sessionId);
+                entity.setSessionId(normalizedSessionId);
                 entity.setSourceType(sourceType);
                 entity.setSourceId(sourceId);
                 entity.setChunkNum(chunk.chunkIndex());
@@ -176,7 +175,7 @@ class RagKnowledgeService {
                 entity.setPageNo(chunk.pageNo());
                 entity.setSectionPath(chunk.sectionPath());
                 entity.setVectorCollection(collectionName);
-                entity.setVectorPointId(pointId(scopeType, sourceType, sourceId, sessionId, chunk.chunkIndex()));
+                entity.setVectorPointId(pointId(scopeType, sourceType, sourceId, normalizedSessionId, chunk.chunkIndex()));
                 entity.setEmbeddingModelCode(response == null ? null : response.embeddingModelCode());
                 entity.setEmbeddingVersion(response == null ? null : response.embeddingVersion());
                 entity.setEmbeddingDimension(response == null ? null : response.embeddingDimension());
@@ -186,10 +185,10 @@ class RagKnowledgeService {
             }
 
             source.setStatus(STATUS_READY);
-            source.setChunkCount(chunks == null ? 0 : chunks.size());
+            source.setChunkCount(normalizedChunks.size());
             source.setLastError(null);
             source.setLastIndexedAt(LocalDateTime.now());
-            source.setContentHash(contentHash(chunks));
+            source.setContentHash(contentHash(normalizedChunks));
             source.setEmbeddingModelCode(response == null ? null : response.embeddingModelCode());
             source.setEmbeddingVersion(response == null ? null : response.embeddingVersion());
             source.setEmbeddingDimension(response == null ? null : response.embeddingDimension());
@@ -337,44 +336,260 @@ class RagKnowledgeService {
         return sessionId == null ? 0L : sessionId;
     }
 
-    private int flushBuffer(List<ChunkInput> chunks,
-                            int chunkIndex,
-                            StringBuilder buffer,
-                            Integer pageNo,
-                            String sectionPath) {
-        while (buffer.length() > MAX_CHUNK_SIZE) {
-            int splitPosition = findSplitPosition(buffer.toString());
-            String piece = buffer.substring(0, splitPosition).trim();
-            chunks.add(new ChunkInput(chunkIndex++, piece, pageNo, sectionPath));
-            String remainder = buffer.substring(Math.max(0, splitPosition - OVERLAP_SIZE)).trim();
-            buffer.setLength(0);
-            buffer.append(remainder);
+    private String normalizeSourceText(String text) {
+        return text
+                .replace("\r", "")
+                .replace('\u00A0', ' ')
+                .replaceAll("[ \\t\\x0B\\f]+", " ")
+                .replaceAll("\\n{3,}", "\n\n")
+                .trim();
+    }
+
+    private List<SemanticBlock> buildSemanticBlocks(String normalized) {
+        List<SemanticBlock> blocks = new ArrayList<>();
+        String currentSection = null;
+        for (String rawParagraph : PARAGRAPH_SPLITTER.split(normalized)) {
+            String paragraph = rawParagraph == null ? "" : rawParagraph.trim();
+            if (paragraph.isBlank()) {
+                continue;
+            }
+            if (isLikelyHeading(paragraph)) {
+                currentSection = paragraph;
+                blocks.add(new SemanticBlock(paragraph, currentSection));
+                continue;
+            }
+            splitRecursively(paragraph, currentSection, 0, blocks);
         }
-        String finalText = buffer.toString().trim();
-        if (!finalText.isBlank()) {
-            chunks.add(new ChunkInput(chunkIndex++, finalText, pageNo, sectionPath));
+        if (blocks.isEmpty() && !normalized.isBlank()) {
+            blocks.add(new SemanticBlock(normalized, null));
+        }
+        return blocks;
+    }
+
+    private List<SemanticBlock> mergeHeadingBlocks(List<SemanticBlock> blocks) {
+        if (blocks.isEmpty()) {
+            return blocks;
+        }
+        List<SemanticBlock> merged = new ArrayList<>();
+        for (int index = 0; index < blocks.size(); index++) {
+            SemanticBlock current = blocks.get(index);
+            if (isLikelyHeading(current.text())
+                    && current.text().length() <= 80
+                    && index + 1 < blocks.size()) {
+                SemanticBlock next = blocks.get(index + 1);
+                if ((current.sectionPath() == null && next.sectionPath() == null)
+                        || (current.sectionPath() != null && current.sectionPath().equals(next.sectionPath()))) {
+                    merged.add(new SemanticBlock(current.text() + "\n" + next.text(), next.sectionPath()));
+                    index++;
+                    continue;
+                }
+            }
+            merged.add(current);
+        }
+        return merged;
+    }
+
+    private void splitRecursively(String text, String sectionPath, int level, List<SemanticBlock> output) {
+        String normalized = text == null ? "" : text.trim();
+        if (normalized.isBlank()) {
+            return;
+        }
+        if (normalized.length() <= MAX_CHUNK_SIZE) {
+            output.add(new SemanticBlock(normalized, sectionPath));
+            return;
+        }
+        SplitPlan plan = splitPlan(level);
+        if (plan == null) {
+            hardSplit(normalized, sectionPath, output);
+            return;
+        }
+        List<String> parts = splitWithPattern(normalized, plan.pattern());
+        if (parts.size() <= 1) {
+            splitRecursively(normalized, sectionPath, level + 1, output);
+            return;
+        }
+        StringBuilder buffer = new StringBuilder();
+        for (String part : parts) {
+            if (part.length() > MAX_CHUNK_SIZE) {
+                flushSemanticBuffer(output, buffer, sectionPath);
+                splitRecursively(part, sectionPath, level + 1, output);
+                continue;
+            }
+            if (buffer.length() == 0) {
+                buffer.append(part);
+                continue;
+            }
+            if (buffer.length() + plan.joiner().length() + part.length() <= MAX_CHUNK_SIZE) {
+                buffer.append(plan.joiner()).append(part);
+                continue;
+            }
+            output.add(new SemanticBlock(buffer.toString().trim(), sectionPath));
+            buffer.setLength(0);
+            buffer.append(part);
+        }
+        flushSemanticBuffer(output, buffer, sectionPath);
+    }
+
+    private void flushSemanticBuffer(List<SemanticBlock> output, StringBuilder buffer, String sectionPath) {
+        String value = buffer.toString().trim();
+        if (!value.isBlank()) {
+            output.add(new SemanticBlock(value, sectionPath));
         }
         buffer.setLength(0);
-        return chunkIndex;
+    }
+
+    private List<String> splitWithPattern(String value, Pattern pattern) {
+        List<String> parts = new ArrayList<>();
+        for (String rawPart : pattern.split(value)) {
+            String trimmed = rawPart == null ? "" : rawPart.trim();
+            if (!trimmed.isBlank()) {
+                parts.add(trimmed);
+            }
+        }
+        return parts;
+    }
+
+    private SplitPlan splitPlan(int level) {
+        return switch (level) {
+            case 0 -> new SplitPlan(PARAGRAPH_SPLITTER, "\n\n");
+            case 1 -> new SplitPlan(LINE_SPLITTER, "\n");
+            case 2 -> new SplitPlan(SENTENCE_SPLITTER, " ");
+            case 3 -> new SplitPlan(CLAUSE_SPLITTER, " ");
+            case 4 -> new SplitPlan(WORD_SPLITTER, " ");
+            default -> null;
+        };
+    }
+
+    private void hardSplit(String text, String sectionPath, List<SemanticBlock> output) {
+        String remaining = text;
+        while (!remaining.isBlank()) {
+            if (remaining.length() <= MAX_CHUNK_SIZE) {
+                output.add(new SemanticBlock(remaining, sectionPath));
+                return;
+            }
+            int splitPosition = findSplitPosition(remaining);
+            String piece = remaining.substring(0, splitPosition).trim();
+            if (piece.isBlank()) {
+                piece = remaining.substring(0, Math.min(MAX_CHUNK_SIZE, remaining.length())).trim();
+                splitPosition = Math.min(MAX_CHUNK_SIZE, remaining.length());
+            }
+            output.add(new SemanticBlock(piece, sectionPath));
+            remaining = remaining.substring(splitPosition).trim();
+        }
+    }
+
+    private List<ChunkInput> buildChunks(List<SemanticBlock> blocks, Integer pageNo) {
+        List<ChunkInput> chunks = new ArrayList<>();
+        StringBuilder buffer = new StringBuilder();
+        String currentSection = null;
+        int chunkIndex = 0;
+        for (SemanticBlock block : blocks) {
+            String text = block.text() == null ? "" : block.text().trim();
+            if (text.isBlank()) {
+                continue;
+            }
+            if (buffer.length() == 0) {
+                buffer.append(text);
+                currentSection = block.sectionPath();
+                continue;
+            }
+            String candidate = buffer + "\n\n" + text;
+            if (candidate.length() <= MAX_CHUNK_SIZE
+                    && (buffer.length() < TARGET_CHUNK_SIZE || text.length() < TARGET_CHUNK_SIZE / 2)) {
+                buffer.append("\n\n").append(text);
+                currentSection = block.sectionPath() != null ? block.sectionPath() : currentSection;
+                continue;
+            }
+            chunkIndex = appendChunk(chunks, chunkIndex, buffer.toString(), pageNo, currentSection);
+            String overlap = overlapTail(buffer.toString());
+            buffer.setLength(0);
+            if (!overlap.isBlank()) {
+                buffer.append(overlap);
+            }
+            if (buffer.length() > 0) {
+                buffer.append("\n");
+            }
+            buffer.append(text);
+            currentSection = block.sectionPath() != null ? block.sectionPath() : currentSection;
+            while (buffer.length() > MAX_CHUNK_SIZE) {
+                int splitPosition = findSplitPosition(buffer.toString());
+                String piece = buffer.substring(0, splitPosition).trim();
+                chunkIndex = appendChunk(chunks, chunkIndex, piece, pageNo, currentSection);
+                String overlapSeed = overlapTail(piece);
+                String remainder = buffer.substring(splitPosition).trim();
+                buffer.setLength(0);
+                if (!overlapSeed.isBlank()) {
+                    buffer.append(overlapSeed);
+                }
+                if (!remainder.isBlank()) {
+                    if (buffer.length() > 0) {
+                        buffer.append("\n");
+                    }
+                    buffer.append(remainder);
+                }
+            }
+        }
+        appendChunk(chunks, chunkIndex, buffer.toString(), pageNo, currentSection);
+        return chunks;
+    }
+
+    private int appendChunk(List<ChunkInput> chunks,
+                            int chunkIndex,
+                            String rawText,
+                            Integer pageNo,
+                            String sectionPath) {
+        String finalText = rawText == null ? "" : rawText.trim();
+        if (finalText.isBlank()) {
+            return chunkIndex;
+        }
+        if (!chunks.isEmpty() && chunks.get(chunks.size() - 1).chunkText().equals(finalText)) {
+            return chunkIndex;
+        }
+        chunks.add(new ChunkInput(chunkIndex, finalText, pageNo, sectionPath));
+        return chunkIndex + 1;
     }
 
     private int findSplitPosition(String value) {
-        int candidate = Math.min(MAX_CHUNK_SIZE, value.length());
-        for (int index = candidate; index >= TARGET_CHUNK_SIZE; index--) {
+        int upperBound = Math.min(MAX_CHUNK_SIZE, value.length());
+        int lowerBound = Math.min(TARGET_CHUNK_SIZE, upperBound);
+        for (int index = upperBound; index >= lowerBound; index--) {
             char current = value.charAt(index - 1);
-            if (current == '\n' || current == ' ' || current == '。' || current == '；' || current == ';') {
+            if (isBoundaryCharacter(current)) {
                 return index;
             }
         }
-        return Math.min(TARGET_CHUNK_SIZE, value.length());
+        return upperBound;
+    }
+
+    private String overlapTail(String text) {
+        String normalized = text == null ? "" : text.trim();
+        if (normalized.isBlank()) {
+            return "";
+        }
+        if (normalized.length() <= OVERLAP_SIZE) {
+            return normalized;
+        }
+        int start = normalized.length() - OVERLAP_SIZE;
+        while (start > 0 && !isBoundaryCharacter(normalized.charAt(start - 1))) {
+            start--;
+        }
+        return normalized.substring(start).trim();
+    }
+
+    private boolean isBoundaryCharacter(char value) {
+        return Character.isWhitespace(value)
+                || "。！？!?；;：:,，、)]}".indexOf(value) >= 0;
     }
 
     private boolean isLikelyHeading(String paragraph) {
-        return paragraph.length() <= 60
-                && !paragraph.contains("。")
-                && !paragraph.contains(".")
-                && !paragraph.contains("：")
-                && !paragraph.contains(":");
+        String normalized = paragraph == null ? "" : paragraph.trim();
+        if (normalized.isBlank() || normalized.length() > 80) {
+            return false;
+        }
+        if (normalized.matches("^(#{1,6}\\s+.+|第[0-9一二三四五六七八九十百]+[章节篇部卷].*|[0-9一二三四五六七八九十]+[.、)）]\\s*.+)$")) {
+            return true;
+        }
+        return !normalized.matches(".*[。！？!?；;].*") && normalized.split("\\s+").length <= 8;
     }
 
     private String contentHash(List<ChunkInput> chunks) {
@@ -436,6 +651,12 @@ class RagKnowledgeService {
     }
 
     record ChunkInput(int chunkIndex, String chunkText, Integer pageNo, String sectionPath) {
+    }
+
+    private record SemanticBlock(String text, String sectionPath) {
+    }
+
+    private record SplitPlan(Pattern pattern, String joiner) {
     }
 }
 

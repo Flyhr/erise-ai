@@ -1,15 +1,11 @@
-﻿<template>
+<template>
   <div class="workspace-content">
 
-    <WorkspaceSearchBar>
-      v-model="searchKeyword"
-      :placeholder="searchPlaceholder"
-      @search="openSearch"
-    </WorkspaceSearchBar>
+    <WorkspaceSearchBar search-placeholder="搜索项目、文件和文档" />
     <section class="workspace-metric-grid">
       <article class="workspace-chart-card workspace-card">
         <div class="workspace-card-head">
-          <h3>Active Projects Status</h3>
+          <h3>项目活动</h3>
           <span class="workspace-trend-badge">
             <span class="material-symbols-outlined">trending_up</span>
             {{ projectTotal }} 个项目
@@ -29,11 +25,11 @@
       <div class="workspace-side-metrics">
         <article class="workspace-storage-card">
           <div class="workspace-storage-head">
-            <span>Storage Usage</span>
+            <span>存储文档数量</span>
             <span class="material-symbols-outlined">cloud_done</span>
           </div>
-          <div class="workspace-storage-value">{{ totalFiles }} 个文件</div>
-          <p>跨项目沉淀的知识文件总量</p>
+          <div class="workspace-storage-value">{{ totalFiles }} 个文档</div>
+          <p>真会偷懒啊！！！</p>
           <div class="workspace-progress-track">
             <div class="workspace-progress-fill" :style="{ width: storageProgress }" />
           </div>
@@ -42,11 +38,11 @@
         <article class="workspace-insight-card workspace-card">
           <h3>
             <span class="material-symbols-outlined">bolt</span>
-            Quick Insights
+            概览
           </h3>
           <p>
-            当前共有 <strong>{{ totalDocuments }}</strong> 份文档、<strong>{{ sessions.length }}</strong>
-            个近期 AI 会话，可直接继续处理。
+            当前共有 <strong>{{ totalDocuments }}</strong> 份文件、 文档、<strong>{{ sessions.length }}</strong>
+            个近期 AI 会话，。
           </p>
         </article>
       </div>

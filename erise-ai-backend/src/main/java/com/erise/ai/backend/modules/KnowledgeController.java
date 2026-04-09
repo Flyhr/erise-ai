@@ -90,6 +90,8 @@ class KnowledgeQueryService {
                       null as mime_type,
                       null as file_size,
                       null as parse_status,
+                      null as index_status,
+                      null as parse_error_message,
                       null as doc_status,
                       now() as created_at,
                       now() as updated_at
@@ -116,6 +118,14 @@ class KnowledgeQueryService {
                   f.mime_type,
                   f.file_size,
                   f.parse_status,
+                  f.index_status,
+                  (
+                    select t.last_error
+                    from ea_file_parse_task t
+                    where t.file_id = f.id
+                    order by t.updated_at desc, t.id desc
+                    limit 1
+                  ) as parse_error_message,
                   null as doc_status,
                   f.created_at,
                   f.updated_at
@@ -156,6 +166,8 @@ class KnowledgeQueryService {
                   'DOCUMENT' as mime_type,
                   null as file_size,
                   null as parse_status,
+                  null as index_status,
+                  null as parse_error_message,
                   d.doc_status,
                   d.created_at,
                   d.updated_at
@@ -189,6 +201,8 @@ class KnowledgeQueryService {
                 rs.getString("mime_type"),
                 rs.getObject("file_size") == null ? null : rs.getLong("file_size"),
                 rs.getString("parse_status"),
+                rs.getString("index_status"),
+                rs.getString("parse_error_message"),
                 rs.getString("doc_status"),
                 rs.getTimestamp("created_at").toLocalDateTime(),
                 rs.getTimestamp("updated_at").toLocalDateTime()
@@ -206,6 +220,8 @@ record KnowledgeAssetView(
         String mimeType,
         Long fileSize,
         String parseStatus,
+        String indexStatus,
+        String parseErrorMessage,
         String docStatus,
         java.time.LocalDateTime createdAt,
         java.time.LocalDateTime updatedAt

@@ -1,36 +1,33 @@
-﻿<template>
+<template>
   <div class="page-shell">
-    <!-- <AppPageHeader title="搜索" eyebrow="全局检索" subtitle="统一搜索文档、文件与结构化内容，结果可直接跳转浏览、编辑或删除。" /> -->
-    <!-- <AppSectionCard title="搜索条件" description="支持按关键词与项目范围筛选搜索结果。"> -->
-    <AppSectionCard>
+    <AppPageHeader title="搜索" eyebrow="全局检索" subtitle="统一搜索文件、文档与结构化内容，支持从结果直接跳转处理。" />
 
+    <AppSectionCard>
       <AppFilterBar>
         <el-input v-model="query" style="grid-column: span 6" clearable placeholder="输入关键词" @keyup.enter="runSearch" />
         <el-select v-model="projectId" style="grid-column: span 4" clearable filterable placeholder="选择项目">
           <el-option v-for="project in projects" :key="project.id" :label="project.name" :value="project.id" />
         </el-select>
-        <div style="grid-column: span 2; display: flex; align-items: center; color: var(--muted); font-size: 13px;">
+        <div class="search-filter-copy">
           {{ filteredResults.length }} 条结果
         </div>
         <template #actions>
           <el-button type="primary" :loading="loading" @click="runSearch">搜索</el-button>
-
           <el-button @click="resetFilters">重置</el-button>
         </template>
       </AppFilterBar>
     </AppSectionCard>
 
-    <AppSectionCard title="搜索结果" ">
+    <AppSectionCard title="搜索结果">
       <el-tabs v-model="activeTab">
-      <el-tab-pane label="全部" name="ALL" />
-      <el-tab-pane label="文档" name="DOCUMENT" />
-      <el-tab-pane label="文件" name="FILE" />
-      <el-tab-pane label="表格" name="CONTENT" />
+        <el-tab-pane label="全部" name="ALL" />
+        <el-tab-pane label="文档" name="DOCUMENT" />
+        <el-tab-pane label="文件" name="FILE" />
+        <el-tab-pane label="表格" name="CONTENT" />
       </el-tabs>
 
       <div v-if="filteredResults.length" class="search-result-list">
-        <article v-for="item in filteredResults" :key="`${item.sourceType}-${item.sourceId}`"
-          class="search-result-card">
+        <article v-for="item in filteredResults" :key="`${item.sourceType}-${item.sourceId}`" class="search-result-card">
           <div class="search-result-card__main">
             <div class="search-result-card__head">
               <div>
@@ -67,8 +64,7 @@
                 <el-button text>更多</el-button>
                 <template #dropdown>
                   <el-dropdown-menu>
-                    <el-dropdown-item v-if="supportsOfficeEdit(item)"
-                      @click="editFile(item.sourceId)">在线编辑</el-dropdown-item>
+                    <el-dropdown-item v-if="supportsOfficeEdit(item)" @click="editFile(item.sourceId)">在线编辑</el-dropdown-item>
                     <el-dropdown-item @click="removeFile(item)">删除文件</el-dropdown-item>
                   </el-dropdown-menu>
                 </template>
@@ -90,7 +86,7 @@
           </div>
         </article>
       </div>
-      <AppEmptyState v-else :title="query ? '没有找到结果' : '没有找到文件，请上传或新建文件'" />
+      <AppEmptyState v-else :title="query ? '没有找到结果' : '请输入关键词开始搜索'" description="可以按项目范围筛选，并直接从结果跳转到详情、预览或编辑。" />
     </AppSectionCard>
   </div>
 </template>
@@ -159,7 +155,13 @@ const syncFromRoute = async () => {
 
 const runSearch = async () => {
   const keyword = query.value.trim()
-  await router.push({ path: '/search', query: { ...(keyword ? { q: keyword } : {}), ...(projectId.value ? { projectId: projectId.value } : {}) } })
+  await router.push({
+    path: '/search',
+    query: {
+      ...(keyword ? { q: keyword } : {}),
+      ...(projectId.value ? { projectId: projectId.value } : {}),
+    },
+  })
 }
 
 const resetFilters = async () => {
@@ -237,6 +239,14 @@ onMounted(async () => { await loadProjects() })
 </script>
 
 <style scoped>
+.search-filter-copy {
+  grid-column: span 2;
+  display: flex;
+  align-items: center;
+  color: var(--muted);
+  font-size: 13px;
+}
+
 .search-result-list {
   display: flex;
   flex-direction: column;
@@ -272,7 +282,6 @@ onMounted(async () => { await loadProjects() })
 }
 
 @media (max-width: 900px) {
-
   .search-result-card,
   .search-result-card__head {
     flex-direction: column;

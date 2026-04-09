@@ -52,6 +52,7 @@ export interface FileView {
   uploadStatus: string
   parseStatus: string
   indexStatus: string
+  parseErrorMessage?: string
   createdAt: string
   updatedAt: string
 }
@@ -134,6 +135,8 @@ export interface KnowledgeAssetView {
   mimeType?: string
   fileSize?: number
   parseStatus?: string
+  indexStatus?: string
+  parseErrorMessage?: string
   docStatus?: string
   updatedAt: string
   createdAt?: string
@@ -175,6 +178,7 @@ export interface AiChatResponse {
   messageStatus?: string
   modelCode?: string
   providerCode?: string
+  latencyMs?: number
 }
 
 export interface AiTempFileView {
@@ -186,6 +190,7 @@ export interface AiTempFileView {
   sizeBytes: number
   parseStatus: string
   indexStatus: string
+  parseErrorMessage?: string
   createdAt: string
 }
 
@@ -193,6 +198,10 @@ export interface AiRetrievalSettingView {
   similarityThreshold: number
   topK: number
   webSearchEnabledDefault: boolean
+}
+
+export interface AiRetrievalSettingUpdateView {
+  updated: boolean
 }
 
 export type AiAttachmentType = 'DOCUMENT' | 'FILE'
@@ -218,6 +227,8 @@ export interface AiSessionSummaryView {
   title: string
   lastMessageAt?: string
   createdAt: string
+  tempFileCount?: number
+  recentSourceType?: string
 }
 
 export interface AiMessageView {
@@ -231,6 +242,9 @@ export interface AiMessageView {
   status?: string
   errorMessage?: string
   requestId?: string
+  modelCode?: string
+  providerCode?: string
+  latencyMs?: number
 }
 
 export interface AiSessionDetailView {

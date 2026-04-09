@@ -41,9 +41,10 @@ public class ContentController {
     @GetMapping
     public ApiResponse<PageResponse<ContentItemSummaryView>> page(@RequestParam Long projectId,
                                                                   @RequestParam(required = false) String itemType,
+                                                                  @RequestParam(required = false) String q,
                                                                   @RequestParam(defaultValue = "1") long pageNum,
                                                                   @RequestParam(defaultValue = "20") long pageSize) {
-        return ApiResponse.success(contentItemService.page(projectId, itemType, pageNum, pageSize));
+        return ApiResponse.success(contentItemService.page(projectId, itemType, q, pageNum, pageSize));
     }
 
     @PostMapping
@@ -77,14 +78,21 @@ class ContentItemService {
     private final KnowledgeService knowledgeService;
     private final AuditLogService auditLogService;
 
-    PageResponse<ContentItemSummaryView> page(Long projectId, String itemType, long pageNum, long pageSize) {
+    PageResponse<ContentItemSummaryView> page(Long projectId, String itemType, String keyword, long pageNum, long pageSize) {
         projectService.requireAccessibleProject(projectId);
         String normalizedType = itemType == null || itemType.isBlank() ? null : normalizeType(itemType);
-        Page<ContentItemEntity> page = contentItemMapper.selectPage(Page.of(pageNum, pageSize),
-                new LambdaQueryWrapper<ContentItemEntity>()
-                        .eq(ContentItemEntity::getProjectId, projectId)
-                        .eq(normalizedType != null, ContentItemEntity::getItemType, normalizedType)
-                        .orderByDesc(ContentItemEntity::getUpdatedAt));
+        String normalizedKeyword = keyword == null || keyword.isBlank() ? null : keyword.trim();
+        LambdaQueryWrapper<ContentItemEntity> wrapper = new LambdaQueryWrapper<ContentItemEntity>()
+                .eq(ContentItemEntity::getProjectId, projectId)
+                .eq(normalizedType != null, ContentItemEntity::getItemType, normalizedType)
+                .orderByDesc(ContentItemEntity::getUpdatedAt);
+        wrapper.and(normalizedKeyword != null, query -> query
+                .like(ContentItemEntity::getTitle, normalizedKeyword)
+                .or()
+                .like(ContentItemEntity::getSummary, normalizedKeyword)
+                .or()
+                .like(ContentItemEntity::getPlainText, normalizedKeyword));
+        Page<ContentItemEntity> page = contentItemMapper.selectPage(Page.of(pageNum, pageSize), wrapper);
         return PageResponse.of(page.getRecords().stream().map(this::toSummary).toList(), pageNum, pageSize, page.getTotal());
     }
 

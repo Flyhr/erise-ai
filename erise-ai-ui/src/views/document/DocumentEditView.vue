@@ -1,7 +1,7 @@
 ﻿<template>
   <div class="page-shell">
-    <AppPageHeader :title="form.title || (isPreview ? '文档浏览' : '文档阅读')" eyebrow="文档工作区" :subtitle="pageSubtitle"
-      show-back back-label="返回文档列表" :back-to="documentBackTarget">
+    <AppPageHeader :title="form.title || (isPreview ? '文档浏览' : '文档阅读')" show-back back-label="返回文档列表"
+      :back-to="documentBackTarget">
       <template #actions>
         <el-button plain @click="toggleToc">{{ tocVisible ? '隐藏目录' : '显示目录' }}</el-button>
         <el-dropdown trigger="click" @command="handleExportCommand">
@@ -44,7 +44,7 @@
         </template>
 
         <template v-else>
-          <AppSectionCard title="基础信息" description="文档标题、摘要与正文统一在这里维护，方便搜索与 AI 引用。">
+          <AppSectionCard title="基础信息">
             <el-form :model="form" label-position="top">
               <el-form-item label="标题">
                 <el-input v-model="form.title" />
@@ -55,7 +55,7 @@
             </el-form>
           </AppSectionCard>
 
-          <AppSectionCard title="正文编辑器" description="当前使用富文本编辑模式，保存时会同步生成 HTML 快照和纯文本内容。">
+          <AppSectionCard title="正文编辑器">
             <OfficeEditor ref="officeEditorRef" v-model="contentHtml" :readonly="false" :height="760"
               toolbar-locale="zh" placeholder="在这里输入文档正文内容" />
           </AppSectionCard>
@@ -134,9 +134,9 @@ const isPreview = computed(() => route.query.mode === 'preview')
 const tocItems = computed(() => buildTocFromHtml(contentHtml.value))
 const exportFileName = computed(() => form.title.trim() || '未命名文档')
 const exportHtml = computed(() => renderDocumentHtml(form.title.trim() || '未命名文档', form.summary, contentHtml.value))
-const pageSubtitle = computed(() =>
-  isPreview.value ? '当前为只读浏览态，适合阅读、校对和导出。' : '编辑态会同步保存正文快照、纯文本和文档状态。',
-)
+// const pageSubtitle = computed(() =>
+//   isPreview.value ? '当前为只读浏览态，适合阅读、校对和导出。' : '编辑态会同步保存正文快照、纯文本和文档状态。',
+// )
 const documentBackTarget = computed(() => (projectId.value ? `/projects/${projectId.value}/documents` : '/documents'))
 
 const htmlToText = (html: string) => {
