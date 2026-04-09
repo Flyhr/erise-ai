@@ -1,13 +1,8 @@
 <template>
   <div class="page-shell">
     <AppFilterBar>
-      <el-input
-        v-model="keyword"
-        style="grid-column: span 6"
-        clearable
-        placeholder="按项目名称或描述搜索"
-        @keyup.enter="runSearch"
-      />
+      <el-input v-model="keyword" style="grid-column: span 6" clearable placeholder="按项目名称或描述搜索"
+        @keyup.enter="runSearch" />
       <el-select v-model="statusFilter" style="grid-column: span 3" clearable placeholder="筛选状态">
         <el-option label="进行中" value="ACTIVE" />
         <el-option label="草稿" value="DRAFT" />
@@ -21,13 +16,8 @@
     </AppFilterBar>
 
     <div v-if="projects.length" class="project-grid">
-      <AppSectionCard
-        v-for="project in projects"
-        :key="project.id"
-        compact
-        class="project-card"
-        @click="openProject(project.id)"
-      >
+      <AppSectionCard v-for="project in projects" :key="project.id" compact class="project-card"
+        @click="openProject(project.id)">
         <div class="project-card__top">
           <div class="project-card__title">{{ project.name }}</div>
           <div class="project-card__actions">
@@ -230,6 +220,7 @@ watch(
 }
 
 .project-card {
+  background: rgb(229, 239, 240);
   cursor: pointer;
   transition: transform 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease;
 }
