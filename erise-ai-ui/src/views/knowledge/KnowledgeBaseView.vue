@@ -48,14 +48,14 @@
           <template #default="{ row }">{{ projectLabel(row.projectId) }}</template>
         </el-table-column>
 
-        <el-table-column label="类型" width="160">
+        <el-table-column label="类型" width="140">
           <template #default="{ row }">
             <AppStatusTag :label="statusLabel(row)"
               :tone="row.assetType === 'FILE' ? 'info' : documentStatusTone(row.docStatus)" />
           </template>
         </el-table-column>
 
-        <el-table-column v-if="activeTab === 'files'" label="知识状态" min-width="220">
+        <el-table-column v-if="activeTab === 'files'" label="知识状态" min-width="140">
           <template #default="{ row }">
             <KnowledgeSyncStatus :parse-status="row.parseStatus" :index-status="row.indexStatus"
               :can-retry="isKnowledgeFailed(row.parseStatus, row.indexStatus)" @retry="retryKnowledgeAsset(row)" />

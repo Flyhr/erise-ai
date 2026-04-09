@@ -1,4 +1,4 @@
-﻿<template>
+<template>
   <div class="page-shell ai-admin-page">
     <WorkspaceNavigationShell v-model="searchKeyword" active-nav="ai" brand-title="Erise AI"
       brand-subtitle="The Digital Curator" create-text="新建对话" :footer-title="selectedProjectDisplay || '知识工作台'"
@@ -21,19 +21,8 @@
             </div>
 
             <div class="knowledge-card">
-              <!-- <div class="knowledge-card__head"> -->
-              <!-- <span class="section-eyebrow">Knowledge Base</span> -->
-              <!-- <button type="button" class="mini-link" @click="openAttachmentPicker">添加文件</button> -->
-              <!-- </div> -->
               <div class="knowledge-subtabs">
                 <span class="section-eyebrow">知识库文件</span>
-
-                <!-- <button type="button" class="knowledge-subtabs__item is-active"
-                  @click="openAttachmentPicker">添加文件</button> -->
-                <!-- <button type="button" class="knowledge-subtabs__item" :disabled="sending || uploadingTempFile"
-                  @click="triggerTempFileUpload">
-                  {{ uploadingTempFile ? '上传中...' : '上传临时文件' }}
-                </button> -->
               </div>
               <div v-if="selectedAttachments.length" class="knowledge-selected">
                 <button v-for="attachment in selectedAttachments.filter((item) => item.attachmentType === 'FILE')"
@@ -47,12 +36,11 @@
                   还有其它类型资料已附加
                 </button>
               </div>
-              <div v-else class="knowledge-empty">还没有附加知识库文件。</div>
+              <div v-else class="knowledge-empty">还没有添加知识库文件。</div>
 
               <div class="knowledge-temp">
                 <div class="knowledge-temp__head">
                   <span class="section-eyebrow">临时文件</span>
-                  <!-- <span class="section-caption">{{ activeSessionId ? '仅当前会话可见' : '发送首条消息后可上传' }}</span> -->
                 </div>
                 <div v-if="tempFiles.length" class="temp-file-list">
                   <div v-for="tempFile in tempFiles" :key="tempFile.id" class="temp-file-chip"
@@ -60,14 +48,10 @@
                     <div class="temp-file-chip__copy">
                       <strong>{{ tempFile.fileName }}</strong>
                       <small>{{ tempFileStatusLabel(tempFile) }}</small>
-                      <small v-if="tempFile.parseErrorMessage" class="temp-file-chip__error">{{ tempFile.parseErrorMessage }}</small>
-                      <button
-                        v-if="isTempFileFailed(tempFile)"
-                        type="button"
-                        class="temp-file-chip__retry"
-                        :disabled="sending || uploadingTempFile"
-                        @click="retryFailedTempFile(tempFile)"
-                      >
+                      <small v-if="tempFile.parseErrorMessage" class="temp-file-chip__error">{{
+                        tempFile.parseErrorMessage }}</small>
+                      <button v-if="isTempFileFailed(tempFile)" type="button" class="temp-file-chip__retry"
+                        :disabled="sending || uploadingTempFile" @click="retryFailedTempFile(tempFile)">
                         重新解析
                       </button>
                     </div>
@@ -102,29 +86,20 @@
           <section class="chat-stage">
             <div class="chat-stage__header">
               <div>
-                <p class="section-eyebrow">当前会话</p>
-                <h2>{{ sessionTitleText }}</h2>
+                <h3>{{ sessionTitleText }}</h3>
               </div>
               <div class="chat-stage__meta">
                 <div class="header-model-chip">
                   <span class="material-symbols-outlined">data_object</span>
                   <div class="header-model-chip__copy">
                     <strong>{{ headerModelName }}</strong>
-                    <small>{{ headerProviderName }}</small>
                   </div>
                 </div>
                 <div class="web-search-toggle">
                   <span class="web-search-toggle__label">联网搜索</span>
-                  <el-switch
-                    v-model="retrievalSettings.webSearchEnabledDefault"
-                    size="small"
-                    inline-prompt
-                    active-text="开"
-                    inactive-text="关"
-                    :loading="savingRetrievalSettings"
-                    :disabled="sending || savingRetrievalSettings"
-                    @change="handleWebSearchToggle"
-                  />
+                  <el-switch v-model="retrievalSettings.webSearchEnabledDefault" size="small" inline-prompt
+                    active-text="开" inactive-text="关" :loading="savingRetrievalSettings"
+                    :disabled="sending || savingRetrievalSettings" @change="handleWebSearchToggle" />
                 </div>
                 <div class="run-chip" :class="{ 'is-live': sending }">
                   <span class="run-chip__dot"></span>
@@ -150,7 +125,7 @@
                     </div>
                     <div class="transcript-item__panel">
                       <div class="transcript-item__head">
-                        <span class="transcript-item__label">{{ message.roleCode === 'USER' ? '你' : 'Erise AI' }}</span>
+                        <span class="transcript-item__label">{{ message.roleCode === 'USER' ? '' : 'Erise AI' }}</span>
                         <span class="transcript-item__time">{{ formatTime(message.createdAt) }}</span>
                       </div>
                       <div class="transcript-item__body" :class="surfaceClasses(message)">
@@ -159,8 +134,7 @@
                           class="thinking-dots">
                           <span></span><span></span><span></span>
                         </div>
-                        <div
-                          v-else-if="message.roleCode === 'ASSISTANT'"
+                        <div v-else-if="message.roleCode === 'ASSISTANT'"
                           class="transcript-item__content transcript-item__content--markdown"
                           :class="{ 'is-collapsed': isCollapsed(message) }"
                           v-html="renderAssistantContent(message.content || '...')">
@@ -175,48 +149,33 @@
 
                         <div v-if="message.citations?.length" class="citation-panel citation-panel--modern">
                           <div class="citation-panel__title">引用来源</div>
+
                           <div v-if="privateCitationGroups(message).length" class="citation-panel__section">
                             <div class="citation-panel__section-title">知识库 / 附件</div>
-                            <button
-                              v-for="group in privateCitationGroups(message)"
-                              :key="group.key"
-                              type="button"
-                              class="citation-card"
-                              @click="openCitation(group.representative)">
+                            <button v-for="group in privateCitationGroups(message)" :key="group.key" type="button"
+                              class="citation-card" @click="openCitation(group.representative)">
                               <strong class="citation-card__title">{{ group.title }}</strong>
-                              <span>
-                                {{ citationSourceLabel(group.sourceType) }}
-                                <template v-if="group.pageLabel"> · {{ group.pageLabel }}</template>
-                              </span>
-                              <small>{{ group.snippet || '暂无引用摘录' }}</small>
+
                             </button>
                           </div>
+
                           <div v-if="visibleWebCitationGroups(message).length" class="citation-panel__section">
                             <div class="citation-panel__section-title">联网搜索</div>
-                            <button
-                              v-for="group in visibleWebCitationGroups(message)"
-                              :key="group.key"
-                              type="button"
-                              class="citation-card citation-card--web"
-                              @click="openCitation(group.representative)">
-                              <strong class="citation-card__title citation-card__title--single">{{ group.title }}</strong>
-                              <span>{{ group.urlLabel }}</span>
-                              <small>{{ group.snippet || '打开网页引用' }}</small>
+                            <button v-for="group in visibleWebCitationGroups(message)" :key="group.key" type="button"
+                              class="citation-card citation-card--web" @click="openCitation(group.representative)">
+                              <strong class="citation-card__title citation-card__title--single">{{ group.title
+                                }}</strong>
                             </button>
-                            <button
-                              v-if="hiddenWebCitationCount(message)"
-                              type="button"
-                              class="citation-panel__toggle"
-                              @click="toggleCitationExpansion(message)">
-                              {{ message.citationsExpanded ? '收起网页引用' : `展开剩余 ${hiddenWebCitationCount(message)} 条网页引用` }}
-                            </button>
+
                           </div>
                         </div>
-
-                        <button v-if="isCollapsible(message)" type="button" class="transcript-item__toggle"
-                          @click="toggleExpanded(message)">
-                          {{ message.expanded ? '收起' : '展开全部' }}
+                        <button v-if="hiddenWebCitationCount(message)" type="button" class="transcript-item__toggle"
+                          @click="toggleCitationExpansion(message)">
+                          {{ message.citationsExpanded ? '收起网页引用' : `查看剩余 ${hiddenWebCitationCount(message)} 条网页引用`
+                          }}
                         </button>
+
+
                         <button
                           v-if="message.roleCode === 'USER' && message.pendingQuestion && message.status === 'failed'"
                           type="button" class="retry-button" :disabled="sending" @click="retryMessage(message)">
@@ -232,8 +191,7 @@
                     <span class="material-symbols-outlined" style="font-variation-settings: 'FILL' 1">smart_toy</span>
                   </div>
                   <div class="empty-stage__eyebrow">{{ activeModel?.modelName || 'Erise AI 助理' }}</div>
-                  <h2 class="empty-stage__title">Ask the digital curator anything.</h2>
-                  <p class="empty-stage__copy">先附加文件，再让 AI 帮你总结内容、提炼风险、列出待办，或者直接围绕当前项目继续分析。</p>
+                  <h3 class="empty-stage__title">今天有什么问题吗?</h3>
                   <div class="empty-stage__prompts">
                     <button v-for="prompt in quickPrompts" :key="prompt" type="button" class="prompt-card"
                       :disabled="sending" @click="usePrompt(prompt)">
@@ -244,8 +202,8 @@
               </div>
             </section>
 
-            <footer class="composer-wrap composer-wrap--architect">
-              <div class="composer-box composer-box--architect">
+            <footer class="composer-wrap--architect">
+              <div class="composer-box--architect">
                 <div class="composer-box__toptools">
                   <button type="button" class="toolbar-ghost" :disabled="sending" @click="openAttachmentPicker">
                     <span class="material-symbols-outlined">attach_file</span>
@@ -264,8 +222,8 @@
                     <span class="material-symbols-outlined">tune</span>
                     <el-select v-model="selectedModelCode" size="small" class="toolbar-model-select"
                       :disabled="sending || loadingModels || !modelChoices.length" placeholder="选择模型">
-                      <el-option v-for="model in modelChoices" :key="model.modelCode"
-                        :label="modelOptionLabel(model)" :value="model.modelCode" />
+                      <el-option v-for="model in modelChoices" :key="model.modelCode" :label="modelOptionLabel(model)"
+                        :value="model.modelCode" />
                     </el-select>
                   </div>
                 </div>
@@ -277,10 +235,10 @@
 
                   <div class="composer-box__toolbar">
                     <div class="composer-box__left-tools">
-                      <button type="button" class="toolbar-chip" disabled>{{ modelProviderLabel }}</button>
+                      <!-- <button type="button" class="toolbar-chip" disabled>{{ modelProviderLabel }}</button> -->
                       <button v-if="selectedProjectDisplay" type="button" class="toolbar-chip" disabled>{{
                         selectedProjectDisplay
-                      }}</button>
+                        }}</button>
                       <button v-if="selectedAttachments.length" type="button" class="toolbar-chip" disabled>
                         已附加 {{ selectedAttachments.length }} 份资料
                       </button>
@@ -300,10 +258,10 @@
                   </div>
                 </div>
               </div>
-              <p class="composer-footnote">
+              <!-- <p class="composer-footnote">
                 AI Assistant may provide generated content that still requires your review.
                 <button type="button" class="mini-link" @click="showUnavailable('服务条款')">Terms of Service</button>
-              </p>
+              </p> -->
             </footer>
           </section>
         </div>
@@ -331,12 +289,12 @@
               <label v-for="file in draftFiles" :key="`file-${file.id}`" class="attachment-option"
                 :class="{ 'is-disabled': !canAttachKnowledgeFile(file) }">
                 <input type="checkbox" :checked="draftAttachmentSelected('FILE', file.id)"
-                  :disabled="!canAttachKnowledgeFile(file)"
-                  @change="toggleDraftFileAttachment(file)" />
+                  :disabled="!canAttachKnowledgeFile(file)" @change="toggleDraftFileAttachment(file)" />
                 <span class="attachment-option__copy">
                   <strong>{{ file.fileName }}</strong>
                   <small>{{ knowledgeFileStatusText(file) }}</small>
-                  <small v-if="file.parseErrorMessage" class="attachment-option__error">{{ file.parseErrorMessage }}</small>
+                  <small v-if="file.parseErrorMessage" class="attachment-option__error">{{ file.parseErrorMessage
+                    }}</small>
                 </span>
               </label>
             </div>
@@ -467,6 +425,10 @@ const DEFAULT_RETRIEVAL_SETTINGS: AiRetrievalSettingView = {
   topK: 5,
   webSearchEnabledDefault: false,
 }
+/**
+ * 显示“敬请期待”弹窗提示。
+ * @param feature 要提示的功能名称
+ */
 const showComingSoon = (feature: string) => {
   ElMessageBox.alert(`${feature} 当前功能还未开发`, '提示', {
     confirmButtonText: '确定',
@@ -477,6 +439,10 @@ const props = defineProps<{ id?: string }>()
 const route = useRoute()
 const router = useRouter()
 
+/**
+ * 将任意值解析为正整数，否则返回 undefined。
+ * @param value 要解析的值
+ */
 const parseNumber = (value: unknown) => {
   const parsed = Number(value)
   return Number.isFinite(parsed) && parsed > 0 ? parsed : undefined
@@ -499,9 +465,28 @@ markdownRenderer.renderer.rules.link_open = (tokens, idx, options, env, self) =>
   return defaultLinkRenderer(tokens, idx, options, env, self)
 }
 
+/**
+ * 构造本地唯一 ID，用于临时消息等。
+ * @param prefix ID 前缀
+ */
 const buildLocalId = (prefix: string) => `${prefix}-${Date.now()}-${Math.random().toString(16).slice(2)}`
+
+/**
+ * 会话附件在 sessionStorage 中的存储 key。
+ * @param sessionId 会话 ID
+ */
 const attachmentStorageKey = (sessionId: number) => `erise-ai-attachments:${sessionId}`
+
+/**
+ * 生成附件的唯一键（用于 UI 列表等）。
+ * @param attachment 附件对象
+ */
 const attachmentKeyOf = (attachment: Pick<AiAttachmentPayload, 'attachmentType' | 'sourceId'>) => `${attachment.attachmentType}:${attachment.sourceId}`
+
+/**
+ * 将内部引用类型映射为可读标签。
+ * @param sourceType 引用类型
+ */
 const citationSourceLabel = (sourceType?: string) => ({
   DOCUMENT: '文档',
   FILE: '文件',
@@ -511,6 +496,10 @@ const citationSourceLabel = (sourceType?: string) => ({
   BOARD: '画板',
   DATA_TABLE: '数据表',
 }[sourceType || ''] || sourceType || '引用来源')
+/**
+ * 将字节大小格式化为易读字符串（B / KB / MB）。
+ * @param size 字节数
+ */
 const formatBytes = (size?: number) => {
   const value = Number(size || 0)
   if (!Number.isFinite(value) || value <= 0) {
@@ -525,11 +514,19 @@ const formatBytes = (size?: number) => {
   return `${(value / (1024 * 1024)).toFixed(1)} MB`
 }
 
+/**
+ * 从后端错误对象中提取友好的错误消息。
+ * @param error 后端返回的错误对象
+ */
 const errorMessageOf = (error: unknown) => {
   const candidate = error as { response?: { data?: { message?: string; msg?: string } }; message?: string }
   return candidate?.response?.data?.message || candidate?.response?.data?.msg || candidate?.message || '请求失败，请稍后重试。'
 }
 
+/**
+ * 从原始字符串中解析后端可能返回的 JSON 错误消息。
+ * @param raw 原始响应文本
+ */
 const extractErrorMessage = (raw: string) => {
   if (!raw) {
     return ''
@@ -548,7 +545,16 @@ const extractErrorMessage = (raw: string) => {
   return raw.trim()
 }
 
+/**
+ * 将时间字符串格式化为 `MM-DD HH:mm`，若为空返回 `--`。
+ * @param value 时间字符串
+ */
 const formatTime = (value?: string) => (value ? dayjs(value).format('MM-DD HH:mm') : '--')
+
+/**
+ * 返回相对于当前时间的友好描述（几天前/几小时/几分钟/刚刚）。
+ * @param value 时间字符串
+ */
 const relativeTime = (value?: string) => {
   if (!value) {
     return '--'
@@ -638,7 +644,7 @@ const lastAssistantMessage = computed(() =>
 const sessionTitleText = computed(() => activeSessionSummary.value?.title || (messages.value.length ? '当前对话' : '开始一段新对话'))
 const sessionStatusText = computed(() => {
   if (sending.value) {
-    return `AI 正在回复 (${runningSeconds.value}s)`
+    return `正在回复 (${runningSeconds.value}s)`
   }
   if (networkError.value) {
     return '对话暂时中断'
@@ -724,14 +730,18 @@ const knowledgeFileStatusText = (file: FileView) => {
 const modelOptionLabel = (model: AiModelView) => {
   const provider = (model.providerCode || '').toUpperCase()
   if (provider === 'DEEPSEEK') {
-    return `${model.modelName} · DeepSeek 默认推荐`
+    return `${model.modelName}  `
   }
   if (provider === 'OPENAI') {
-    return `${model.modelName} · OpenAI 备用可选`
+    return `${model.modelName} `
   }
   return `${model.modelName} · ${model.providerCode}`
 }
 
+/**
+ * 将后端消息 AiMessageView 转换为前端 UiMessage。
+ * 默认将消息 `expanded` 设为 true，使助理回复默认展开以便阅读完整内容。
+ */
 const toUiMessage = (message: AiMessageView): UiMessage => ({
   id: String(message.id),
   serverId: message.id,
@@ -741,7 +751,7 @@ const toUiMessage = (message: AiMessageView): UiMessage => ({
   refusedReason: message.refusedReason,
   status: message.status === 'streaming' ? 'streaming' : 'sent',
   errorMessage: message.errorMessage,
-  expanded: false,
+  expanded: true,
   citationsExpanded: false,
   citations: message.citations || [],
   modelCode: message.modelCode,
@@ -830,15 +840,18 @@ const privateCitationGroups = (message: UiMessage) => citationGroupsOf(message).
 const webCitationGroups = (message: UiMessage) => citationGroupsOf(message).webGroups
 const visibleWebCitationGroups = (message: UiMessage) => {
   const groups = webCitationGroups(message)
-  return message.citationsExpanded ? groups : groups.slice(0, 2)
+  return message.citationsExpanded ? groups : groups.slice(0, 1)
 }
-const hiddenWebCitationCount = (message: UiMessage) => Math.max(webCitationGroups(message).length - 2, 0)
+const hiddenWebCitationCount = (message: UiMessage) => Math.max(webCitationGroups(message).length - 1, 0)
 const toggleCitationExpansion = (message: UiMessage) => {
   message.citationsExpanded = !message.citationsExpanded
 }
 
+// 判断消息是否足够长，可以折叠显示
 const isCollapsible = (message: UiMessage) => message.content.length > 560 || (message.content.match(/\n/g)?.length ?? 0) > 12
+// 判断消息当前是否处于折叠状态（可折叠且未展开）
 const isCollapsed = (message: UiMessage) => isCollapsible(message) && !message.expanded
+// 切换消息展开/折叠状态（保留接口以备将来使用）
 const toggleExpanded = (message: UiMessage) => {
   message.expanded = !message.expanded
 }
@@ -850,15 +863,21 @@ const surfaceClasses = (message: UiMessage) => ({
 const draftAttachmentSelected = (attachmentType: 'DOCUMENT' | 'FILE', sourceId: number) =>
   draftAttachmentKeys.value.includes(`${attachmentType}:${sourceId}`)
 
+/**
+ * 根据输入框内容动态调整 composer 文本域高度，最大高度与 CSS 保持一致（160px）。
+ */
 const resizeComposer = async () => {
   await nextTick()
   if (!composerRef.value) {
     return
   }
   composerRef.value.style.height = '0px'
-  composerRef.value.style.height = `${Math.min(composerRef.value.scrollHeight, 220)}px`
+  composerRef.value.style.height = `${Math.min(composerRef.value.scrollHeight, 160)}px`
 }
 
+/**
+ * 处理 composer 的回车按键：按 Enter（非 Shift+Enter）触发发送。
+ */
 const handleComposerKeydown = (event: KeyboardEvent) => {
   if (event.key !== 'Enter' || event.shiftKey || event.isComposing) {
     return
@@ -867,6 +886,9 @@ const handleComposerKeydown = (event: KeyboardEvent) => {
   void send()
 }
 
+/**
+ * 滚动消息列表到底部，确保最新消息可见。
+ */
 const scrollToBottom = async () => {
   await nextTick()
   if (messageListRef.value) {
@@ -874,6 +896,9 @@ const scrollToBottom = async () => {
   }
 }
 
+/**
+ * 启动页面内的时钟，用于显示相对时间/更新时间等实时信息。
+ */
 const startClock = () => {
   if (tickHandle) {
     window.clearInterval(tickHandle)
@@ -883,6 +908,9 @@ const startClock = () => {
   }, 1000)
 }
 
+/**
+ * 停止页面内时钟，清理定时器。
+ */
 const stopClock = () => {
   if (tickHandle) {
     window.clearInterval(tickHandle)
@@ -890,6 +918,9 @@ const stopClock = () => {
   }
 }
 
+/**
+ * 停止临时文件解析的轮询定时器（如果存在）。
+ */
 const stopTempFilePolling = () => {
   if (tempFilePollHandle) {
     window.clearInterval(tempFilePollHandle)
@@ -897,6 +928,10 @@ const stopTempFilePolling = () => {
   }
 }
 
+/**
+ * 启动针对当前会话的临时文件解析状态轮询（每 3 秒一次）。
+ * @param sessionId 会话 ID
+ */
 const startTempFilePolling = (sessionId: number) => {
   stopTempFilePolling()
   tempFilePollHandle = window.setInterval(() => {
@@ -1242,6 +1277,12 @@ const syncSessionRoute = async (sessionId?: number) => {
   }
 }
 
+/**
+ * 将后端的 chat 响应应用到对应的本地消息上：更新状态、内容、引用及模型信息，并同步会话与临时文件状态。
+ * @param response 后端返回的聊天响应
+ * @param userMessage 本地用户消息对象
+ * @param assistantMessage 本地助理占位消息对象
+ */
 const applyChatResponse = async (response: AiChatResponse, userMessage: UiMessage, assistantMessage: UiMessage) => {
   userMessage.status = 'sent'
   assistantMessage.status = 'sent'
@@ -1329,6 +1370,11 @@ const removeSession = async (sessionId: number) => {
   }
 }
 
+/**
+ * 发起一个流式聊天请求到后端；通过 handlers 回调传出打开、分片和完成事件。
+ * @param payload 聊天请求负载
+ * @param handlers onOpen/onChunk/onDone 事件回调
+ */
 const streamChat = async (
   payload: AiChatPayload,
   handlers: { onOpen?: (requestId?: string) => void; onChunk?: (chunk: string) => void; onDone?: (payload: StreamDonePayload) => Promise<void> | void },
@@ -1416,6 +1462,13 @@ const streamChat = async (
   }
 }
 
+/**
+ * 标记发送失败：更新用户消息和助理消息的状态与错误信息，并显示错误提示。
+ * @param userMessage 本地用户消息对象
+ * @param assistantMessage 本地助理占位消息对象
+ * @param message 错误描述
+ * @param originalQuestion 原始问题文本（用于恢复到 pendingQuestion）
+ */
 const markSendFailed = (userMessage: UiMessage, assistantMessage: UiMessage, message: string, originalQuestion: string) => {
   userMessage.status = 'failed'
   userMessage.pendingQuestion = originalQuestion
@@ -1429,6 +1482,10 @@ const markSendFailed = (userMessage: UiMessage, assistantMessage: UiMessage, mes
   ElMessage.error(message)
 }
 
+/**
+ * 向后端发送取消当前生成的请求（stop / cancel）。
+ * 若无进行中的请求则直接返回。
+ */
 const stopGeneration = async () => {
   if (!currentRequestId.value) {
     return
@@ -1441,6 +1498,12 @@ const stopGeneration = async () => {
   }
 }
 
+/**
+ * 发送用户问题：
+ * - 创建本地用户消息与助理占位消息
+ * - 调用后端（流式/非流式）处理并更新消息状态
+ * @param presetQuestion 可选的预设问题（绕过输入框）
+ */
 const send = async (presetQuestion?: string) => {
   const raw = presetQuestion ?? question.value
   const text = raw.trim()
@@ -1459,7 +1522,7 @@ const send = async (presetQuestion?: string) => {
         createdAt: now,
         status: 'sent',
         pendingQuestion: text,
-        expanded: false,
+        expanded: true,
       },
       {
         id: buildLocalId('assistant'),
@@ -1467,7 +1530,7 @@ const send = async (presetQuestion?: string) => {
         content: '你刚添加的资料还在解析中，暂时还不能作为可靠上下文。等解析完成后再问“这个文档写了什么”之类的问题，我会优先基于该资料回答。',
         createdAt: now,
         status: 'sent',
-        expanded: false,
+        expanded: true,
       },
     )
     await resizeComposer()
@@ -1487,7 +1550,7 @@ const send = async (presetQuestion?: string) => {
     createdAt: now,
     status: 'sending',
     pendingQuestion: text,
-    expanded: false,
+    expanded: true,
   }
   const assistantMessage: UiMessage = {
     id: buildLocalId('assistant'),
@@ -1495,7 +1558,7 @@ const send = async (presetQuestion?: string) => {
     content: '',
     createdAt: now,
     status: 'streaming',
-    expanded: false,
+    expanded: true,
   }
 
   messages.value.push(userMessage, assistantMessage)
@@ -1682,1168 +1745,4 @@ onBeforeUnmount(() => {
 })
 </script>
 
-<style scoped>
-.workspace-shell-card {
-  height: calc(128dvh - 148px);
-  overflow: hidden;
-  display: flex;
-  flex-direction: column;
-  border: 1px solid rgba(192, 199, 212, 0.5);
-  background: #f8f9ff;
-  box-shadow: 0 24px 64px rgba(0, 96, 169, 0.08);
-}
-
-.ai-admin-page {
-  min-height: calc(100dvh - 120px);
-}
-
-.architect-shell {
-  display: grid;
-  grid-template-columns: 260px minmax(0, 1fr);
-  min-height: calc(100dvh - 148px);
-  overflow: hidden;
-  padding: 0;
-  border: 1px solid rgba(192, 199, 212, 0.5);
-  background: #f8f9ff;
-  box-shadow: 0 24px 64px rgba(0, 96, 169, 0.08);
-}
-
-.architect-nav {
-  display: flex;
-  flex-direction: column;
-  gap: 18px;
-  padding: 24px 18px;
-  background: #f1f3fa;
-  border-right: 1px solid rgba(192, 199, 212, 0.5);
-}
-
-.architect-brand {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-}
-
-.architect-brand__icon,
-.top-user__avatar,
-.architect-account__avatar,
-.empty-stage__robot {
-  display: grid;
-  place-items: center;
-  color: #fff;
-  font-weight: 800;
-  background: linear-gradient(135deg, #409eff, #0060a9);
-}
-
-.architect-brand__icon {
-  width: 40px;
-  height: 40px;
-  border-radius: 12px;
-}
-
-.architect-brand h1 {
-  margin: 0;
-  font-size: 18px;
-  line-height: 1.1;
-  font-weight: 800;
-  color: #181c20;
-}
-
-.architect-brand p,
-.architect-account__copy span,
-.top-user__meta span,
-.chat-stage__header p,
-.knowledge-empty,
-.composer-footnote,
-.thread-empty {
-  margin: 0;
-  color: #5f6775;
-}
-
-.architect-brand p {
-  font-size: 11px;
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
-}
-
-.nav-primary-btn,
-.architect-menu__item,
-.architect-account,
-.top-search,
-.top-icon-btn,
-.top-user,
-.model-chip,
-.toolbar-ghost,
-.mini-link,
-.selection-chip,
-.soft-chip,
-.send-button,
-.thread-item__delete,
-.thread-item__main,
-.citation-card,
-.prompt-card,
-.retry-button,
-.transcript-item__toggle {
-  border: 0;
-  font: inherit;
-  cursor: pointer;
-}
-
-.nav-primary-btn {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-  width: 100%;
-  padding: 12px 16px;
-  border-radius: 14px;
-  color: #fff;
-  background: linear-gradient(135deg, #409eff, #0060a9);
-  font-weight: 700;
-  box-shadow: 0 16px 32px rgba(0, 96, 169, 0.18);
-}
-
-.architect-menu {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-
-.architect-menu__item {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  width: 100%;
-  padding: 12px 14px;
-  border-radius: 12px;
-  background: transparent;
-  color: #404752;
-  text-align: left;
-  transition: all 0.2s ease;
-}
-
-.architect-menu__item:hover {
-  background: rgba(255, 255, 255, 0.72);
-  color: #181c20;
-}
-
-.architect-menu__item.is-active {
-  color: #0060a9;
-  background: rgba(64, 158, 255, 0.1);
-  box-shadow: inset 3px 0 0 #0060a9;
-  font-weight: 700;
-}
-
-.architect-account {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  margin-top: auto;
-  padding: 14px 12px 0;
-  border-top: 1px solid rgba(192, 199, 212, 0.5);
-  background: transparent;
-}
-
-.architect-account__avatar,
-.top-user__avatar {
-  width: 38px;
-  height: 38px;
-  border-radius: 999px;
-}
-
-.architect-account__copy {
-  display: flex;
-  min-width: 0;
-  flex-direction: column;
-}
-
-.architect-account__copy strong,
-.top-user__meta strong {
-  color: #181c20;
-  font-size: 13px;
-}
-
-.architect-main {
-  display: flex;
-  min-width: 0;
-  min-height: 0;
-  flex-direction: column;
-}
-
-.architect-topbar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 18px;
-  padding: 18px 22px;
-  background: rgba(255, 255, 255, 0.82);
-  backdrop-filter: blur(12px);
-  border-bottom: 1px solid rgba(192, 199, 212, 0.45);
-}
-
-.top-search {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  min-width: 0;
-  width: min(460px, 100%);
-  padding: 12px 16px;
-  border-radius: 999px;
-  background: #f1f3fa;
-  color: #5f6775;
-  text-align: left;
-}
-
-.architect-topbar__actions {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-}
-
-.top-icon-btn {
-  display: grid;
-  place-items: center;
-  width: 40px;
-  height: 40px;
-  border-radius: 999px;
-  background: transparent;
-  color: #5f6775;
-}
-
-.top-icon-btn:hover,
-.top-search:hover,
-.top-user:hover,
-.toolbar-ghost:hover,
-.soft-chip:hover,
-.selection-chip:hover,
-.model-chip:hover,
-.temp-file-chip__remove:hover {
-  background: #e6e8ef;
-}
-
-.top-user {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 4px;
-  border-radius: 999px;
-  background: transparent;
-}
-
-.top-user__meta {
-  display: flex;
-  flex-direction: column;
-  text-align: right;
-}
-
-.ai-workspace {
-  display: grid;
-  grid-template-columns: 300px minmax(0, 1fr);
-  flex: 1;
-  height: 100%;
-  min-height: 0;
-  overflow: hidden;
-}
-
-.conversation-history {
-  display: flex;
-  height: 100%;
-  flex-direction: column;
-  gap: 16px;
-  padding: 20px;
-  background: #f1f3fa;
-  border-right: 1px solid rgba(192, 199, 212, 0.45);
-  overflow: hidden;
-}
-
-.conversation-history__head,
-.knowledge-card__head,
-.chat-stage__header,
-.chat-stage__meta,
-.composer-box__toptools,
-.status-banner,
-.attachment-dialog__footer,
-.attachment-dialog__footer-actions,
-.transcript-item__head,
-.composer-box__toolbar,
-.composer-box__left-tools,
-.composer-box__right-tools {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-}
-
-.section-eyebrow,
-.transcript-item__label,
-.citation-panel__title {
-  font-size: 11px;
-  font-weight: 700;
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
-  color: #5f6775;
-}
-
-.section-caption {
-  color: #7a8392;
-  font-size: 12px;
-}
-
-.conversation-history__head h3,
-.chat-stage__header h2 {
-  margin: 4px 0 0;
-  font-size: 22px;
-  line-height: 1.2;
-  font-weight: 800;
-  color: #181c20;
-}
-
-.knowledge-card {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-  padding: 16px;
-  border-radius: 18px;
-  background: #ffffff;
-  border: 1px solid rgba(192, 199, 212, 0.45);
-}
-
-.knowledge-subtabs {
-  display: flex;
-  gap: 10px;
-}
-
-
-.knowledge-subtabs__item,
-.mini-link {
-  padding: 0;
-  background: transparent;
-  color: #0060a9;
-  font-weight: 700;
-}
-
-.knowledge-subtabs__item.is-active {
-  padding: 8px 12px;
-  border-radius: 999px;
-  background: rgba(233, 233, 234, 0.6);
-}
-
-.knowledge-subtabs__item:hover {
-
-  background: rgba(213, 213, 213, 0.6);
-}
-
-.knowledge-selected {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-}
-
-.knowledge-temp {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
-
-.knowledge-temp__head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-}
-
-.temp-file-list {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.temp-file-chip {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 12px;
-  align-items: center;
-  padding: 10px 12px;
-  border-radius: 14px;
-  border: 1px solid rgba(192, 199, 212, 0.45);
-  background: #fff;
-}
-
-.temp-file-chip.is-ready {
-  border-color: rgba(40, 108, 0, 0.16);
-  background: rgba(85, 175, 40, 0.08);
-}
-
-.temp-file-chip.is-pending {
-  border-color: rgba(0, 96, 169, 0.14);
-  background: rgba(64, 158, 255, 0.08);
-}
-
-.temp-file-chip.is-failed {
-  border-color: rgba(186, 26, 26, 0.16);
-  background: rgba(217, 107, 107, 0.08);
-}
-
-.temp-file-chip__copy {
-  display: flex;
-  min-width: 0;
-  flex-direction: column;
-  gap: 4px;
-}
-
-.temp-file-chip__copy strong {
-  color: #181c20;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.temp-file-chip__copy small {
-  color: #5f6775;
-}
-
-.temp-file-chip__error {
-  color: #ba1a1a !important;
-}
-
-.temp-file-chip__retry {
-  width: fit-content;
-  padding: 0;
-  border: 0;
-  background: transparent;
-  color: #005ea6;
-  cursor: pointer;
-  font-size: 12px;
-  font-weight: 600;
-}
-
-.temp-file-chip__remove {
-  width: 28px;
-  height: 28px;
-  border: 0;
-  border-radius: 999px;
-  background: rgba(255, 255, 255, 0.78);
-  color: #5f6775;
-  cursor: pointer;
-}
-
-.mini-link--block {
-  text-align: left;
-}
-
-.thread-list--history,
-.thread-list--drawer {
-  display: flex;
-  flex: 1;
-  min-height: 0;
-  flex-direction: column;
-  gap: 10px;
-  overflow-y: auto;
-  padding-right: 4px;
-}
-
-.thread-item {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 8px;
-  padding: 4px;
-  border-radius: 16px;
-  background: transparent;
-  transition: background 0.2s ease;
-}
-
-.thread-item.is-active {
-  background: #fff;
-  box-shadow: 0 10px 24px rgba(0, 96, 169, 0.08);
-}
-
-.thread-item__main {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  min-width: 0;
-  padding: 12px;
-  border-radius: 12px;
-  text-align: left;
-  background: transparent;
-}
-
-.thread-item__title {
-  color: #181c20;
-  font-weight: 700;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.thread-item__meta,
-.transcript-item__time,
-.transcript-item__notice,
-.attachment-option__copy small,
-.citation-card span,
-.citation-card small,
-.composer-box__hint {
-  color: #5f6775;
-}
-
-.attachment-option__error {
-  color: #ba1a1a;
-}
-
-.thread-item__delete {
-  width: 34px;
-  height: 34px;
-  align-self: center;
-  border-radius: 999px;
-  background: transparent;
-  color: #5f6775;
-}
-
-.chat-stage {
-  display: flex;
-  width: 100%;
-  height: 100%;
-  min-height: 0;
-  flex-direction: column;
-  overflow: hidden;
-  position: relative;
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.92), rgba(248, 249, 255, 0.96));
-}
-
-.chat-stage__header {
-  padding: 22px 24px 16px;
-  border-bottom: 1px solid rgba(192, 199, 212, 0.45);
-}
-
-.chat-stage__meta {
-  flex-wrap: wrap;
-  justify-content: flex-end;
-}
-
-.header-model-chip,
-.web-search-toggle {
-  display: inline-flex;
-  align-items: center;
-  gap: 10px;
-  padding: 8px 12px;
-  border-radius: 14px;
-  background: #f1f3fa;
-  color: #404752;
-}
-
-.header-model-chip {
-  max-width: min(320px, 100%);
-}
-
-.header-model-chip__copy {
-  display: flex;
-  min-width: 0;
-  flex-direction: column;
-}
-
-.header-model-chip__copy strong,
-.header-model-chip__copy small {
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.header-model-chip__copy strong {
-  color: #181c20;
-}
-
-.web-search-toggle__label {
-  font-size: 13px;
-  font-weight: 700;
-}
-
-.run-chip,
-.model-chip,
-.toolbar-chip,
-.selection-chip,
-.soft-chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  padding: 8px 12px;
-  border-radius: 999px;
-  background: #e6e8ef;
-  color: #404752;
-}
-
-.run-chip.is-live {
-  background: rgba(64, 158, 255, 0.14);
-  color: #0060a9;
-}
-
-.run-chip__dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 999px;
-  background: currentColor;
-}
-
-.message-board {
-  flex: 1 1 auto;
-  min-height: 0;
-  overflow-y: auto;
-  padding: 0 24px 16px;
-  overscroll-behavior: contain;
-  scrollbar-gutter: stable;
-  scroll-padding-bottom: 220px;
-}
-
-.message-board__inner {
-  min-height: 100%;
-  display: flex;
-  flex-direction: column;
-  padding-bottom: 8px;
-}
-
-.transcript-list--modern {
-  display: flex;
-  flex-direction: column;
-  gap: 24px;
-  max-width: 980px;
-  width: 100%;
-  margin: 0 auto;
-}
-
-.transcript-item {
-  display: grid;
-  grid-template-columns: 44px minmax(0, 1fr);
-  gap: 14px;
-}
-
-.transcript-item.is-user {
-  grid-template-columns: minmax(0, 1fr) 44px;
-}
-
-.transcript-item.is-user .transcript-item__avatar {
-  order: 2;
-}
-
-.transcript-item.is-user .transcript-item__panel {
-  order: 1;
-}
-
-.transcript-item__avatar {
-  display: grid;
-  place-items: center;
-  width: 44px;
-  height: 44px;
-  border-radius: 14px;
-  background: rgba(85, 175, 40, 0.12);
-  color: #286c00;
-}
-
-.transcript-item.is-user .transcript-item__avatar {
-  border-radius: 999px;
-  background: rgba(64, 158, 255, 0.12);
-  color: #0060a9;
-}
-
-.transcript-item__panel {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.transcript-item.is-user .transcript-item__head {
-  justify-content: flex-end;
-}
-
-.transcript-item__body {
-  padding: 18px;
-  border-radius: 20px;
-  background: #f1f3fa;
-  color: #181c20;
-  box-shadow: 0 10px 28px rgba(0, 96, 169, 0.05);
-}
-
-.transcript-item__content {
-  line-height: 1.75;
-  white-space: pre-wrap;
-  word-break: break-word;
-}
-
-.transcript-item__content.is-collapsed {
-  display: -webkit-box;
-  overflow: hidden;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 12;
-}
-
-.transcript-item__content--markdown {
-  white-space: normal;
-}
-
-.transcript-item__content--markdown :deep(p),
-.transcript-item__content--markdown :deep(ul),
-.transcript-item__content--markdown :deep(ol),
-.transcript-item__content--markdown :deep(blockquote),
-.transcript-item__content--markdown :deep(pre) {
-  margin: 0 0 12px;
-}
-
-.transcript-item__content--markdown :deep(p:last-child),
-.transcript-item__content--markdown :deep(ul:last-child),
-.transcript-item__content--markdown :deep(ol:last-child),
-.transcript-item__content--markdown :deep(blockquote:last-child),
-.transcript-item__content--markdown :deep(pre:last-child) {
-  margin-bottom: 0;
-}
-
-.transcript-item__content--markdown :deep(h1),
-.transcript-item__content--markdown :deep(h2),
-.transcript-item__content--markdown :deep(h3),
-.transcript-item__content--markdown :deep(h4) {
-  margin: 18px 0 10px;
-  color: #181c20;
-  line-height: 1.35;
-}
-
-.transcript-item__content--markdown :deep(ul),
-.transcript-item__content--markdown :deep(ol) {
-  padding-left: 20px;
-}
-
-.transcript-item__content--markdown :deep(li + li) {
-  margin-top: 6px;
-}
-
-.transcript-item__content--markdown :deep(code) {
-  padding: 2px 6px;
-  border-radius: 8px;
-  background: rgba(24, 28, 32, 0.08);
-  font-size: 12px;
-}
-
-.transcript-item__content--markdown :deep(pre) {
-  padding: 14px;
-  overflow-x: auto;
-  border-radius: 14px;
-  background: rgba(24, 28, 32, 0.92);
-  color: #f5f7fa;
-}
-
-.transcript-item__content--markdown :deep(pre code) {
-  padding: 0;
-  background: transparent;
-  color: inherit;
-}
-
-.transcript-item__content--markdown :deep(a) {
-  color: #0060a9;
-  text-decoration: none;
-}
-
-.transcript-item__content--markdown :deep(a:hover) {
-  text-decoration: underline;
-}
-
-.transcript-item.is-user .transcript-item__body {
-  background: rgba(64, 158, 255, 0.08);
-  border: 1px solid rgba(64, 158, 255, 0.18);
-}
-
-.empty-stage--architect {
-  display: flex;
-  flex: 1;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 14px;
-  padding: 40px 16px 24px;
-  text-align: center;
-}
-
-.empty-stage__robot {
-  width: 72px;
-  height: 72px;
-  border-radius: 24px;
-  font-size: 30px;
-  box-shadow: 0 20px 40px rgba(0, 96, 169, 0.18);
-}
-
-.empty-stage__title {
-  margin: 0;
-  font-size: 34px;
-  line-height: 1.1;
-  font-weight: 800;
-  color: #181c20;
-}
-
-.empty-stage__copy {
-  max-width: 620px;
-}
-
-.empty-stage__prompts {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 14px;
-  width: 100%;
-  max-width: 980px;
-}
-
-.prompt-card {
-  padding: 18px;
-  border-radius: 18px;
-  background: #fff;
-  border: 1px solid rgba(192, 199, 212, 0.45);
-  color: #181c20;
-  text-align: left;
-  box-shadow: 0 14px 30px rgba(0, 96, 169, 0.05);
-}
-
-.prompt-card:hover,
-.citation-card:hover {
-  transform: translateY(-1px);
-  box-shadow: 0 18px 32px rgba(0, 96, 169, 0.08);
-}
-
-.composer-wrap--architect {
-  flex-shrink: 0;
-  margin-top: auto;
-  position: sticky;
-  bottom: 0;
-  z-index: 4;
-  padding: 18px 24px 24px;
-  border-top: 1px solid rgba(192, 199, 212, 0.28);
-  background: linear-gradient(180deg, rgba(248, 249, 255, 0), rgba(248, 249, 255, 1) 34%);
-}
-
-.composer-box--architect {
-  border-radius: 24px;
-  background: #fff;
-  border: 1px solid rgba(192, 199, 212, 0.45);
-  box-shadow: 0 20px 40px rgba(0, 96, 169, 0.08);
-}
-
-.composer-box__toptools {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 14px 16px 0;
-}
-
-.toolbar-ghost {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 8px 12px;
-  border-radius: 12px;
-  background: transparent;
-  color: #404752;
-}
-
-.toolbar-model-picker {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  padding: 6px 10px;
-  border-radius: 12px;
-  background: #f1f3fa;
-  color: #404752;
-}
-
-.toolbar-model-select {
-  width: 240px;
-}
-
-.composer-box__content {
-  padding: 8px 16px 16px;
-}
-
-.composer-box__input--architect {
-  min-height: 56px;
-  width: 100%;
-  resize: none;
-  border: 0;
-  background: transparent;
-  font: inherit;
-  color: #181c20;
-  outline: none;
-}
-
-.send-button {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-  padding: 10px 16px;
-  border-radius: 14px;
-  background: linear-gradient(135deg, #409eff, #0060a9);
-  color: #fff;
-  font-weight: 700;
-}
-
-.send-button--architect {
-  width: 48px;
-  height: 48px;
-  padding: 0;
-  border-radius: 14px;
-}
-
-.send-button.is-danger {
-  background: linear-gradient(135deg, #d96b6b, #ba1a1a);
-}
-
-.composer-footnote {
-  margin: 12px 4px 0;
-  text-align: center;
-  font-size: 11px;
-}
-
-.citation-panel--modern {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  margin-top: 14px;
-}
-
-.citation-panel__section {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
-
-.citation-panel__section-title {
-  font-size: 12px;
-  font-weight: 700;
-  color: #404752;
-}
-
-.citation-panel__toggle {
-  align-self: flex-start;
-  padding: 0;
-  background: transparent;
-  color: #0060a9;
-  font-weight: 700;
-}
-
-.citation-card {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  padding: 12px 14px;
-  border-radius: 14px;
-  background: #fff;
-  border: 1px solid rgba(192, 199, 212, 0.45);
-  text-align: left;
-}
-
-.citation-card--web {
-  background: rgba(255, 255, 255, 0.92);
-}
-
-.citation-card__title {
-  color: #181c20;
-  font-weight: 700;
-}
-
-.citation-card__title--single {
-  display: block;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.attachment-dialog--modern,
-.attachment-dialog__grid,
-.attachment-panel__list {
-  display: flex;
-}
-
-.attachment-dialog--modern {
-  flex-direction: column;
-  gap: 18px;
-}
-
-.attachment-dialog__grid {
-  gap: 16px;
-}
-
-.attachment-panel {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-  min-height: 280px;
-  padding: 16px;
-  border-radius: 18px;
-  background: #f8f9ff;
-  border: 1px solid rgba(192, 199, 212, 0.45);
-}
-
-.attachment-panel--secondary {
-  background: #f1f3fa;
-}
-
-.attachment-panel__title {
-  font-size: 14px;
-  font-weight: 700;
-  color: #181c20;
-}
-
-.attachment-panel__list {
-  flex-direction: column;
-  gap: 10px;
-  overflow-y: auto;
-}
-
-.attachment-option {
-  display: flex;
-  align-items: flex-start;
-  gap: 10px;
-  padding: 10px 12px;
-  border-radius: 14px;
-  background: #fff;
-}
-
-.attachment-option.is-disabled {
-  background: #f6f8fc;
-  opacity: 0.78;
-}
-
-.attachment-option__copy {
-  display: flex;
-  min-width: 0;
-  flex-direction: column;
-  gap: 4px;
-}
-
-.status-banner {
-  margin: 0 auto 16px;
-  max-width: 980px;
-  padding: 12px 14px;
-  border-radius: 14px;
-  background: #fff3f0;
-  color: #ba1a1a;
-  border: 1px solid rgba(186, 26, 26, 0.18);
-}
-
-.thinking-dots {
-  display: inline-flex;
-  gap: 6px;
-}
-
-.thinking-dots span {
-  width: 8px;
-  height: 8px;
-  border-radius: 999px;
-  background: #0060a9;
-  opacity: 0.4;
-  animation: pulse 1.2s infinite ease-in-out;
-}
-
-.thinking-dots span:nth-child(2) {
-  animation-delay: 0.15s;
-}
-
-.thinking-dots span:nth-child(3) {
-  animation-delay: 0.3s;
-}
-
-@keyframes pulse {
-
-  0%,
-  80%,
-  100% {
-    transform: scale(0.75);
-    opacity: 0.35;
-  }
-
-  40% {
-    transform: scale(1);
-    opacity: 1;
-  }
-}
-
-@media (max-width: 1200px) {
-  .ai-workspace {
-    grid-template-columns: 280px minmax(0, 1fr);
-  }
-
-  .empty-stage__prompts {
-    grid-template-columns: 1fr;
-  }
-}
-
-@media (max-width: 960px) {
-
-  .architect-shell,
-  .ai-workspace,
-  .attachment-dialog__grid {
-    grid-template-columns: 1fr;
-  }
-
-  .architect-shell {
-    display: flex;
-    flex-direction: column;
-  }
-
-  .architect-nav {
-    gap: 12px;
-  }
-
-  .architect-menu {
-    display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-
-  .conversation-history {
-    border-right: 0;
-    border-bottom: 1px solid rgba(192, 199, 212, 0.45);
-  }
-
-  .thread-list--history {
-    max-height: 320px;
-  }
-}
-
-@media (max-width: 720px) {
-
-  .architect-topbar,
-  .chat-stage__header,
-  .composer-wrap--architect,
-  .message-board,
-  .conversation-history {
-    padding-left: 14px;
-    padding-right: 14px;
-  }
-
-  .architect-topbar,
-  .chat-stage__header,
-  .composer-box__toolbar,
-  .composer-box__toptools,
-  .architect-topbar__actions {
-    flex-wrap: wrap;
-  }
-
-  .toolbar-model-select {
-    width: 180px;
-  }
-
-  .transcript-item,
-  .transcript-item.is-user {
-    grid-template-columns: 1fr;
-  }
-
-  .transcript-item__avatar,
-  .transcript-item.is-user .transcript-item__avatar {
-    order: 0;
-  }
-
-  .transcript-item.is-user .transcript-item__panel {
-    order: 0;
-  }
-
-  .transcript-item.is-user .transcript-item__head {
-    justify-content: space-between;
-  }
-
-  .architect-menu {
-    grid-template-columns: 1fr;
-  }
-}
-</style>
+<style scoped src="./css/AiView.css"></style>
