@@ -1,4 +1,4 @@
-# Erise-AIV1.0
+# Erise-AI V1.0
 
 Erise-AI 是一个面向个人的轻量项目知识库系统，核心能力覆盖项目管理、文件与文档编辑、统一检索，支持docx、pdf、md、txt文件上传。包括 AI / RAG检索 能力。
 
