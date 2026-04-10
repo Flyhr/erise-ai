@@ -62,7 +62,7 @@ export type KnowledgeReadiness = 'ready' | 'pending' | 'processing' | 'failed' |
 const READY_STATUSES = new Set(['READY', 'SUCCESS', 'INDEXED', 'COMPLETED'])
 const PROCESSING_STATUSES = new Set(['PROCESSING'])
 const PENDING_STATUSES = new Set(['INIT', 'PENDING', 'UPLOADING'])
-const FAILED_STATUSES = new Set(['FAILED', 'DELETED'])
+const FAILED_STATUSES = new Set(['FAILED', 'DELETED', 'NEEDS_REPAIR'])
 const UNSUPPORTED_STATUSES = new Set(['SKIPPED', 'UNSUPPORTED'])
 
 const normalizeStatus = (status?: string) => (status || '').trim().toUpperCase()

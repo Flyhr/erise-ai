@@ -75,6 +75,7 @@ class ContentItemService {
 
     private final ContentItemMapper contentItemMapper;
     private final ProjectService projectService;
+    private final TextChunkingSupport textChunkingSupport;
     private final RagKnowledgeService ragKnowledgeService;
     private final AuditLogService auditLogService;
 
@@ -150,7 +151,12 @@ class ContentItemService {
                 entity.getItemType(),
                 entity.getId(),
                 entity.getTitle(),
-                ragKnowledgeService.splitText(joinText(entity.getSummary(), entity.getPlainText()), null)
+                textChunkingSupport.chunkText(
+                        entity.getOwnerUserId(),
+                        entity.getItemType() + "-" + entity.getId(),
+                        joinText(entity.getSummary(), entity.getPlainText()),
+                        null
+                )
         );
     }
 

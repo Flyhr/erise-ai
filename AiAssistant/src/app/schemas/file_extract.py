@@ -12,3 +12,12 @@ class FileExtractView(CamelModel):
     parser: str = ''
     used_ocr: bool = False
     page_count: int = 0
+
+
+class TextChunkRequest(CamelModel):
+    plain_text: str = ''
+    page_no: int | None = None
+
+
+class TextChunkView(CamelModel):
+    chunks: list[RagChunkPayload] = Field(default_factory=list)

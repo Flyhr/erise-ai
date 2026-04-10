@@ -23,6 +23,11 @@ import AdminAuditLogsView from '@/views/admin/AdminAuditLogsView.vue'
 import AdminModelsView from '@/views/admin/AdminModelsView.vue'
 import NotFoundView from '@/views/admin/NotFoundView.vue'
 import WorkspaceShellLayout from '@/components/common/WorkspaceShellLayout.vue'
+import { cancelRouteLoading, startRouteLoading } from '@/composables/useRouteLoading'
+
+const ROUTE_LOADING_TITLE_PREFIX = '\u6b63\u5728\u6253\u5f00 '
+const ROUTE_LOADING_DEFAULT_TITLE = '\u6b63\u5728\u8fdb\u5165\u9875\u9762'
+const ROUTE_LOADING_DESCRIPTION = '\u754c\u9762\u5185\u5bb9\u6b63\u5728\u51c6\u5907\u4e2d\uff0c\u8bf7\u7a0d\u5019\u3002'
 
 const router = createRouter({
   history: createWebHistory(),
@@ -248,6 +253,11 @@ const router = createRouter({
 })
 
 router.beforeEach(async (to) => {
+  startRouteLoading(to.fullPath, {
+    title: to.meta.title ? `${ROUTE_LOADING_TITLE_PREFIX}${String(to.meta.title)}` : ROUTE_LOADING_DEFAULT_TITLE,
+    description: ROUTE_LOADING_DESCRIPTION,
+  })
+
   const authStore = useAuthStore()
   if (authStore.accessToken && !authStore.user) {
     await authStore.hydrate()
@@ -266,6 +276,10 @@ router.beforeEach(async (to) => {
   }
 
   return true
+})
+
+router.onError(() => {
+  cancelRouteLoading()
 })
 
 export default router

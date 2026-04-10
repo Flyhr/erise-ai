@@ -90,6 +90,7 @@ class OfficeFileService {
     private final FileEditContentMapper fileEditContentMapper;
     private final ProjectService projectService;
     private final MinioStorageClient storageClient;
+    private final TextChunkingSupport textChunkingSupport;
     private final RagKnowledgeService ragKnowledgeService;
     private final AuditLogService auditLogService;
 
@@ -158,7 +159,7 @@ class OfficeFileService {
                     "FILE",
                     file.getId(),
                     file.getFileName(),
-                    ragKnowledgeService.splitText(plainText, null)
+                    textChunkingSupport.chunkText(file.getOwnerUserId(), "file-" + file.getId(), plainText, null)
             );
         } catch (RuntimeException ignored) {
         }

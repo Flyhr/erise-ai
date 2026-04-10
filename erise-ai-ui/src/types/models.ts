@@ -89,6 +89,9 @@ export interface DocumentDetailView {
   contentJson: string
   contentHtmlSnapshot: string
   plainText: string
+  parseStatus?: string
+  indexStatus?: string
+  parseErrorMessage?: string
   createdAt: string
   updatedAt: string
 }

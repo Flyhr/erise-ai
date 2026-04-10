@@ -55,10 +55,16 @@
           </template>
         </el-table-column>
 
-        <el-table-column v-if="activeTab === 'files'" label="文件状态" min-width="140">
+        <el-table-column label="知识状态" min-width="160">
           <template #default="{ row }">
-            <KnowledgeSyncStatus :parse-status="row.parseStatus" :index-status="row.indexStatus"
-              :can-retry="isKnowledgeFailed(row.parseStatus, row.indexStatus)" @retry="retryKnowledgeAsset(row)" />
+            <KnowledgeSyncStatus
+              :parse-status="row.parseStatus"
+              :index-status="row.indexStatus"
+              :parse-error-message="row.parseErrorMessage"
+              :can-retry="isKnowledgeFailed(row.parseStatus, row.indexStatus)"
+              :retry-text="row.assetType === 'FILE' ? '重新解析' : '重试索引'"
+              @retry="retryKnowledgeAsset(row)"
+            />
           </template>
         </el-table-column>
 
@@ -101,6 +107,13 @@
                     <el-button text>更多</el-button>
                   </template>
                   <div class="action-menu">
+                    <el-button
+                      v-if="isKnowledgeFailed(row.parseStatus, row.indexStatus)"
+                      link
+                      @click="retryKnowledgeAsset(row)"
+                    >
+                      重试索引
+                    </el-button>
                     <el-button link @click="exportAsset(row)">导出 PDF</el-button>
                     <el-button link @click="deleteAsset(row)">删除</el-button>
                   </div>
@@ -128,7 +141,7 @@
 import { onMounted, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { useRoute, useRouter } from 'vue-router'
-import { deleteDocument } from '@/api/document'
+import { deleteDocument, retryDocumentIndex } from '@/api/document'
 import { deleteFile, retryFileParse } from '@/api/file'
 import { getKnowledgeAssets } from '@/api/knowledge'
 import AppDataTable from '@/components/common/AppDataTable.vue'
@@ -243,7 +256,6 @@ const { beforeUpload } = useKnowledgeFileUpload({
 useKnowledgeStatusPolling({
   records: assets,
   reload: loadAssets,
-  enabled: () => activeTab.value === 'files',
 })
 
 const secondaryLine = (row: KnowledgeAssetView) => {
@@ -261,15 +273,17 @@ const statusLabel = (row: KnowledgeAssetView) => {
 }
 
 const retryKnowledgeAsset = async (row: KnowledgeAssetView) => {
-  if (row.assetType !== 'FILE') {
-    return
-  }
   try {
-    await retryFileParse(row.assetId)
-    ElMessage.success('文件已重新进入解析队列')
+    if (row.assetType === 'FILE') {
+      await retryFileParse(row.assetId)
+      ElMessage.success('文件已重新进入解析队列')
+    } else {
+      await retryDocumentIndex(row.assetId)
+      ElMessage.success('文档已重新进入索引队列')
+    }
     await loadAssets()
   } catch (error) {
-    ElMessage.error(resolveErrorMessage(error, '重新解析失败，请稍后重试'))
+    ElMessage.error(resolveErrorMessage(error, row.assetType === 'FILE' ? '重新解析失败，请稍后重试' : '重试索引失败，请稍后重试'))
   }
 }
 

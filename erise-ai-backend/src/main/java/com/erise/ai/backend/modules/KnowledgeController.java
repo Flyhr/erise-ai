@@ -165,9 +165,37 @@ class KnowledgeQueryService {
                   null as file_ext,
                   'DOCUMENT' as mime_type,
                   null as file_size,
-                  null as parse_status,
-                  null as index_status,
-                  null as parse_error_message,
+                  'SKIPPED' as parse_status,
+                  coalesce((
+                    select case
+                      when upper(coalesce(s.status, '')) = 'READY' then 'READY'
+                      when upper(coalesce(s.status, '')) = 'PROCESSING' then 'PROCESSING'
+                      when upper(coalesce(s.status, '')) in ('FAILED', 'NEEDS_REPAIR') then 'FAILED'
+                      when upper(coalesce(s.status, '')) = 'DELETED' then 'DELETED'
+                      else 'PENDING'
+                    end
+                    from ea_rag_source s
+                    where s.deleted = 0
+                      and s.scope_type = 'KB'
+                      and s.source_type = 'DOCUMENT'
+                      and s.source_id = d.id
+                      and s.owner_user_id = d.owner_user_id
+                      and coalesce(s.session_id, 0) = 0
+                    order by s.updated_at desc, s.id desc
+                    limit 1
+                  ), 'PENDING') as index_status,
+                  (
+                    select s.last_error
+                    from ea_rag_source s
+                    where s.deleted = 0
+                      and s.scope_type = 'KB'
+                      and s.source_type = 'DOCUMENT'
+                      and s.source_id = d.id
+                      and s.owner_user_id = d.owner_user_id
+                      and coalesce(s.session_id, 0) = 0
+                    order by s.updated_at desc, s.id desc
+                    limit 1
+                  ) as parse_error_message,
                   d.doc_status,
                   d.created_at,
                   d.updated_at

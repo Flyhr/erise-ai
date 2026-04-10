@@ -156,6 +156,10 @@ public class CloudAiClient {
         }
     }
 
+    public TextChunkResponse chunkText(Long userId, TextChunkRequest request, String requestId) {
+        return post(resolveUserId(userId), "/internal/ai/chat/files/chunk-text", request, requestId, TextChunkResponse.class);
+    }
+
     private <T> T post(CurrentUser user, String path, Object body, String requestId, Class<T> type) {
         return post(user.userId(), path, body, requestId, type);
     }
@@ -397,6 +401,17 @@ public class CloudAiClient {
             String parser,
             Boolean usedOcr,
             Integer pageCount
+    ) {
+    }
+
+    public record TextChunkRequest(
+            String plainText,
+            Integer pageNo
+    ) {
+    }
+
+    public record TextChunkResponse(
+            List<FileExtractChunkResponse> chunks
     ) {
     }
 

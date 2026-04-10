@@ -17,6 +17,8 @@ import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
 import lombok.Data;
 import lombok.RequiredArgsConstructor;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -70,6 +72,11 @@ public class DocumentController {
         return ApiResponse.success(documentService.publishNew(request));
     }
 
+    @PostMapping("/{id}/retry-index")
+    public ApiResponse<DocumentDetailView> retryIndex(@PathVariable Long id) {
+        return ApiResponse.success(documentService.retryIndex(id));
+    }
+
     @GetMapping("/{id}/versions")
     public ApiResponse<PageResponse<DocumentVersionView>> versions(@PathVariable Long id,
                                                                   @RequestParam(defaultValue = "1") long pageNum,
@@ -93,10 +100,13 @@ public class DocumentController {
 @RequiredArgsConstructor
 class DocumentService {
 
+    private static final Logger log = LoggerFactory.getLogger(DocumentService.class);
+
     private final DocumentMapper documentMapper;
     private final DocumentContentMapper documentContentMapper;
     private final DocumentVersionMapper documentVersionMapper;
     private final ProjectService projectService;
+    private final TextChunkingSupport textChunkingSupport;
     private final RagKnowledgeService ragKnowledgeService;
     private final AuditLogService auditLogService;
 
@@ -221,6 +231,15 @@ class DocumentService {
         return detail(id);
     }
 
+    DocumentDetailView retryIndex(Long id) {
+        var currentUser = SecurityUtils.currentUser();
+        DocumentEntity document = requireAccessibleDocument(id);
+        DocumentContentEntity content = contentByDocumentId(id);
+        syncRagKnowledge(document, content.getPlainText());
+        auditLogService.log(currentUser, "DOCUMENT_INDEX_RETRY", "DOCUMENT", id, null);
+        return detail(id);
+    }
+
     @Transactional
     DocumentDetailView publishNew(DocumentPublishNewRequest request) {
         var currentUser = SecurityUtils.currentUser();
@@ -303,9 +322,10 @@ class DocumentService {
                     "DOCUMENT",
                     document.getId(),
                     document.getTitle(),
-                    ragKnowledgeService.splitText(plainText, null)
+                    textChunkingSupport.chunkText(document.getOwnerUserId(), "document-" + document.getId(), plainText, null)
             );
-        } catch (RuntimeException ignored) {
+        } catch (RuntimeException exception) {
+            log.warn("Failed to sync document knowledge index, documentId={}", document.getId(), exception);
         }
     }
 
@@ -339,6 +359,8 @@ class DocumentService {
     }
 
     private DocumentDetailView toDetail(DocumentEntity document, DocumentContentEntity content) {
+        RagKnowledgeService.KnowledgeSyncStatusView syncStatus =
+                ragKnowledgeService.kbSyncStatus(document.getOwnerUserId(), "DOCUMENT", document.getId());
         return new DocumentDetailView(
                 document.getId(),
                 document.getProjectId(),
@@ -349,6 +371,9 @@ class DocumentService {
                 content.getContentJson(),
                 content.getContentHtmlSnapshot(),
                 content.getPlainText(),
+                syncStatus.parseStatus(),
+                syncStatus.indexStatus(),
+                syncStatus.errorMessage(),
                 document.getCreatedAt(),
                 document.getUpdatedAt()
         );
@@ -466,6 +491,9 @@ record DocumentDetailView(
         String contentJson,
         String contentHtmlSnapshot,
         String plainText,
+        String parseStatus,
+        String indexStatus,
+        String parseErrorMessage,
         java.time.LocalDateTime createdAt,
         java.time.LocalDateTime updatedAt
 ) {

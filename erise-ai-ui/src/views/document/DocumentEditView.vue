@@ -121,7 +121,8 @@ import {
   exportElementAsPdf,
   renderDocumentHtml,
 } from '@/utils/documentExport'
-import { documentStatusLabel, documentStatusTone, formatDateTime, resolveErrorMessage } from '@/utils/formatters'
+import { documentStatusLabel, documentStatusTone, formatDateTime, isKnowledgeFailed, resolveErrorMessage } from '@/utils/formatters'
+import type { DocumentDetailView } from '@/types/models'
 
 interface LocalDraftDocument {
   projectId: number
@@ -156,6 +157,14 @@ const exportFileName = computed(() => form.title.trim() || '未命名文档')
 const exportHtml = computed(() => renderDocumentHtml(form.title.trim() || '未命名文档', form.summary, contentHtml.value))
 const documentBackTarget = computed(() => (projectId.value ? `/projects/${projectId.value}/documents` : '/documents'))
 const localDraftKey = computed(() => (projectId.value ? `document-draft:${projectId.value}` : ''))
+
+const showDocumentSyncFeedback = (detail: Pick<DocumentDetailView, 'parseStatus' | 'indexStatus' | 'parseErrorMessage'>, successText: string) => {
+  if (isKnowledgeFailed(detail.parseStatus, detail.indexStatus)) {
+    ElMessage.warning(detail.parseErrorMessage || `${successText}，但知识索引同步失败，可稍后重试`)
+    return
+  }
+  ElMessage.success(successText)
+}
 
 const htmlToText = (html: string) => {
   const parser = new DOMParser()
@@ -324,7 +333,7 @@ const save = async (options: { silent?: boolean } = {}) => {
     detailStatus.value = detail.docStatus
     updatedAt.value = detail.updatedAt
     if (!options.silent) {
-      ElMessage.success('草稿已保存')
+      showDocumentSyncFeedback(detail, '草稿已保存')
     }
     return true
   } catch (error) {
@@ -354,7 +363,7 @@ const publish = async () => {
         plainText: htmlToText(contentHtml.value),
       })
       clearLocalDraft()
-      ElMessage.success('文档已发布')
+      showDocumentSyncFeedback(detail, '文档已发布')
       await router.replace(`/documents/${detail.id}/edit`)
       return
     }
@@ -366,7 +375,7 @@ const publish = async () => {
     const detail = await publishDocument(documentId.value)
     detailStatus.value = detail.docStatus
     updatedAt.value = detail.updatedAt
-    ElMessage.success('文档已发布')
+    showDocumentSyncFeedback(detail, '文档已发布')
   } catch (error) {
     ElMessage.error(resolveErrorMessage(error, '发布失败，请稍后重试'))
   } finally {

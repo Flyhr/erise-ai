@@ -26,6 +26,9 @@ export const updateDocument = (
 export const publishDocument = (id: number) =>
   http.post<never, DocumentDetailView>(`/v1/documents/${id}/publish`)
 
+export const retryDocumentIndex = (id: number) =>
+  http.post<never, DocumentDetailView>(`/v1/documents/${id}/retry-index`)
+
 export const publishNewDocument = (payload: {
   projectId: number
   title: string

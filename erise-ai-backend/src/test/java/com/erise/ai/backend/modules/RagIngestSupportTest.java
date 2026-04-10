@@ -8,8 +8,9 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import com.erise.ai.backend.common.exception.BizException;
+import com.erise.ai.backend.common.exception.ErrorCodes;
 import com.erise.ai.backend.integration.ai.CloudAiClient;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
@@ -19,35 +20,50 @@ import org.junit.jupiter.api.Test;
 class RagIngestSupportTest {
 
     @Test
-    void splitTextUsesOverlapAndSectionAwareChunking() {
-        RagKnowledgeService service = new RagKnowledgeService(
-                null,
-                null,
-                null,
-                mock(CloudAiClient.class),
-                new ObjectMapper()
+    void chunkTextDelegatesToPythonChunkingService() {
+        CloudAiClient cloudAiClient = mock(CloudAiClient.class);
+        when(cloudAiClient.chunkText(eq(1L), any(CloudAiClient.TextChunkRequest.class), anyString()))
+                .thenReturn(new CloudAiClient.TextChunkResponse(
+                        List.of(
+                                new CloudAiClient.FileExtractChunkResponse(0, "1. Overview\nParagraph one.", 1, "1. Overview"),
+                                new CloudAiClient.FileExtractChunkResponse(1, "2. Appendix\nParagraph two.", 1, "1. Overview > 2. Appendix")
+                        )
+                ));
+        TextChunkingSupport support = new TextChunkingSupport(cloudAiClient);
+
+        List<RagKnowledgeService.ChunkInput> chunks = support.chunkText(
+                1L,
+                "document-101",
+                "1. Overview\n\nParagraph one.\n\n2. Appendix\n\nParagraph two.",
+                1
         );
 
-        StringBuilder builder = new StringBuilder("1. Overview\n\n");
-        for (int index = 0; index < 40; index++) {
-            builder.append("Sentence ")
-                    .append(index)
-                    .append(" validates recursive chunking, overlap windows, and section-aware indexing. ");
+        assertThat(chunks).hasSize(2);
+        assertThat(chunks.get(0).sectionPath()).isEqualTo("1. Overview");
+        assertThat(chunks.get(1).sectionPath()).isEqualTo("1. Overview > 2. Appendix");
+        verify(cloudAiClient).chunkText(eq(1L), any(CloudAiClient.TextChunkRequest.class), anyString());
+    }
+
+    @Test
+    void chunkTextFallsBackToMinimalJavaChunkingWhenPythonIsUnavailable() {
+        CloudAiClient cloudAiClient = mock(CloudAiClient.class);
+        when(cloudAiClient.chunkText(eq(1L), any(CloudAiClient.TextChunkRequest.class), anyString()))
+                .thenThrow(new BizException(ErrorCodes.AI_ERROR, "AI service unavailable"));
+        TextChunkingSupport support = new TextChunkingSupport(cloudAiClient);
+
+        StringBuilder builder = new StringBuilder();
+        for (int index = 0; index < 20; index++) {
+            builder.append("Paragraph ").append(index).append(" validates the minimal Java fallback chunking path.\n\n");
         }
 
-        List<RagKnowledgeService.ChunkInput> chunks = service.splitText(builder.toString(), 1);
+        List<RagKnowledgeService.ChunkInput> chunks = support.chunkText(1L, "document-102", builder.toString(), null);
 
-        assertThat(chunks).hasSizeGreaterThan(1);
+        assertThat(chunks).isNotEmpty();
         assertThat(chunks).allSatisfy(chunk -> {
             assertThat(chunk.chunkText()).isNotBlank();
             assertThat(chunk.chunkText().length()).isLessThanOrEqualTo(500);
-            assertThat(chunk.pageNo()).isEqualTo(1);
-            assertThat(chunk.sectionPath()).isEqualTo("1. Overview");
+            assertThat(chunk.sectionPath()).isNull();
         });
-
-        String firstChunkSuffix = chunks.getFirst().chunkText();
-        firstChunkSuffix = firstChunkSuffix.substring(firstChunkSuffix.length() - 16);
-        assertThat(chunks.get(1).chunkText()).contains(firstChunkSuffix);
     }
 
     @Test

@@ -187,6 +187,12 @@ class FileExtractService:
             page_count=0,
         )
 
+    def chunk_text(self, plain_text: str, page_no: int | None = None) -> list[RagChunkPayload]:
+        normalized = self._normalize_text(plain_text)
+        if not normalized:
+            return []
+        return self._chunks_from_text(normalized, page_no=page_no)
+
     def _chunks_from_text(self, plain_text: str, page_no: int | None = None) -> list[RagChunkPayload]:
         blocks = self._merge_heading_blocks(self._build_semantic_blocks(plain_text))
         return self._build_chunks(blocks, page_no=page_no)
