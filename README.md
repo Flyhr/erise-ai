@@ -112,7 +112,3 @@ docker compose --env-file .env.dev -f docker-compose.dev.yml down
 
 - qdrant向量数据库，需要优化索引技术，考虑混合索引加重排序来提高RAG性能
 - 文件的章节识别、切分等处理能力有待提高；文本分块太大导致检索不准，分块太小导致上下文丢失，后续把长文本切成适合模型处理的小块。
-
-```
-
-```
