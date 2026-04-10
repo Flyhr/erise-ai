@@ -22,7 +22,7 @@
       </template>
     </AppFilterBar>
 
-    <AppSectionCard :title="activeTab === 'files' ? '知识文件列表' : '在线文档列表'" :unpadded="true">
+    <AppSectionCard :title="activeTab === 'files' ? '文件列表' : '文档列表'" :unpadded="true">
       <div class="knowledge-tabs">
         <button type="button" :class="['knowledge-tabs__item', { 'is-active': activeTab === 'files' }]"
           @click="switchTab('files')">
@@ -116,7 +116,7 @@
 
       <template #footer>
         <div class="knowledge-footer">
-          <span class="page-subtitle">每页最多展示 10 条记录</span>
+          <span class="page-subtitle">每页最多显示 10 条记录</span>
           <CompactPager :page-num="pageNum" :page-size="pageSize" :total="total" @change="handlePageChange" />
         </div>
       </template>
@@ -128,7 +128,7 @@
 import { onMounted, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { useRoute, useRouter } from 'vue-router'
-import { createDocument, deleteDocument } from '@/api/document'
+import { deleteDocument } from '@/api/document'
 import { deleteFile, retryFileParse } from '@/api/file'
 import { getKnowledgeAssets } from '@/api/knowledge'
 import AppDataTable from '@/components/common/AppDataTable.vue'
@@ -140,6 +140,7 @@ import CompactPager from '@/components/common/CompactPager.vue'
 import KnowledgeSyncStatus from '@/components/common/KnowledgeSyncStatus.vue'
 import { useFilePreview } from '@/composables/useFilePreview'
 import { knowledgeFileAccept, useKnowledgeFileUpload } from '@/composables/useKnowledgeFileUpload'
+import { useKnowledgeStatusPolling } from '@/composables/useKnowledgeStatusPolling'
 import { useProjectDirectory } from '@/composables/useProjectDirectory'
 import type { KnowledgeAssetView } from '@/types/models'
 import {
@@ -239,9 +240,15 @@ const { beforeUpload } = useKnowledgeFileUpload({
   },
 })
 
+useKnowledgeStatusPolling({
+  records: assets,
+  reload: loadAssets,
+  enabled: () => activeTab.value === 'files',
+})
+
 const secondaryLine = (row: KnowledgeAssetView) => {
   if (row.assetType === 'FILE') {
-    return `${normalizeFileTypeLabel(row.fileExt, row.mimeType)} · ${formatFileSize(row.fileSize)}`
+    return `${normalizeFileTypeLabel(row.fileExt, row.mimeType)} / ${formatFileSize(row.fileSize)}`
   }
   return row.summary || '暂无摘要'
 }
@@ -271,13 +278,10 @@ const createDoc = async () => {
     ElMessage.warning('请先选择一个项目，再创建文档。')
     return
   }
-  try {
-    const created = await createDocument({ projectId: selectedProjectId.value, title: '未命名文档', summary: '' })
-    ElMessage.success('文档已创建')
-    await router.push(`/documents/${created.id}/edit`)
-  } catch (error) {
-    ElMessage.error(resolveErrorMessage(error, '文档创建失败，请稍后重试'))
-  }
+  await router.push({
+    path: '/documents/new/edit',
+    query: { projectId: selectedProjectId.value },
+  })
 }
 
 const deleteAsset = async (row: KnowledgeAssetView) => {

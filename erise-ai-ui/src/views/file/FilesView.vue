@@ -115,6 +115,7 @@ import KnowledgeSyncStatus from '@/components/common/KnowledgeSyncStatus.vue'
 import ProjectScopedListShell from '@/components/common/ProjectScopedListShell.vue'
 import { useFilePreview } from '@/composables/useFilePreview'
 import { knowledgeFileAccept, useKnowledgeFileUpload } from '@/composables/useKnowledgeFileUpload'
+import { useKnowledgeStatusPolling } from '@/composables/useKnowledgeStatusPolling'
 import { useProjectDirectory } from '@/composables/useProjectDirectory'
 import type { FileView } from '@/types/models'
 import {
@@ -225,6 +226,11 @@ const { beforeUpload } = useKnowledgeFileUpload({
   onUploaded: async () => {
     await load()
   },
+})
+
+useKnowledgeStatusPolling({
+  records: files,
+  reload: load,
 })
 
 const retryKnowledgeFile = async (file: FileView) => {

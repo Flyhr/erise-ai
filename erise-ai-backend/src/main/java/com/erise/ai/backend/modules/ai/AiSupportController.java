@@ -246,13 +246,14 @@ class AiTempFileService {
         latest.setUpdatedBy(latest.getOwnerUserId());
         aiTempFileMapper.updateById(latest);
         try (InputStream stream = storageClient.getObject(latest.getStorageKey())) {
-            String plainText = storedTextExtractionSupport.extractPlainText(
+            StoredTextExtractionSupport.StructuredExtractionResult extraction = storedTextExtractionSupport.extractStructuredContent(
                     latest.getOwnerUserId(),
                     latest.getFileName(),
                     latest.getFileExt(),
                     stream
-            ).trim();
-            if (plainText.isBlank()) {
+            );
+            String plainText = extraction.plainText() == null ? "" : extraction.plainText().trim();
+            if (plainText.isBlank() || extraction.chunks().isEmpty()) {
                 throw new BizException(ErrorCodes.FILE_ERROR, "No readable text content was extracted");
             }
             ragKnowledgeService.replaceTempSource(
@@ -261,7 +262,7 @@ class AiTempFileService {
                     latest.getSessionId(),
                     latest.getId(),
                     latest.getFileName(),
-                    ragKnowledgeService.splitText(plainText, null)
+                    extraction.chunks()
             );
             latest.setPlainText(plainText);
             latest.setParseStatus("INDEXED");

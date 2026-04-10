@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import math
 from dataclasses import dataclass
 from typing import Any
 
@@ -37,6 +38,12 @@ class RetrievalDecision:
 
 
 class RagService:
+    RRF_RANK_CONSTANT = 60
+    MIN_FUSION_CANDIDATES = 20
+    MAX_FUSION_CANDIDATES = 30
+    FALLBACK_CONFIDENCE_CAP = 0.74
+    RERANK_MODEL_NAME = 'BAAI/bge-reranker-base'
+
     def __init__(self) -> None:
         self.settings = get_settings()
         self.client = QdrantClient(
@@ -45,6 +52,8 @@ class RagService:
             check_compatibility=False,
         )
         self._ready_collections: set[str] = set()
+        self._reranker: Any | None = None
+        self._reranker_unavailable = False
 
     def _ensure_collection(self, collection_name: str) -> None:
         if collection_name in self._ready_collections:
@@ -127,11 +136,9 @@ class RagService:
         top_k = self._resolve_top_k(request)
         threshold = self._resolve_threshold(request)
         mode = self._normalized_mode(request.mode)
+        candidate_limit = self._candidate_limit(top_k)
 
-        private_hits = self._merge_hits(
-            await self._safe_vector_search(request, context, top_k, mode),
-            await self._safe_keyword_search(request, context, top_k, mode),
-        )
+        private_hits = await self._private_hits(request, context, candidate_limit, mode)
         confidence = private_hits[0].score if private_hits else None
         top_hits = private_hits[:top_k]
         used_tools: list[str] = ['private_knowledge']
@@ -207,10 +214,7 @@ class RagService:
         )
         context = RequestContext(user_id=user_id, org_id=0, request_id='rag-debug')
         decision = await self.query(fake_request, context)
-        hits = self._merge_hits(
-            await self._safe_vector_search(fake_request, context, limit, 'GENERAL'),
-            await self._safe_keyword_search(fake_request, context, limit, 'GENERAL'),
-        )
+        hits = await self._private_hits(fake_request, context, self._candidate_limit(limit), 'GENERAL')
         return RagQueryResponse(
             hits=hits[:limit],
             citations=decision.citations,
@@ -218,6 +222,20 @@ class RagService:
             answer_source=decision.answer_source,
             used_tools=decision.used_tools,
         )
+
+    async def _private_hits(
+        self,
+        request: ChatCompletionRequest,
+        context: RequestContext,
+        candidate_limit: int,
+        mode: str,
+    ) -> list[RagQueryHit]:
+        vector_hits = await self._safe_vector_search(request, context, candidate_limit, mode)
+        keyword_hits = await self._safe_keyword_search(request, context, candidate_limit, mode)
+        fused_hits = self._fuse_hits(vector_hits, keyword_hits)[:candidate_limit]
+        if not fused_hits:
+            return []
+        return self._rerank_hits(request.message, fused_hits)[:candidate_limit]
 
     async def _safe_vector_search(
         self,
@@ -269,7 +287,7 @@ class RagService:
                 with_payload=True,
             )
             hits.extend(self._response_to_hits(response))
-        return self._merge_hits(hits)[:top_k]
+        return self._dedupe_hits(hits)[:top_k]
 
     async def _keyword_search(
         self,
@@ -291,18 +309,22 @@ class RagService:
             attachments=attachments,
             limit=max(1, top_k),
         )
-        return [
-            RagQueryHit(
-                score=0.56,
-                source_type=str(item.get('sourceType') or ''),
-                source_id=int(item.get('sourceId') or 0),
-                source_title=str(item.get('title') or '知识片段'),
-                snippet=str(item.get('snippet') or ''),
-                page_no=None,
+        hits: list[RagQueryHit] = []
+        for index, item in enumerate(payload, start=1):
+            if item.get('sourceId') is None:
+                continue
+            hits.append(
+                RagQueryHit(
+                    score=1.0 / index,
+                    source_type=str(item.get('sourceType') or ''),
+                    source_id=int(item.get('sourceId') or 0),
+                    source_title=str(item.get('title') or 'knowledge-snippet'),
+                    snippet=str(item.get('snippet') or ''),
+                    page_no=int(item['pageNo']) if item.get('pageNo') is not None else None,
+                    section_path=str(item.get('sectionPath') or '') or None,
+                )
             )
-            for item in payload
-            if item.get('sourceId') is not None
-        ]
+        return hits
 
     def _vector_queries(
         self,
@@ -384,21 +406,129 @@ class RagService:
                     score=float(item.score),
                     source_type=str(payload.get('source_type') or ''),
                     source_id=int(payload.get('source_id') or 0),
-                    source_title=str(payload.get('source_name') or '知识片段'),
+                    source_title=str(payload.get('source_name') or 'knowledge-snippet'),
                     snippet=str(payload.get('chunk_text') or ''),
                     page_no=int(payload['page_no']) if payload.get('page_no') is not None else None,
+                    section_path=str(payload.get('section_path') or '') or None,
                 )
             )
         return hits
 
-    def _merge_hits(self, *hit_groups: list[RagQueryHit]) -> list[RagQueryHit]:
+    def _candidate_key(self, hit: RagQueryHit) -> str:
+        return ':'.join([
+            hit.source_type,
+            str(hit.source_id),
+            str(hit.page_no or 0),
+            hit.section_path or '',
+            (hit.url or ''),
+            hit.snippet[:120],
+        ])
+
+    def _dedupe_hits(self, hits: list[RagQueryHit]) -> list[RagQueryHit]:
+        deduped: dict[str, RagQueryHit] = {}
+        for item in hits:
+            key = self._candidate_key(item)
+            existing = deduped.get(key)
+            if existing is None or item.score > existing.score or len(item.snippet) > len(existing.snippet):
+                deduped[key] = item
+        return sorted(deduped.values(), key=lambda item: item.score, reverse=True)
+
+    def _fuse_hits(self, vector_hits: list[RagQueryHit], keyword_hits: list[RagQueryHit]) -> list[RagQueryHit]:
         merged: dict[str, RagQueryHit] = {}
-        for item in [hit for group in hit_groups for hit in group]:
-            key = f'{item.source_type}:{item.source_id}:{item.page_no or 0}:{item.snippet[:120]}:{item.url or ""}'
-            existing = merged.get(key)
-            if existing is None or item.score > existing.score:
-                merged[key] = item
+        for hits in (self._dedupe_hits(vector_hits), self._dedupe_hits(keyword_hits)):
+            for rank, item in enumerate(hits, start=1):
+                key = self._candidate_key(item)
+                contribution = 1.0 / (self.RRF_RANK_CONSTANT + rank)
+                existing = merged.get(key)
+                if existing is None:
+                    merged[key] = item.model_copy(update={'score': contribution})
+                    continue
+                merged[key] = self._merge_fused_hit(existing, item, contribution)
         return sorted(merged.values(), key=lambda item: item.score, reverse=True)
+
+    def _merge_fused_hit(self, existing: RagQueryHit, incoming: RagQueryHit, contribution: float) -> RagQueryHit:
+        snippet = incoming.snippet if len(incoming.snippet) > len(existing.snippet) else existing.snippet
+        return existing.model_copy(update={
+            'score': float(existing.score) + contribution,
+            'snippet': snippet,
+            'page_no': existing.page_no if existing.page_no is not None else incoming.page_no,
+            'section_path': existing.section_path or incoming.section_path,
+            'url': existing.url or incoming.url,
+        })
+
+    def _rerank_hits(self, query: str, hits: list[RagQueryHit]) -> list[RagQueryHit]:
+        if len(hits) <= 1:
+            return self._fallback_hits(hits)
+        reranker = self._get_reranker()
+        if reranker is None:
+            return self._fallback_hits(hits)
+        documents = [self._rerank_document(hit) for hit in hits]
+        try:
+            raw_scores = list(reranker.rerank(query, documents))
+        except Exception as exception:
+            logger.warning('Rerank failed, falling back to conservative RRF ordering: %s', exception, exc_info=True)
+            self._reranker_unavailable = True
+            self._reranker = None
+            return self._fallback_hits(hits)
+        if len(raw_scores) != len(hits):
+            return self._fallback_hits(hits)
+        reranked = [
+            hit.model_copy(update={'score': self._sigmoid(float(raw_score))})
+            for hit, raw_score in zip(hits, raw_scores, strict=False)
+        ]
+        return sorted(reranked, key=lambda item: item.score, reverse=True)
+
+    def _fallback_hits(self, hits: list[RagQueryHit]) -> list[RagQueryHit]:
+        if not hits:
+            return []
+        top_score = max(float(hit.score) for hit in hits)
+        if top_score <= 0:
+            return [hit.model_copy(update={'score': 0.0}) for hit in hits]
+        normalized = [
+            hit.model_copy(update={
+                'score': min(
+                    self.FALLBACK_CONFIDENCE_CAP,
+                    max(0.05, float(hit.score) / top_score * self.FALLBACK_CONFIDENCE_CAP),
+                )
+            })
+            for hit in hits
+        ]
+        return sorted(normalized, key=lambda item: item.score, reverse=True)
+
+    def _get_reranker(self) -> Any | None:
+        if self._reranker_unavailable:
+            return None
+        if self._reranker is not None:
+            return self._reranker
+        try:
+            from fastembed.rerank.cross_encoder import TextCrossEncoder
+        except Exception as exception:
+            logger.warning('FastEmbed reranker is unavailable: %s', exception, exc_info=True)
+            self._reranker_unavailable = True
+            return None
+        try:
+            self._reranker = TextCrossEncoder(model_name=self.RERANK_MODEL_NAME)
+        except Exception as exception:
+            logger.warning('Failed to initialize reranker `%s`: %s', self.RERANK_MODEL_NAME, exception, exc_info=True)
+            self._reranker_unavailable = True
+            self._reranker = None
+        return self._reranker
+
+    def _rerank_document(self, hit: RagQueryHit) -> str:
+        parts = [hit.source_title]
+        if hit.section_path:
+            parts.append(f'Section: {hit.section_path}')
+        if hit.page_no is not None:
+            parts.append(f'Page: {hit.page_no}')
+        parts.append(hit.snippet)
+        return '\n'.join(part for part in parts if part)
+
+    def _sigmoid(self, value: float) -> float:
+        if value >= 12:
+            return 1.0
+        if value <= -12:
+            return 0.0
+        return 1.0 / (1.0 + math.exp(-value))
 
     def _to_citation(self, hit: RagQueryHit) -> CitationView:
         return CitationView(
@@ -407,52 +537,56 @@ class RagService:
             source_title=hit.source_title,
             snippet=hit.snippet,
             page_no=hit.page_no,
+            section_path=hit.section_path,
             score=hit.score,
             url=hit.url,
         )
 
     def _build_private_context(self, hits: list[RagQueryHit], mode: str) -> str:
         lines = [
-            '以下资料来自私有知识库，请优先依据这些资料回答。',
-            '如果资料不足，可以继续参考后续提供的联网结果或通用知识，但不要伪造范围内引用。',
+            '以下资料来自私有知识库，请优先依据这些证据回答。',
+            '如证据不足，可以参考后续补充上下文，但不要伪造私有引用。',
         ]
         if mode == 'SCOPED':
-            lines.append('当前为指定范围模式：私有检索仅限当前项目、已选知识库文件或临时文件。')
+            lines.append('当前处于指定范围模式，私有检索仅限当前项目或显式附加资料。')
         lines.append('')
         for index, item in enumerate(hits, start=1):
             lines.append(f'资料 {index}: {item.source_title}')
+            if item.section_path:
+                lines.append(f'结构: {item.section_path}')
             if item.page_no is not None:
                 lines.append(f'页码: {item.page_no}')
             lines.append(f'相关片段: {item.snippet}')
-            lines.append(f'相似度: {item.score:.3f}')
+            lines.append(f'置信度: {item.score:.3f}')
             lines.append('')
         return '\n'.join(lines).strip()
 
     def _build_auxiliary_private_context(self, hits: list[RagQueryHit], mode: str) -> str:
         lines = [
-            '以下资料来自私有知识库，但当前相关性不足以单独支撑答案。',
-            '请把它们仅作为辅助参考，不要将其当作主依据或扩写成确定结论。',
+            '以下私有资料相关性较弱，只能作为辅助背景，不可当作唯一依据。',
         ]
         if mode == 'SCOPED':
-            lines.append('这些私有资料仍然来自当前指定范围，仅可辅助补充背景。')
+            lines.append('这些资料仍然来自当前指定范围，仅用于补充上下文。')
         lines.append('')
         for index, item in enumerate(hits, start=1):
             lines.append(f'辅助资料 {index}: {item.source_title}')
+            if item.section_path:
+                lines.append(f'结构: {item.section_path}')
             if item.page_no is not None:
                 lines.append(f'页码: {item.page_no}')
             lines.append(f'相关片段: {item.snippet}')
-            lines.append(f'相似度: {item.score:.3f}')
+            lines.append(f'置信度: {item.score:.3f}')
             lines.append('')
         return '\n'.join(lines).strip()
 
     def _build_web_context(self, hits: list[Any], has_auxiliary_private: bool) -> str:
         lines = [
-            '以下资料来自联网搜索，请将联网结果作为本次回答的主依据。',
-            '请只引用真实链接，不要编造站点来源。',
+            '以下资料来自联网搜索，请把联网结果作为本轮回答的主要依据。',
+            '请只引用真实链接，不要编造来源。',
             '',
         ]
         if has_auxiliary_private:
-            lines.insert(1, '当前还附带了弱相关私有资料，它们只能作为辅助背景，不可替代联网证据。')
+            lines.insert(1, '当前同时附带了弱相关私有资料，它们只能作为补充背景。')
         for index, item in enumerate(hits, start=1):
             lines.append(f'网页 {index}: {item.title}')
             lines.append(f'链接: {item.url}')
@@ -463,17 +597,20 @@ class RagService:
     def _build_general_context(self, web_search_enabled: bool, has_auxiliary_private: bool) -> str:
         lines: list[str] = []
         if has_auxiliary_private:
-            lines.append('当前存在弱相关的私有资料，可作为辅助背景，但不能作为主依据。')
+            lines.append('当前存在弱相关的私有资料，可作补充背景，但不能作为主要依据。')
         if web_search_enabled:
-            lines.append('本轮联网搜索未返回可用结果或搜索失败，请改用通用知识作为主依据回答。')
+            lines.append('本轮联网搜索未返回可用结果，请改用通用知识作为主要依据。')
         else:
-            lines.append('本轮未开启联网搜索，请直接使用通用知识作为主依据回答。')
-        lines.append('不要伪造引用；如果确实使用了上方私有资料，只能基于已提供片段做有限补充。')
+            lines.append('本轮未开启联网搜索，请直接使用通用知识回答。')
+        lines.append('不要伪造引用；如确实参考了上方私有资料，只能基于已给出的片段做有限补充。')
         return '\n'.join(lines)
 
     def _normalized_mode(self, mode: str | None) -> str:
         normalized = (mode or 'GENERAL').strip().upper()
         return 'SCOPED' if normalized == 'SCOPED' else 'GENERAL'
+
+    def _candidate_limit(self, top_k: int) -> int:
+        return min(self.MAX_FUSION_CANDIDATES, max(self.MIN_FUSION_CANDIDATES, top_k * 4))
 
     def _resolve_top_k(self, request: ChatCompletionRequest) -> int:
         requested = request.top_k if request.top_k is not None else self.settings.rag_top_k

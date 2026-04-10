@@ -26,6 +26,15 @@ export const updateDocument = (
 export const publishDocument = (id: number) =>
   http.post<never, DocumentDetailView>(`/v1/documents/${id}/publish`)
 
+export const publishNewDocument = (payload: {
+  projectId: number
+  title: string
+  summary?: string
+  contentJson: string
+  contentHtmlSnapshot: string
+  plainText: string
+}) => http.post<never, DocumentDetailView>('/v1/documents/publish-new', payload)
+
 export const getDocumentVersions = (id: number, params?: { pageNum?: number; pageSize?: number }) =>
   http.get<never, PageResponse<DocumentVersionView>>(`/v1/documents/${id}/versions`, { params })
 

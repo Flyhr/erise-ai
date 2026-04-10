@@ -1,7 +1,8 @@
 <template>
   <div class="page-shell ai-admin-page">
     <WorkspaceNavigationShell v-model="searchKeyword" active-nav="ai" brand-title="Erise Ai 知识库"
-      brand-subtitle="The Digital Curator" create-text="新建对话" :footer-title="selectedProjectDisplay || '知识工作台'"
+      brand-subtitle="The Digital Curator" create-text="新建对话"
+      :footer-title="selectedProjectDisplay || 'Erise AI 知识库 V1.0'"
       :footer-copy="activeModel?.providerCode || 'Premium Account'"
       :footer-avatar="(selectedProjectDisplay || 'ER').slice(0, 2).toUpperCase()"
       :user-name="activeModel?.modelName || 'AI 助理'" :user-role="sessionStatusText"
@@ -24,13 +25,15 @@
               <div class="knowledge-subtabs">
                 <span class="section-eyebrow">知识库文件</span>
               </div>
-              <div v-if="selectedAttachments.length" class="knowledge-selected">
-                <button v-for="attachment in selectedAttachments.filter((item) => item.attachmentType === 'FILE')"
-                  :key="attachmentKeyOf(attachment)" type="button" class="selection-chip" :disabled="sending"
-                  @click="removeAttachment(attachment)">
-                  <span>{{ attachment.title || `文件 #${attachment.sourceId}` }}</span>
-                  <span>×</span>
-                </button>
+              <div v-if="selectedAttachments.length" class="temp-file-list">
+                <div v-for="attachment in selectedAttachments.filter((item) => item.attachmentType === 'FILE')"
+                  :key="attachmentKeyOf(attachment)" class="temp-file-chip">
+                  <div class="temp-file-chip__copy">
+                    <strong>{{ attachment.title || `文件 #${attachment.sourceId}` }}</strong>
+                  </div>
+                  <button type="button" class="temp-file-chip__remove" :disabled="sending"
+                    @click="removeAttachment(attachment)">×</button>
+                </div>
                 <button v-if="selectedAttachments.some((item) => item.attachmentType !== 'FILE')" type="button"
                   class="mini-link mini-link--block" @click="showUnavailable('当前只展示文件标签')">
                   还有其它类型资料已附加
@@ -69,7 +72,7 @@
 
             <div class="thread-list thread-list--history">
               <div v-for="session in visibleSessions" :key="session.id" class="thread-item"
-                :class="{ 'is-active': session.id === activeSessionId }">
+                :class="{ 'is-active': session.id === activeSessionId, 'is-hovering-delete': hoveredDeleteId === session.id }">
                 <button type="button" class="thread-item__main" @click="openSession(session.id)">
                   <div class="thread-item__title">{{ session.title }}</div>
                   <div class="thread-item__meta">
@@ -77,6 +80,7 @@
                   </div>
                 </button>
                 <button type="button" class="thread-item__delete" :disabled="sending"
+                  @mouseenter="onDeleteMouseEnter(session.id)" @mouseleave="onDeleteMouseLeave(session.id)"
                   @click="removeSession(session.id)">×</button>
               </div>
               <div v-if="!visibleSessions.length" class="thread-empty">这里还没有历史会话。发送第一条消息后，会自动生成会话记录。</div>
@@ -136,8 +140,7 @@
                         </div>
                         <div v-else-if="message.roleCode === 'ASSISTANT'"
                           class="transcript-item__content transcript-item__content--markdown"
-                          :class="{ 'is-collapsed': isCollapsed(message) }"
-                          v-html="renderAssistantContent(message.content || '...')">
+                          :class="{ 'is-collapsed': isCollapsed(message) }" v-html="renderAssistantContent(message)">
                         </div>
                         <div v-else class="transcript-item__content" :class="{ 'is-collapsed': isCollapsed(message) }">
                           {{ message.content || '...' }}
@@ -147,26 +150,35 @@
                         <div v-if="message.errorMessage" class="transcript-item__notice">{{ message.errorMessage }}
                         </div>
 
-                        <div v-if="message.citations?.length" class="citation-panel citation-panel--modern">
+                        <div v-if="privateCitationGroups(message).length" class="citation-panel citation-panel--modern">
                           <div class="citation-panel__title">引用来源</div>
-
-                          <div v-if="privateCitationGroups(message).length" class="citation-panel__section">
-                            <div class="citation-panel__section-title">知识库 / 附件</div>
+                          <div class="citation-panel__section">
                             <button v-for="group in privateCitationGroups(message)" :key="group.key" type="button"
                               class="citation-card" @click="openCitation(group.representative)">
-                              <strong class="citation-card__title">{{ group.title }}</strong>
-
+                              <div class="citation-card__content">
+                                <strong class="citation-card__title">{{ group.title }}</strong>
+                                <small class="citation-card__meta">{{ privateCitationMeta(group) }}</small>
+                              </div>
                             </button>
                           </div>
+                        </div>
 
-                          <div v-if="visibleWebCitationGroups(message).length" class="citation-panel__section">
-                            <div class="citation-panel__section-title">联网搜索</div>
-                            <button v-for="group in visibleWebCitationGroups(message)" :key="group.key" type="button"
-                              class="citation-card citation-card--web" @click="openCitation(group.representative)">
-                              <strong class="citation-card__title citation-card__title--single">{{ group.title
-                                }}</strong>
-                            </button>
-
+                        <div v-if="visibleWebCitationGroups(message).length"
+                          class="citation-panel citation-panel--modern">
+                          <div class="citation-panel__title">联网搜索</div>
+                          <div class="citation-panel__section">
+                            <div v-for="group in visibleWebCitationGroups(message)" :key="group.key"
+                              class="citation-card citation-card--web">
+                              <div class="citation-card__content">
+                                <strong class="citation-card__title citation-card__title--single">{{ group.title
+                                  }}</strong>
+                                <small class="citation-card__meta">{{ group.urlLabel || '网页引用' }}</small>
+                              </div>
+                              <button type="button" class="citation-card__action"
+                                @click="openCitation(group.representative)">
+                                网页
+                              </button>
+                            </div>
                           </div>
                         </div>
                         <button v-if="hiddenWebCitationCount(message)" type="button" class="transcript-item__toggle"
@@ -362,6 +374,7 @@ import { getFiles } from '@/api/file'
 import { getProjects } from '@/api/project'
 import { resolveApiUrl } from '@/api/http'
 import WorkspaceNavigationShell from '@/components/common/WorkspaceNavigationShell.vue'
+import { useKnowledgeStatusPolling } from '@/composables/useKnowledgeStatusPolling'
 import type {
   AiAttachmentPayload,
   AiChatResponse,
@@ -699,6 +712,16 @@ const quickPrompts = computed(() => [
 let tickHandle: number | undefined
 let tempFilePollHandle: number | undefined
 
+const hoveredDeleteId = ref<number | undefined>(undefined)
+const onDeleteMouseEnter = (id: number) => {
+  hoveredDeleteId.value = id
+}
+const onDeleteMouseLeave = (id: number) => {
+  if (hoveredDeleteId.value === id) {
+    hoveredDeleteId.value = undefined
+  }
+}
+
 const tempFileState = (file: AiTempFileView) => resolveKnowledgeReadiness(file.parseStatus, file.indexStatus)
 const isTempFileReady = (file: AiTempFileView) => tempFileState(file) === 'ready'
 const isTempFileFailed = (file: AiTempFileView) => tempFileState(file) === 'failed'
@@ -759,7 +782,22 @@ const toUiMessage = (message: AiMessageView): UiMessage => ({
   latencyMs: message.latencyMs,
 })
 
-const renderAssistantContent = (content: string) => markdownRenderer.render(content || '...')
+const stripTrailingCitationAppendix = (content: string) => {
+  const normalized = (content || '').trimEnd()
+  if (!normalized) {
+    return ''
+  }
+  return normalized
+    .replace(/(?:\r?\n){2,}(?:#{1,6}\s*)?(?:引用来源|参考网页|参考链接|Sources?|References?)\s*[:：]?\s*[\s\S]*$/i, '')
+    .trimEnd()
+}
+
+const assistantContentOf = (message: UiMessage) => {
+  const cleaned = stripTrailingCitationAppendix(message.content || '')
+  return cleaned || message.content || '...'
+}
+
+const renderAssistantContent = (message: UiMessage) => markdownRenderer.render(assistantContentOf(message))
 
 const pageLabelFromNumbers = (pageNumbers: number[]) => {
   if (!pageNumbers.length) {
@@ -838,6 +876,8 @@ const citationGroupsOf = (message: UiMessage) => {
 
 const privateCitationGroups = (message: UiMessage) => citationGroupsOf(message).privateGroups
 const webCitationGroups = (message: UiMessage) => citationGroupsOf(message).webGroups
+const privateCitationMeta = (group: CitationGroup) =>
+  [citationSourceLabel(group.sourceType), group.pageLabel].filter(Boolean).join(' · ') || '知识库引用'
 const visibleWebCitationGroups = (message: UiMessage) => {
   const groups = webCitationGroups(message)
   return message.citationsExpanded ? groups : groups.slice(0, 1)
@@ -848,7 +888,10 @@ const toggleCitationExpansion = (message: UiMessage) => {
 }
 
 // 判断消息是否足够长，可以折叠显示
-const isCollapsible = (message: UiMessage) => message.content.length > 560 || (message.content.match(/\n/g)?.length ?? 0) > 12
+const isCollapsible = (message: UiMessage) => {
+  const content = message.roleCode === 'ASSISTANT' ? assistantContentOf(message) : message.content
+  return content.length > 560 || (content.match(/\n/g)?.length ?? 0) > 12
+}
 // 判断消息当前是否处于折叠状态（可折叠且未展开）
 const isCollapsed = (message: UiMessage) => isCollapsible(message) && !message.expanded
 // 切换消息展开/折叠状态（保留接口以备将来使用）
@@ -1082,6 +1125,14 @@ const refreshAttachmentOptions = async (projectId?: number) => {
     loadingAttachmentOptions.value = false
   }
 }
+
+useKnowledgeStatusPolling({
+  records: draftFiles,
+  reload: async () => {
+    await refreshAttachmentOptions(draftProjectId.value)
+  },
+  enabled: () => attachmentDialogVisible.value && !!draftProjectId.value,
+})
 
 const setDraftSelectionFromCurrent = () => {
   draftProjectId.value = activeProjectId.value

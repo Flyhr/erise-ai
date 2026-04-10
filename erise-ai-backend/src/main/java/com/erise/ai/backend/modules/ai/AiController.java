@@ -349,6 +349,7 @@ class AiService {
                 citation.sourceTitle(),
                 citation.snippet(),
                 citation.pageNo(),
+                citation.sectionPath(),
                 citation.score(),
                 citation.url()
         );
@@ -441,7 +442,7 @@ record AiSessionCreateRequest(Long projectId, String scene, String title) {
 record AiAttachmentRequest(@NotBlank String attachmentType, @NotNull Long sourceId, Long projectId, String title) {
 }
 
-record AiCitationView(String sourceType, Long sourceId, String sourceTitle, String snippet, Integer pageNo, Double score, String url) {
+record AiCitationView(String sourceType, Long sourceId, String sourceTitle, String snippet, Integer pageNo, String sectionPath, Double score, String url) {
 }
 
 record AiChatResponse(

@@ -19,5 +19,6 @@ class AiMessageCitation(Base, TimestampMixin):
     source_title: Mapped[str] = mapped_column(String(255), nullable=False)
     snippet: Mapped[str | None] = mapped_column(Text, nullable=True)
     page_no: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    section_path: Mapped[str | None] = mapped_column(String(255), nullable=True)
     score: Mapped[float | None] = mapped_column(Float, nullable=True)
     url: Mapped[str | None] = mapped_column(String(1000), nullable=True)

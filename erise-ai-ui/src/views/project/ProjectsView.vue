@@ -168,6 +168,7 @@ const submit = async () => {
     dialogVisible.value = false
     pageNum.value = 1
     await pushRoute()
+    await load()
   } catch (error) {
     ElMessage.error(resolveErrorMessage(error, editingProjectId.value ? '项目更新失败，请稍后重试' : '项目创建失败，请稍后重试'))
   } finally {

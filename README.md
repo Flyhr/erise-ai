@@ -92,9 +92,17 @@ docker compose --env-file .env.dev -f docker-compose.dev.yml down
 - 生产环境仍保留：`docker-compose.yml`
 - Nginx 开发态配置文件：`deploy/nginx/default.dev.conf`
 
-## 问题说明
+## 主要问题说明
 
-- 部分pdf解析失败，导致无法被AI助理引用到上下文进行问题回答。后续也许采用LangChain4j会更好
+### 部分pdf解析失败（已解决）4.9
+
+- 部分pdf解析失败，导致无法被AI助理引用到上下文进行问题回答。后续把 PDF 改成逐页判定、逐页 OCR fallback,并统一 PDF 解析服务，由 Python端 负责
+
+### 优化索引技术
+
 - qdrant向量数据库，需要优化索引技术，考虑混合索引加重排序来提高RAG性能
 - 文件的章节识别、切分等处理能力有待提高；文本分块太大导致检索不准，分块太小导致上下文丢失，后续把长文本切成适合模型处理的小块。
+
+### 优化前端界面交互
+
 - 前端界面需要优化

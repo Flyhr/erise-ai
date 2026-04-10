@@ -123,6 +123,14 @@ export interface SearchResultView {
   mimeType: string
   snippet?: string
   updatedAt?: string
+  pageNo?: number
+  sectionPath?: string
+  fileExt?: string
+  fileSize?: number
+  uploadStatus?: string
+  parseStatus?: string
+  indexStatus?: string
+  docStatus?: string
 }
 
 export interface KnowledgeAssetView {
@@ -162,6 +170,7 @@ export interface AiCitationView {
   sourceTitle: string
   snippet?: string
   pageNo?: number
+  sectionPath?: string
   score?: number
   url?: string
 }

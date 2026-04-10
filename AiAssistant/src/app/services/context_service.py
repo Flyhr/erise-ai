@@ -16,16 +16,19 @@ from src.app.models.ai_session import AiChatSession
 from src.app.schemas.chat import AttachmentContext, ChatCompletionRequest
 from src.app.services.prompt_service import get_system_prompt
 
-MAX_ATTACHMENT_CONTEXT_CHARS = 4000
 MAX_ATTACHMENTS_PER_REQUEST = 8
+MAX_ATTACHMENT_SUMMARY_CHARS = 320
+MAX_ATTACHMENT_CONTEXT_TOTAL_CHARS = 2400
 READY_STATUSES = {'READY', 'SUCCESS', 'INDEXED', 'COMPLETED'}
 PROCESSING_STATUSES = {'PROCESSING'}
 PENDING_STATUSES = {'INIT', 'PENDING', 'UPLOADING'}
 FAILED_STATUSES = {'FAILED', 'DELETED'}
 FORMAT_GUIDANCE_MESSAGE = (
     '回答格式要求：默认使用结构化 Markdown。先给出简洁结论，再按需要分段或分小节；'
-    '只有在确实需要列点时才使用列表，并统一使用 "-" 或 "1."，不要使用 "*" 作为常规项目符号；'
-    '段落之间保留空行；如果资料不足，要明确说明，不要伪造引用来源。'
+    '只有在确实需要列点时才使用列表，并统一使用 "-" 或 "1."；'
+    '如果资料不足，要明确说明，不要伪造引用来源。'
+    '不要在正文结尾追加“引用来源”“参考网页”“Sources”“References”等附录或链接清单，'
+    '引用由系统单独展示。'
 )
 
 
@@ -57,14 +60,20 @@ class LoadedAttachmentContext:
         return {
             'ready': '可引用',
             'processing': '解析中',
-            'pending': '待解析',
+            'pending': '待处理',
             'failed': '解析失败',
             'empty': '暂无可用正文',
         }.get(self.readiness, '状态未知')
 
 
-def _trim_text(text: str, limit: int = MAX_ATTACHMENT_CONTEXT_CHARS) -> tuple[str, bool]:
-    normalized = ' '.join((text or '').split())
+def _normalize_text(text: str) -> str:
+    return ' '.join((text or '').split())
+
+
+def _trim_text(text: str, limit: int) -> tuple[str, bool]:
+    normalized = _normalize_text(text)
+    if not normalized or limit <= 0:
+        return '', bool(normalized)
     if len(normalized) <= limit:
         return normalized, False
     return normalized[:limit].rstrip(), True
@@ -100,6 +109,81 @@ async def _fetch_attachment_payload(attachment: AttachmentContext, request_id: s
     return await fetch_file_context(attachment.source_id, request_id)
 
 
+def _build_loaded_attachment(
+    attachment: AttachmentContext,
+    payload: dict[str, object],
+    fallback_project_id: int | None,
+) -> LoadedAttachmentContext:
+    title = (
+        str(payload.get('title') or '')
+        or str(payload.get('fileName') or '')
+        or attachment.title
+        or f'{attachment.attachment_type} #{attachment.source_id}'
+    )
+    project_id = payload.get('projectId') or attachment.project_id or fallback_project_id
+    summary = _normalize_text(str(payload.get('summary') or ''))
+    plain_text = _normalize_text(str(payload.get('plainText') or ''))
+    parse_status = _normalize_status(payload.get('parseStatus'))
+    index_status = _normalize_status(payload.get('indexStatus'))
+    parse_error_message = str(payload.get('parseErrorMessage') or '').strip() or None
+    readiness = _resolve_attachment_readiness(parse_status, index_status, bool(summary or plain_text))
+    return LoadedAttachmentContext(
+        attachment_type=attachment.attachment_type,
+        source_id=attachment.source_id,
+        project_id=project_id,
+        title=title,
+        summary=summary,
+        plain_text=plain_text,
+        snippet='',
+        truncated=False,
+        parse_status=parse_status or None,
+        index_status=index_status or None,
+        parse_error_message=parse_error_message,
+        readiness=readiness,
+    )
+
+
+def _finalize_attachment_contexts(attachments: list[LoadedAttachmentContext]) -> list[LoadedAttachmentContext]:
+    if not attachments:
+        return []
+
+    consumed = 0
+    finalized: list[LoadedAttachmentContext] = []
+
+    for attachment in attachments:
+        remaining_budget = max(0, MAX_ATTACHMENT_CONTEXT_TOTAL_CHARS - consumed)
+        summary_limit = min(MAX_ATTACHMENT_SUMMARY_CHARS, remaining_budget)
+        summary_source = attachment.summary or attachment.plain_text
+        summary, summary_truncated = _trim_text(summary_source, summary_limit)
+        consumed += len(summary)
+
+        snippet_source = summary or attachment.parse_error_message or attachment.title
+        snippet, _ = _trim_text(snippet_source, 220)
+        readiness = _resolve_attachment_readiness(
+            attachment.parse_status or '',
+            attachment.index_status or '',
+            attachment.has_material,
+        )
+        finalized.append(
+            LoadedAttachmentContext(
+                attachment_type=attachment.attachment_type,
+                source_id=attachment.source_id,
+                project_id=attachment.project_id,
+                title=attachment.title,
+                summary=summary,
+                plain_text=attachment.plain_text,
+                snippet=snippet,
+                truncated=summary_truncated,
+                parse_status=attachment.parse_status,
+                index_status=attachment.index_status,
+                parse_error_message=attachment.parse_error_message,
+                readiness=readiness,
+            )
+        )
+
+    return finalized
+
+
 async def load_attachment_contexts(request: ChatCompletionRequest, request_id: str) -> list[LoadedAttachmentContext]:
     attachments = request.context.attachments[:MAX_ATTACHMENTS_PER_REQUEST]
     if not attachments:
@@ -114,37 +198,8 @@ async def load_attachment_contexts(request: ChatCompletionRequest, request_id: s
     for attachment, payload in zip(attachments, results, strict=False):
         if isinstance(payload, Exception) or payload is None or not isinstance(payload, dict):
             continue
-
-        title = (
-            str(payload.get('title') or '')
-            or str(payload.get('fileName') or '')
-            or attachment.title
-            or f'{attachment.attachment_type} #{attachment.source_id}'
-        )
-        project_id = payload.get('projectId') or attachment.project_id or request.context.project_id
-        summary = str(payload.get('summary') or '').strip()
-        plain_text = str(payload.get('plainText') or '').strip()
-        trimmed_text, truncated = _trim_text(plain_text)
-        parse_status = _normalize_status(payload.get('parseStatus'))
-        index_status = _normalize_status(payload.get('indexStatus'))
-        parse_error_message = str(payload.get('parseErrorMessage') or '').strip() or None
-        readiness = _resolve_attachment_readiness(parse_status, index_status, bool(summary or trimmed_text))
-
-        loaded.append(LoadedAttachmentContext(
-            attachment_type=attachment.attachment_type,
-            source_id=attachment.source_id,
-            project_id=project_id,
-            title=title,
-            summary=summary,
-            plain_text=trimmed_text,
-            snippet=(trimmed_text or summary or parse_error_message or '')[:220],
-            truncated=truncated,
-            parse_status=parse_status or None,
-            index_status=index_status or None,
-            parse_error_message=parse_error_message,
-            readiness=readiness,
-        ))
-    return loaded
+        loaded.append(_build_loaded_attachment(attachment, payload, request.context.project_id))
+    return _finalize_attachment_contexts(loaded)
 
 
 def _build_attachment_messages(attachments: list[LoadedAttachmentContext]) -> list[dict[str, str]]:
@@ -154,7 +209,7 @@ def _build_attachment_messages(attachments: list[LoadedAttachmentContext]) -> li
     scope_instruction = (
         '本轮对话附带了用户主动指定的文档、文件或聊天临时附件。'
         '只要用户提到“发给你的文件”“聊天附件”“这份资料”“这个文档”或“这个 PDF”，'
-        '都要优先以这些附件内容为主，再结合检索结果补充引用。'
+        '都要优先以这些附件范围内的检索结果为准，再结合其他知识补充回答。'
     )
     if len(attachments) == 1:
         scope_instruction += '当前只有 1 份附件，用户使用单数表达时默认指向这份附件。'
@@ -174,16 +229,17 @@ def _build_attachment_messages(attachments: list[LoadedAttachmentContext]) -> li
         lines.append(f'当前状态: {attachment.display_status}')
         if attachment.summary:
             lines.append(f'摘要: {attachment.summary}')
-        if attachment.plain_text:
-            lines.append('正文内容:')
-            lines.append(attachment.plain_text)
+
+        if attachment.is_ready:
+            lines.append('该附件已完成解析。回答时请通过附件范围检索命中的正文片段生成引用，不要假装正文已经完整注入上下文。')
         elif attachment.parse_error_message:
             lines.append(f'失败原因: {attachment.parse_error_message}')
             lines.append('当前还没有可引用的正文，不要假装已经读到全文。')
         else:
             lines.append('当前还没有可引用的正文，不要假装已经读到全文。')
+
         if attachment.truncated:
-            lines.append('[正文已按上下文上限截断，回答时优先依据已提供内容。]')
+            lines.append('[以上仅保留元数据与摘要，回答时请依赖检索命中的正文片段生成引用。]')
         messages.append({'role': 'system', 'content': '\n'.join(lines)})
     return messages
 
@@ -216,7 +272,7 @@ async def build_prompt_messages(
     if request.mode and request.mode.upper() == 'SCOPED':
         messages.append({
             'role': 'system',
-            'content': '本轮请求处于指定范围模式。请先使用当前项目上下文、显式附加的知识库文件/文档和临时文件回答；如果范围内资料不足，再根据联网开关决定是否参考后续提供的联网结果；仍不足时可以使用通用知识补充，但不要伪造范围内引用。',
+            'content': '本轮请求处于指定范围模式。请优先使用当前项目上下文、显式附加的知识库文件、文档和临时文件回答；如范围内资料不足，再根据联网开关决定是否参考后续提供的联网结果；仍不足时可以使用通用知识补充，但不要伪造范围内引用。',
         })
 
     if request.web_search_enabled is False:

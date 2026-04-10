@@ -1,0 +1,143 @@
+CREATE TABLE IF NOT EXISTS ai_chat_session (
+    id BIGINT NOT NULL AUTO_INCREMENT,
+    user_id BIGINT NOT NULL,
+    org_id BIGINT NOT NULL DEFAULT 0,
+    project_id BIGINT NULL,
+    scene VARCHAR(32) NOT NULL,
+    title VARCHAR(255) NOT NULL,
+    summary_text TEXT NULL,
+    last_message_at DATETIME(6) NULL,
+    message_count INT NOT NULL DEFAULT 0,
+    status VARCHAR(32) NOT NULL DEFAULT 'active',
+    created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+    updated_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
+    PRIMARY KEY (id),
+    KEY idx_ai_chat_session_user_id (user_id),
+    KEY idx_ai_chat_session_project_id (project_id),
+    KEY idx_ai_chat_session_last_message_at (last_message_at),
+    KEY idx_ai_chat_session_status (status)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS ai_chat_message (
+    id BIGINT NOT NULL AUTO_INCREMENT,
+    session_id BIGINT NOT NULL,
+    user_id BIGINT NOT NULL,
+    role VARCHAR(32) NOT NULL,
+    content TEXT NOT NULL,
+    content_format VARCHAR(32) NOT NULL DEFAULT 'text',
+    message_status VARCHAR(32) NOT NULL DEFAULT 'success',
+    sequence_no INT NOT NULL,
+    model_code VARCHAR(128) NULL,
+    provider_code VARCHAR(64) NULL,
+    confidence DOUBLE NULL,
+    refused_reason VARCHAR(255) NULL,
+    citations_json TEXT NULL,
+    used_tools_json TEXT NULL,
+    answer_source VARCHAR(64) NULL,
+    prompt_tokens INT NULL,
+    completion_tokens INT NULL,
+    total_tokens INT NULL,
+    latency_ms INT NULL,
+    error_code VARCHAR(64) NULL,
+    error_message VARCHAR(500) NULL,
+    request_id VARCHAR(128) NULL,
+    parent_message_id BIGINT NULL,
+    created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+    updated_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
+    PRIMARY KEY (id),
+    KEY idx_ai_chat_message_session_id (session_id),
+    KEY idx_ai_chat_message_user_id (user_id),
+    KEY idx_ai_chat_message_status (message_status),
+    KEY idx_ai_chat_message_request_id (request_id),
+    KEY idx_ai_chat_message_session_sequence (session_id, sequence_no)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS ai_request_log (
+    id BIGINT NOT NULL AUTO_INCREMENT,
+    request_id VARCHAR(128) NOT NULL,
+    session_id BIGINT NOT NULL,
+    user_message_id BIGINT NULL,
+    assistant_message_id BIGINT NULL,
+    provider_code VARCHAR(64) NOT NULL,
+    model_code VARCHAR(128) NOT NULL,
+    scene VARCHAR(32) NOT NULL,
+    temperature DOUBLE NULL,
+    max_tokens INT NULL,
+    stream BOOLEAN NOT NULL DEFAULT FALSE,
+    request_payload_json TEXT NULL,
+    response_payload_json TEXT NULL,
+    input_token_count INT NULL,
+    output_token_count INT NULL,
+    duration_ms INT NULL,
+    success_flag BOOLEAN NOT NULL DEFAULT FALSE,
+    error_code VARCHAR(64) NULL,
+    error_message VARCHAR(500) NULL,
+    created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+    updated_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
+    PRIMARY KEY (id),
+    KEY idx_ai_request_log_request_id (request_id),
+    KEY idx_ai_request_log_session_id (session_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS ai_prompt_template (
+    id BIGINT NOT NULL AUTO_INCREMENT,
+    template_code VARCHAR(128) NOT NULL,
+    template_name VARCHAR(255) NOT NULL,
+    scene VARCHAR(32) NOT NULL,
+    system_prompt TEXT NOT NULL,
+    user_prompt_wrapper TEXT NULL,
+    enabled BOOLEAN NOT NULL DEFAULT TRUE,
+    version_no INT NOT NULL DEFAULT 1,
+    created_by VARCHAR(64) NULL,
+    created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+    updated_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
+    PRIMARY KEY (id),
+    UNIQUE KEY uk_ai_prompt_template_code (template_code),
+    KEY idx_ai_prompt_template_scene (scene)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS ai_model_config (
+    id BIGINT NOT NULL AUTO_INCREMENT,
+    provider_code VARCHAR(64) NOT NULL,
+    model_code VARCHAR(128) NOT NULL,
+    model_name VARCHAR(255) NOT NULL,
+    base_url VARCHAR(255) NULL,
+    api_key_ref VARCHAR(64) NULL,
+    enabled BOOLEAN NOT NULL DEFAULT TRUE,
+    support_stream BOOLEAN NOT NULL DEFAULT TRUE,
+    support_system_prompt BOOLEAN NOT NULL DEFAULT TRUE,
+    max_context_tokens INT NULL,
+    priority_no INT NOT NULL DEFAULT 1,
+    created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+    updated_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
+    PRIMARY KEY (id),
+    UNIQUE KEY uk_ai_model_config_model_code (model_code),
+    KEY idx_ai_model_config_provider_priority (provider_code, priority_no)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS ai_message_citation (
+    id BIGINT NOT NULL AUTO_INCREMENT,
+    message_id BIGINT NOT NULL,
+    session_id BIGINT NOT NULL,
+    user_id BIGINT NOT NULL,
+    position_no INT NOT NULL DEFAULT 0,
+    source_type VARCHAR(32) NOT NULL,
+    source_id BIGINT NOT NULL,
+    source_title VARCHAR(255) NOT NULL,
+    snippet TEXT NULL,
+    page_no INT NULL,
+    section_path VARCHAR(255) NULL,
+    score DOUBLE NULL,
+    url VARCHAR(1000) NULL,
+    created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+    updated_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
+    PRIMARY KEY (id),
+    KEY idx_ai_message_citation_message_id (message_id),
+    KEY idx_ai_message_citation_session_id (session_id),
+    KEY idx_ai_message_citation_user_id (user_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- Normalize legacy temp-file defaults after the earlier V4/V5/V7 migrations.
+ALTER TABLE ea_ai_temp_file
+    MODIFY COLUMN parse_status VARCHAR(32) NOT NULL DEFAULT 'PENDING',
+    MODIFY COLUMN index_status VARCHAR(32) NOT NULL DEFAULT 'PENDING';

@@ -19,6 +19,7 @@ import lombok.Data;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -62,6 +63,11 @@ public class DocumentController {
     @PostMapping("/{id}/publish")
     public ApiResponse<DocumentDetailView> publish(@PathVariable Long id) {
         return ApiResponse.success(documentService.publish(id));
+    }
+
+    @PostMapping("/publish-new")
+    public ApiResponse<DocumentDetailView> publishNew(@Valid @RequestBody DocumentPublishNewRequest request) {
+        return ApiResponse.success(documentService.publishNew(request));
     }
 
     @GetMapping("/{id}/versions")
@@ -213,6 +219,49 @@ class DocumentService {
         syncRagKnowledge(document, content.getPlainText());
         auditLogService.log(currentUser, "DOCUMENT_PUBLISH", "DOCUMENT", id, java.util.Map.of("versionNo", nextVersion));
         return detail(id);
+    }
+
+    @Transactional
+    DocumentDetailView publishNew(DocumentPublishNewRequest request) {
+        var currentUser = SecurityUtils.currentUser();
+        projectService.requireAccessibleProject(request.projectId());
+
+        DocumentEntity document = new DocumentEntity();
+        document.setOwnerUserId(currentUser.userId());
+        document.setProjectId(request.projectId());
+        document.setTitle(request.title());
+        document.setSummary(request.summary());
+        document.setDocStatus("PUBLISHED");
+        document.setLatestVersionNo(1);
+        document.setEditorType("TIPTAP");
+        document.setCreatedBy(currentUser.userId());
+        document.setUpdatedBy(currentUser.userId());
+        documentMapper.insert(document);
+
+        DocumentContentEntity content = new DocumentContentEntity();
+        content.setDocumentId(document.getId());
+        content.setContentJson(request.contentJson());
+        content.setContentHtmlSnapshot(request.contentHtmlSnapshot());
+        content.setPlainText(request.plainText());
+        content.setCreatedBy(currentUser.userId());
+        content.setUpdatedBy(currentUser.userId());
+        documentContentMapper.insert(content);
+
+        DocumentVersionEntity version = new DocumentVersionEntity();
+        version.setDocumentId(document.getId());
+        version.setVersionNo(1);
+        version.setTitle(document.getTitle());
+        version.setContentJson(content.getContentJson());
+        version.setContentHtmlSnapshot(content.getContentHtmlSnapshot());
+        version.setPlainText(content.getPlainText());
+        version.setPublishedBy(currentUser.userId());
+        version.setCreatedBy(currentUser.userId());
+        version.setUpdatedBy(currentUser.userId());
+        documentVersionMapper.insert(version);
+
+        syncRagKnowledge(document, content.getPlainText());
+        auditLogService.log(currentUser, "DOCUMENT_PUBLISH_NEW", "DOCUMENT", document.getId(), request);
+        return detail(document.getId());
     }
 
     PageResponse<DocumentVersionView> versions(Long id, long pageNum, long pageSize) {
@@ -377,6 +426,16 @@ record DocumentCreateRequest(@NotNull Long projectId, @NotBlank String title, St
 }
 
 record DocumentUpdateRequest(
+        @NotBlank String title,
+        String summary,
+        @NotNull String contentJson,
+        @NotNull String contentHtmlSnapshot,
+        @NotNull String plainText
+) {
+}
+
+record DocumentPublishNewRequest(
+        @NotNull Long projectId,
         @NotBlank String title,
         String summary,
         @NotNull String contentJson,

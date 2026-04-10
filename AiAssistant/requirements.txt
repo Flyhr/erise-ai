@@ -29,7 +29,7 @@ cryptography>=41.0.0
 # ========================
 # 向量数据库 & 工具
 # ========================
-qdrant-client>=1.9
+qdrant-client[fastembed]>=1.14.1,<2.0.0
 duckduckgo-search>=6.2
 
 # ========================
@@ -38,3 +38,5 @@ duckduckgo-search>=6.2
 python-multipart>=0.0.9
 PyMuPDF>=1.24
 rapidocr_onnxruntime>=1.3
+python-docx>=1.1
+olefile>=0.47

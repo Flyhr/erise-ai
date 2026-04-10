@@ -52,6 +52,7 @@ class RagQueryHit(CamelModel):
     source_title: str
     snippet: str
     page_no: int | None = None
+    section_path: str | None = None
     url: str | None = None
 
 

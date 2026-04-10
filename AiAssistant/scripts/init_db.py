@@ -16,7 +16,7 @@ def main() -> None:
     settings = get_settings()
     init_database()
     bootstrap_defaults()
-    print(f'Initialized AI chat schema and defaults for {settings.mysql_dsn}')
+    print(f'Validated AI chat schema and bootstrapped defaults for {settings.mysql_dsn}')
 
 
 if __name__ == '__main__':

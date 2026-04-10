@@ -128,6 +128,34 @@ public class CloudAiClient {
         }
     }
 
+    public FileExtractResponse extractFileText(Long userId, String fileName, String fileExt, byte[] bytes, String requestId) {
+        try {
+            MultiValueMap<String, Object> body = new LinkedMultiValueMap<>();
+            body.add("file", new ByteArrayResource(bytes) {
+                @Override
+                public String getFilename() {
+                    return fileName;
+                }
+            });
+            body.add("fileName", fileName);
+            body.add("fileExt", fileExt);
+            HttpEntity<MultiValueMap<String, Object>> entity = new HttpEntity<>(
+                    body,
+                    buildHeaders(resolveUserId(userId), requestId, MediaType.MULTIPART_FORM_DATA)
+            );
+            String payload = restTemplate.exchange(
+                    properties.getCloud().getBaseUrl() + "/internal/ai/chat/files/extract",
+                    HttpMethod.POST,
+                    entity,
+                    String.class
+            ).getBody();
+            return readData(payload, FileExtractResponse.class);
+        } catch (RestClientException exception) {
+            log.warn("AI file extraction request failed for file {}", fileName, exception);
+            throw new BizException(ErrorCodes.AI_ERROR, extractRestClientMessage(exception, "AI file extraction service unavailable"));
+        }
+    }
+
     private <T> T post(CurrentUser user, String path, Object body, String requestId, Class<T> type) {
         return post(user.userId(), path, body, requestId, type);
     }
@@ -187,6 +215,10 @@ public class CloudAiClient {
         headers.set("X-Org-Id", "0");
         headers.set("X-Request-Id", requestId);
         return headers;
+    }
+
+    private Long resolveUserId(Long userId) {
+        return userId == null || userId <= 0 ? 0L : userId;
     }
 
     private <T> T readData(String body, Class<T> type) {
@@ -351,6 +383,23 @@ public class CloudAiClient {
     ) {
     }
 
+    public record FileExtractChunkResponse(
+            Integer chunkNum,
+            String chunkText,
+            Integer pageNo,
+            String sectionPath
+    ) {
+    }
+
+    public record FileExtractResponse(
+            String plainText,
+            List<FileExtractChunkResponse> chunks,
+            String parser,
+            Boolean usedOcr,
+            Integer pageCount
+    ) {
+    }
+
     public record ChatResponse(
             String requestId,
             Long sessionId,
@@ -376,6 +425,7 @@ public class CloudAiClient {
             String sourceTitle,
             String snippet,
             Integer pageNo,
+            String sectionPath,
             Double score,
             String url
     ) {

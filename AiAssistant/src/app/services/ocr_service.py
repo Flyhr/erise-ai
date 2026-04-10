@@ -15,6 +15,9 @@ class PdfOcrResult:
 
 
 class OcrService:
+    MIN_MEANINGFUL_PAGE_CHARS = 48
+    MIN_MEANINGFUL_WORD_CHARS = 18
+
     def __init__(self) -> None:
         self._engine = None
 
@@ -68,7 +71,7 @@ class OcrService:
 
     def _extract_page_text(self, page, fitz_module) -> tuple[str, bool]:
         native_text = self._normalize_text(page.get_text('text'))
-        if native_text:
+        if self._is_meaningful_text(native_text):
             return native_text, False
 
         engine = self._get_engine()
@@ -80,9 +83,11 @@ class OcrService:
                 continue
 
             ocr_text = self._normalize_ocr_result(result)
-            if ocr_text:
+            if self._is_meaningful_text(ocr_text):
                 return ocr_text, True
 
+        if native_text:
+            return native_text, False
         return '', True
 
     def _normalize_ocr_result(self, result: object) -> str:
@@ -97,6 +102,29 @@ class OcrService:
 
     def _merge_page_texts(self, page_texts: list[str]) -> str:
         return '\n\n'.join(text for text in page_texts if text).strip()
+
+    def _is_meaningful_text(self, value: str) -> bool:
+        normalized = self._normalize_text(value)
+        if not normalized:
+            return False
+        compact = ''.join(normalized.split())
+        if len(compact) >= self.MIN_MEANINGFUL_PAGE_CHARS:
+            return True
+        if len(compact) < 24:
+            return False
+        word_chars = sum(1 for char in compact if self._is_word_char(char))
+        return word_chars >= self.MIN_MEANINGFUL_WORD_CHARS
+
+    def _is_word_char(self, char: str) -> bool:
+        return char.isalnum() or self._is_cjk(char)
+
+    def _is_cjk(self, char: str) -> bool:
+        code_point = ord(char)
+        return (
+            0x3400 <= code_point <= 0x4DBF
+            or 0x4E00 <= code_point <= 0x9FFF
+            or 0xF900 <= code_point <= 0xFAFF
+        )
 
     def _normalize_text(self, value: object) -> str:
         if value is None:

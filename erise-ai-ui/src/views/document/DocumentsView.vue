@@ -1,6 +1,13 @@
 <template>
-  <ProjectScopedListShell v-if="scopedProjectId" :project-id="scopedProjectId" title="文档列表" :keyword="keyword"
-    search-placeholder="按标题或摘要搜索文档" @update:keyword="keyword = $event" @search="handleSearch">
+  <ProjectScopedListShell
+    v-if="scopedProjectId"
+    :project-id="scopedProjectId"
+    title="文档列表"
+    :keyword="keyword"
+    search-placeholder="按标题或摘要搜索文档"
+    @update:keyword="keyword = $event"
+    @search="handleSearch"
+  >
     <template #actions>
       <el-button @click="resetFilters">重置</el-button>
       <el-button type="primary" @click="handleSearch">查询</el-button>
@@ -34,8 +41,9 @@
         <el-table-column label="操作" min-width="220" fixed="right">
           <template #default="{ row }">
             <div class="table-actions">
-              <el-button text
-                @click="router.push({ path: `/documents/${row.id}/edit`, query: { mode: 'preview' } })">浏览</el-button>
+              <el-button text @click="router.push({ path: `/documents/${row.id}/edit`, query: { mode: 'preview' } })">
+                浏览
+              </el-button>
               <el-button text @click="router.push(`/documents/${row.id}/edit`)">编辑</el-button>
               <el-dropdown>
                 <el-button text>更多</el-button>
@@ -49,7 +57,11 @@
           </template>
         </el-table-column>
       </AppDataTable>
-      <AppEmptyState v-else title="当前项目还没有文档" description="新建在线文档后，这里会展示文档状态、版本和最近更新时间。" />
+      <AppEmptyState
+        v-else
+        title="当前项目还没有文档"
+        description="新建在线文档后，这里会显示文档状态、版本和最近更新时间。"
+      />
 
       <template #footer>
         <div class="documents-footer">
@@ -62,15 +74,24 @@
 
   <div v-else class="page-shell">
     <AppFilterBar>
-      <el-input v-model="keyword" style="grid-column: span 5" clearable placeholder="按标题或摘要搜索文档"
-        @keyup.enter="handleSearch" />
-      <el-select v-model="selectedProjectId" style="grid-column: span 4" filterable clearable placeholder="筛选项目">
+      <el-input
+        v-model="keyword"
+        style="grid-column: span 5"
+        clearable
+        placeholder="按标题或摘要搜索文档"
+        @keyup.enter="handleSearch"
+      />
+      <el-select
+        v-model="selectedProjectId"
+        style="grid-column: span 4"
+        filterable
+        clearable
+        placeholder="筛选项目"
+      >
         <el-option v-for="project in projects" :key="project.id" :label="project.name" :value="project.id" />
       </el-select>
 
-      <div class="documents-filter-copy">
-        支持按项目筛选后浏览、创建和管理在线文档。
-      </div>
+      <div class="documents-filter-copy">支持按项目筛选后浏览、创建和管理在线文档。</div>
 
       <template #actions>
         <el-button type="primary" @click="handleSearch">查询</el-button>
@@ -109,8 +130,9 @@
         <el-table-column label="操作" min-width="220" fixed="right">
           <template #default="{ row }">
             <div class="table-actions">
-              <el-button text
-                @click="router.push({ path: `/documents/${row.id}/edit`, query: { mode: 'preview' } })">浏览</el-button>
+              <el-button text @click="router.push({ path: `/documents/${row.id}/edit`, query: { mode: 'preview' } })">
+                浏览
+              </el-button>
               <el-button text @click="router.push(`/documents/${row.id}/edit`)">编辑</el-button>
               <el-dropdown>
                 <el-button text>更多</el-button>
@@ -124,7 +146,11 @@
           </template>
         </el-table-column>
       </AppDataTable>
-      <AppEmptyState v-else title="还没有匹配的文档" description="调整筛选条件，或先选择项目创建一份新文档。" />
+      <AppEmptyState
+        v-else
+        title="还没有匹配的文档"
+        description="调整筛选条件，或者先选择项目创建一份新文档。"
+      />
 
       <template #footer>
         <div class="documents-footer">
@@ -140,7 +166,7 @@
 import { computed, onMounted, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { useRoute, useRouter } from 'vue-router'
-import { createDocument, deleteDocument, getDocuments } from '@/api/document'
+import { deleteDocument, getDocuments } from '@/api/document'
 import AppDataTable from '@/components/common/AppDataTable.vue'
 import AppEmptyState from '@/components/common/AppEmptyState.vue'
 import AppFilterBar from '@/components/common/AppFilterBar.vue'
@@ -230,13 +256,10 @@ const create = async () => {
     ElMessage.warning('请先选择一个项目，再创建文档。')
     return
   }
-  try {
-    const created = await createDocument({ projectId: createProjectId.value, title: '未命名文档', summary: '' })
-    ElMessage.success('文档已创建')
-    router.push(`/documents/${created.id}/edit`)
-  } catch (error) {
-    ElMessage.error(resolveErrorMessage(error, '文档创建失败'))
-  }
+  await router.push({
+    path: '/documents/new/edit',
+    query: { projectId: createProjectId.value },
+  })
 }
 
 const removeDocument = async (document: DocumentSummaryView) => {

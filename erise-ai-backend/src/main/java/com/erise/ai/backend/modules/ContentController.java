@@ -75,7 +75,7 @@ class ContentItemService {
 
     private final ContentItemMapper contentItemMapper;
     private final ProjectService projectService;
-    private final KnowledgeService knowledgeService;
+    private final RagKnowledgeService ragKnowledgeService;
     private final AuditLogService auditLogService;
 
     PageResponse<ContentItemSummaryView> page(Long projectId, String itemType, String keyword, long pageNum, long pageSize) {
@@ -139,18 +139,18 @@ class ContentItemService {
         var currentUser = SecurityUtils.currentUser();
         ContentItemEntity entity = requireAccessibleItem(id);
         contentItemMapper.deleteById(id);
-        knowledgeService.deleteForSource(entity.getProjectId(), entity.getItemType(), id);
+        ragKnowledgeService.deleteKbSource(entity.getOwnerUserId(), entity.getProjectId(), entity.getItemType(), id);
         auditLogService.log(currentUser, "CONTENT_DELETE", entity.getItemType(), id, null);
     }
 
     private void syncKnowledge(ContentItemEntity entity) {
-        knowledgeService.replaceForSource(
+        ragKnowledgeService.replaceKbSource(
                 entity.getOwnerUserId(),
                 entity.getProjectId(),
                 entity.getItemType(),
                 entity.getId(),
                 entity.getTitle(),
-                knowledgeService.splitText(joinText(entity.getSummary(), entity.getPlainText()), null)
+                ragKnowledgeService.splitText(joinText(entity.getSummary(), entity.getPlainText()), null)
         );
     }
 

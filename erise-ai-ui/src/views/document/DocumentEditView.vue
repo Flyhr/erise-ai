@@ -1,7 +1,6 @@
-﻿<template>
+<template>
   <div class="page-shell">
-    <AppPageHeader :title="form.title || (isPreview ? '文档浏览' : '文档阅读')" show-back back-label="返回文档列表"
-      :back-to="documentBackTarget">
+    <AppPageHeader :title="form.title || (isPreview ? '文档浏览' : '文档编辑')" show-back back-label="返回文档列表" :back-to="documentBackTarget">
       <template #actions>
         <el-button plain @click="toggleToc">{{ tocVisible ? '隐藏目录' : '显示目录' }}</el-button>
         <el-dropdown trigger="click" @command="handleExportCommand">
@@ -17,7 +16,7 @@
         </el-dropdown>
         <el-button v-if="isPreview" type="primary" @click="openEditMode">进入编辑</el-button>
         <template v-else>
-          <el-button :loading="saving" @click="save">保存草稿</el-button>
+          <el-button v-if="!isNewDraft" :loading="saving" @click="save()">保存草稿</el-button>
           <el-button plain @click="openPreviewMode">浏览</el-button>
           <el-button type="primary" :loading="publishing" @click="publish">发布</el-button>
         </template>
@@ -29,7 +28,7 @@
     <div class="document-editor-grid" :class="{ 'is-toc-hidden': !tocVisible }">
       <section class="section-stack document-editor-main">
         <template v-if="isPreview">
-          <AppSectionCard title="文档信息" description="浏览态只展示已保存内容，不复用可编辑编辑器外壳。">
+          <AppSectionCard title="文档信息" :description="isNewDraft ? '当前为本地草稿预览，发布后才会真正创建文档。' : '浏览态只展示已保存内容，不复用可编辑编辑器外壳。'">
             <div class="preview-meta">
               <AppStatusTag :label="documentStatusLabel(detailStatus)" :tone="documentStatusTone(detailStatus)" />
               <span>创建于 {{ formatDateTime(createdAt) }}</span>
@@ -38,7 +37,7 @@
             <div v-if="form.summary" class="document-summary">{{ form.summary }}</div>
           </AppSectionCard>
 
-          <AppSectionCard title="阅读视图" description="用于浏览导入后的正文内容、标题层级和表格结构。">
+          <AppSectionCard title="阅读视图" description="用于浏览正文内容、标题层级和表格结构。">
             <article ref="readerContentRef" class="document-reader" v-html="contentHtml" />
           </AppSectionCard>
         </template>
@@ -56,8 +55,14 @@
           </AppSectionCard>
 
           <AppSectionCard title="正文编辑器">
-            <OfficeEditor ref="officeEditorRef" v-model="contentHtml" :readonly="false" :height="760"
-              toolbar-locale="zh" placeholder="在这里输入文档正文内容" />
+            <OfficeEditor
+              ref="officeEditorRef"
+              v-model="contentHtml"
+              :readonly="false"
+              :height="760"
+              toolbar-locale="zh"
+              placeholder="在这里输入文档正文内容"
+            />
           </AppSectionCard>
         </template>
       </section>
@@ -73,9 +78,14 @@
           </div>
 
           <div v-if="tocItems.length" class="document-toc__list">
-            <button v-for="item in tocItems" :key="`${item.index}-${item.text}`" type="button"
-              class="document-toc__item" :style="{ paddingLeft: `${16 + (item.level - 1) * 14}px` }"
-              @click="focusHeading(item.index)">
+            <button
+              v-for="item in tocItems"
+              :key="`${item.index}-${item.text}`"
+              type="button"
+              class="document-toc__item"
+              :style="{ paddingLeft: `${16 + (item.level - 1) * 14}px` }"
+              @click="focusHeading(item.index)"
+            >
               <span>{{ item.text }}</span>
               <small>{{ item.tagName.toUpperCase() }}</small>
             </button>
@@ -92,10 +102,10 @@
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, onMounted, reactive, ref } from 'vue'
+import { computed, nextTick, onMounted, reactive, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import { useRoute, useRouter } from 'vue-router'
-import { getDocument, publishDocument, updateDocument } from '@/api/document'
+import { getDocument, publishDocument, publishNewDocument, updateDocument } from '@/api/document'
 import { trackWorkspaceActivity } from '@/api/workspace'
 import AppEmptyState from '@/components/common/AppEmptyState.vue'
 import AppPageHeader from '@/components/common/AppPageHeader.vue'
@@ -113,10 +123,20 @@ import {
 } from '@/utils/documentExport'
 import { documentStatusLabel, documentStatusTone, formatDateTime, resolveErrorMessage } from '@/utils/formatters'
 
-const props = defineProps<{ id: string }>()
+interface LocalDraftDocument {
+  projectId: number
+  title: string
+  summary: string
+  contentHtml: string
+  createdAt: string
+  updatedAt: string
+}
+
+const props = defineProps<{ id?: string }>()
 const route = useRoute()
 const router = useRouter()
-const documentId = Number(props.id)
+const documentId = computed(() => (props.id ? Number(props.id) : undefined))
+const isNewDraft = computed(() => documentId.value === undefined)
 const saving = ref(false)
 const publishing = ref(false)
 const tocVisible = ref(true)
@@ -134,10 +154,8 @@ const isPreview = computed(() => route.query.mode === 'preview')
 const tocItems = computed(() => buildTocFromHtml(contentHtml.value))
 const exportFileName = computed(() => form.title.trim() || '未命名文档')
 const exportHtml = computed(() => renderDocumentHtml(form.title.trim() || '未命名文档', form.summary, contentHtml.value))
-// const pageSubtitle = computed(() =>
-//   isPreview.value ? '当前为只读浏览态，适合阅读、校对和导出。' : '编辑态会同步保存正文快照、纯文本和文档状态。',
-// )
 const documentBackTarget = computed(() => (projectId.value ? `/projects/${projectId.value}/documents` : '/documents'))
+const localDraftKey = computed(() => (projectId.value ? `document-draft:${projectId.value}` : ''))
 
 const htmlToText = (html: string) => {
   const parser = new DOMParser()
@@ -145,11 +163,158 @@ const htmlToText = (html: string) => {
   return doc.body.textContent?.trim() || ''
 }
 
-const save = async () => {
+const buildEditorRoute = (preview = false) =>
+  isNewDraft.value
+    ? {
+        path: '/documents/new/edit',
+        query: {
+          projectId: projectId.value,
+          ...(preview ? { mode: 'preview' } : {}),
+        },
+      }
+    : {
+        path: `/documents/${documentId.value}/edit`,
+        query: preview ? { mode: 'preview' } : {},
+      }
+
+const parseProjectId = () => {
+  const parsed = Number(route.query.projectId)
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : undefined
+}
+
+const loadLocalDraft = (): LocalDraftDocument | undefined => {
+  if (!localDraftKey.value) {
+    return undefined
+  }
+  const raw = sessionStorage.getItem(localDraftKey.value)
+  if (!raw) {
+    return undefined
+  }
+  try {
+    const parsed = JSON.parse(raw) as LocalDraftDocument
+    if (parsed.projectId !== projectId.value) {
+      return undefined
+    }
+    return parsed
+  } catch {
+    sessionStorage.removeItem(localDraftKey.value)
+    return undefined
+  }
+}
+
+const persistLocalDraft = () => {
+  if (!isNewDraft.value || !projectId.value || !localDraftKey.value) {
+    return
+  }
+  const existing = loadLocalDraft()
+  const draft: LocalDraftDocument = {
+    projectId: projectId.value,
+    title: form.title.trim() || '未命名文档',
+    summary: form.summary,
+    contentHtml: contentHtml.value || '<p></p>',
+    createdAt: existing?.createdAt || createdAt.value || new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  }
+  sessionStorage.setItem(localDraftKey.value, JSON.stringify(draft))
+  createdAt.value = draft.createdAt
+  updatedAt.value = draft.updatedAt
+}
+
+const clearLocalDraft = () => {
+  if (localDraftKey.value) {
+    sessionStorage.removeItem(localDraftKey.value)
+  }
+}
+
+const resetState = () => {
+  form.title = ''
+  form.summary = ''
+  contentHtml.value = '<p></p>'
+  projectId.value = undefined
+  detailStatus.value = 'DRAFT'
+  createdAt.value = ''
+  updatedAt.value = ''
+}
+
+const initializeNewDraft = () => {
+  const nextProjectId = parseProjectId()
+  if (!nextProjectId) {
+    ElMessage.warning('请先选择项目，再创建文档。')
+    void router.replace('/documents')
+    return
+  }
+
+  projectId.value = nextProjectId
+  detailStatus.value = 'DRAFT'
+
+  const localDraft = loadLocalDraft()
+  const now = new Date().toISOString()
+  if (localDraft) {
+    form.title = localDraft.title || '未命名文档'
+    form.summary = localDraft.summary || ''
+    contentHtml.value = localDraft.contentHtml || '<p></p>'
+    createdAt.value = localDraft.createdAt || now
+    updatedAt.value = localDraft.updatedAt || now
+    return
+  }
+
+  form.title = typeof route.query.title === 'string' && route.query.title.trim() ? route.query.title.trim() : '未命名文档'
+  form.summary = typeof route.query.summary === 'string' ? route.query.summary : ''
+  contentHtml.value = '<p></p>'
+  createdAt.value = now
+  updatedAt.value = now
+  persistLocalDraft()
+}
+
+const initializeExistingDocument = async () => {
+  if (!documentId.value) {
+    return
+  }
+  const detail = await getDocument(documentId.value)
+  projectId.value = detail.projectId
+  form.title = detail.title
+  form.summary = detail.summary || ''
+  contentHtml.value = detail.contentHtmlSnapshot || '<p></p>'
+  detailStatus.value = detail.docStatus
+  createdAt.value = detail.createdAt
+  updatedAt.value = detail.updatedAt
+  try {
+    await trackWorkspaceActivity({
+      assetType: 'DOCUMENT',
+      assetId: documentId.value,
+      actionCode: isPreview.value ? 'DOCUMENT_VIEW' : 'DOCUMENT_EDIT_OPEN',
+    })
+  } catch {
+    // best effort only
+  }
+}
+
+const initializeView = async () => {
+  resetState()
+  if (isNewDraft.value) {
+    initializeNewDraft()
+    return
+  }
+  await initializeExistingDocument()
+}
+
+const save = async (options: { silent?: boolean } = {}) => {
+  if (isNewDraft.value) {
+    persistLocalDraft()
+    if (!options.silent) {
+      ElMessage.success('草稿已保存在本地')
+    }
+    return true
+  }
+
+  if (!documentId.value) {
+    return false
+  }
+
   saving.value = true
   try {
     form.title = form.title.trim() || '未命名文档'
-    const detail = await updateDocument(documentId, {
+    const detail = await updateDocument(documentId.value, {
       title: form.title,
       summary: form.summary,
       contentJson: JSON.stringify({ type: 'TINYMCE', html: contentHtml.value }),
@@ -158,7 +323,9 @@ const save = async () => {
     })
     detailStatus.value = detail.docStatus
     updatedAt.value = detail.updatedAt
-    ElMessage.success('草稿已保存')
+    if (!options.silent) {
+      ElMessage.success('草稿已保存')
+    }
     return true
   } catch (error) {
     ElMessage.error(resolveErrorMessage(error, '保存失败，请稍后重试'))
@@ -169,13 +336,34 @@ const save = async () => {
 }
 
 const publish = async () => {
-  const saved = await save()
-  if (!saved) {
-    return
-  }
   publishing.value = true
   try {
-    const detail = await publishDocument(documentId)
+    form.title = form.title.trim() || '未命名文档'
+
+    if (isNewDraft.value) {
+      if (!projectId.value) {
+        ElMessage.warning('请先选择项目，再发布文档。')
+        return
+      }
+      const detail = await publishNewDocument({
+        projectId: projectId.value,
+        title: form.title,
+        summary: form.summary,
+        contentJson: JSON.stringify({ type: 'TINYMCE', html: contentHtml.value }),
+        contentHtmlSnapshot: contentHtml.value,
+        plainText: htmlToText(contentHtml.value),
+      })
+      clearLocalDraft()
+      ElMessage.success('文档已发布')
+      await router.replace(`/documents/${detail.id}/edit`)
+      return
+    }
+
+    const saved = await save({ silent: true })
+    if (!saved || !documentId.value) {
+      return
+    }
+    const detail = await publishDocument(documentId.value)
     detailStatus.value = detail.docStatus
     updatedAt.value = detail.updatedAt
     ElMessage.success('文档已发布')
@@ -186,8 +374,8 @@ const publish = async () => {
   }
 }
 
-const openPreviewMode = () => router.push({ path: `/documents/${documentId}/edit`, query: { mode: 'preview' } })
-const openEditMode = () => router.push(`/documents/${documentId}/edit`)
+const openPreviewMode = () => router.push(buildEditorRoute(true))
+const openEditMode = () => router.push(buildEditorRoute(false))
 const toggleToc = () => {
   tocVisible.value = !tocVisible.value
 }
@@ -245,25 +433,25 @@ const handleExportCommand = async (command: string | number | object) => {
   }
 }
 
+watch(
+  [isNewDraft, projectId, () => form.title, () => form.summary, contentHtml],
+  () => {
+    if (isNewDraft.value && projectId.value) {
+      persistLocalDraft()
+    }
+  },
+)
+
 onMounted(async () => {
-  const detail = await getDocument(documentId)
-  projectId.value = detail.projectId
-  form.title = detail.title
-  form.summary = detail.summary || ''
-  contentHtml.value = detail.contentHtmlSnapshot || '<p></p>'
-  detailStatus.value = detail.docStatus
-  createdAt.value = detail.createdAt
-  updatedAt.value = detail.updatedAt
-  try {
-    await trackWorkspaceActivity({
-      assetType: 'DOCUMENT',
-      assetId: documentId,
-      actionCode: isPreview.value ? 'DOCUMENT_VIEW' : 'DOCUMENT_EDIT_OPEN',
-    })
-  } catch {
-    // best effort only
-  }
+  await initializeView()
 })
+
+watch(
+  [() => props.id, () => route.query.projectId],
+  async () => {
+    await initializeView()
+  },
+)
 </script>
 
 <style scoped>

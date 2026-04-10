@@ -329,6 +329,7 @@ class ChatService:
                     source_title=citation.source_title,
                     snippet=citation.snippet,
                     page_no=citation.page_no,
+                    section_path=citation.section_path,
                     score=citation.score,
                     url=citation.url,
                 )
@@ -351,50 +352,12 @@ class ChatService:
                     source_title=record.source_title,
                     snippet=record.snippet,
                     page_no=record.page_no,
+                    section_path=record.section_path,
                     score=record.score,
                     url=record.url,
                 )
             )
         return citation_map
-
-    def _to_attachment_citations(self, attachment_contexts: list[LoadedAttachmentContext]) -> list[CitationView]:
-        return [
-            CitationView(
-                source_type=attachment.attachment_type,
-                source_id=attachment.source_id,
-                source_title=attachment.title,
-                snippet=attachment.snippet or attachment.summary or None,
-                score=1.0,
-            )
-            for attachment in attachment_contexts
-            if attachment.has_material
-        ]
-
-    def _merge_citations(
-        self,
-        primary: list[CitationView],
-        supplementary: list[CitationView],
-    ) -> list[CitationView]:
-        merged: list[CitationView] = []
-        seen_source_keys: set[tuple[str, int, str | None]] = set()
-        seen_detail_keys: set[tuple[str, int, int | None, str | None]] = set()
-
-        def _append(citation: CitationView, *, dedupe_by_source_only: bool) -> None:
-            detail_key = (citation.source_type, citation.source_id, citation.page_no, citation.url)
-            source_key = (citation.source_type, citation.source_id, citation.url)
-            if detail_key in seen_detail_keys:
-                return
-            if dedupe_by_source_only and source_key in seen_source_keys:
-                return
-            merged.append(citation)
-            seen_detail_keys.add(detail_key)
-            seen_source_keys.add(source_key)
-
-        for citation in primary:
-            _append(citation, dedupe_by_source_only=False)
-        for citation in supplementary:
-            _append(citation, dedupe_by_source_only=True)
-        return merged
 
     def _merge_used_tools(self, used_tools: list[str], attachment_contexts: list[LoadedAttachmentContext]) -> list[str]:
         merged = list(used_tools)
@@ -671,10 +634,7 @@ class ChatService:
             )
 
         retrieval_decision = await rag_service.query(request, context)
-        effective_citations = self._merge_citations(
-            retrieval_decision.citations,
-            self._to_attachment_citations(ready_attachment_contexts),
-        )
+        effective_citations = retrieval_decision.citations
         effective_used_tools = self._merge_used_tools(retrieval_decision.used_tools, ready_attachment_contexts)
 
         model = get_model_config(db, request.model_code)
@@ -923,10 +883,7 @@ class ChatService:
             return attachment_guard_stream()
 
         retrieval_decision = await rag_service.query(request, context)
-        effective_citations = self._merge_citations(
-            retrieval_decision.citations,
-            self._to_attachment_citations(ready_attachment_contexts),
-        )
+        effective_citations = retrieval_decision.citations
         effective_used_tools = self._merge_used_tools(retrieval_decision.used_tools, ready_attachment_contexts)
 
         model = get_model_config(db, request.model_code)

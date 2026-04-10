@@ -409,6 +409,7 @@
 }
 
 .temp-file-chip__copy {
+  font-size: 8%;
   display: flex;
   min-width: 0;
   flex-direction: column;
@@ -421,7 +422,11 @@
   overflow: hidden;
   text-overflow: ellipsis;
 }
-
+.thread-item__title {
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+}
 .temp-file-chip__copy small {
   color: #5f6775;
 }
@@ -464,8 +469,6 @@
   gap: 10px;
   overflow-y: auto;
   padding-right: 4px;
-  /* 为避免与右侧底部输入区重叠，预留底部空间使列表能正确滚动 */
-  /* 缩小预留高度以便进入页面时能看到发送按钮；同步上移 composer（bottom:20px），因此预留为 160 + 20 */
   padding-bottom: 180px;
 }
 
@@ -489,18 +492,26 @@
   flex-direction: column;
   gap: 4px;
   min-width: 0;
-  padding: 12px;
+  padding: 2px;
   border-radius: 12px;
   text-align: left;
   background: transparent;
 }
+.thread-item__main {
+  transition:
+    background 0.18s ease,
+    box-shadow 0.18s ease;
+}
 
-.thread-item__title {
-  color: #181c20;
-  font-weight: 700;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+/* 当悬停在整行（但未悬停在删除按钮上）或直接悬停在主区域时，主区域出现阴影背景 */
+.thread-item:not(.is-hovering-delete):hover .thread-item__main,
+.thread-item__main:hover {
+  background: rgba(213, 213, 213, 0.7);
+}
+
+/* 当当前行的删除按钮被悬停时，禁止主区域的 hover 背景 */
+.thread-item.is-hovering-delete .thread-item__main {
+  background: transparent !important;
 }
 
 .thread-item__meta,
@@ -520,12 +531,28 @@
 .thread-item__delete {
   width: 34px;
   height: 34px;
-  align-self: center;
+  align-self: left-start;
   border-radius: 999px;
   background: transparent;
   color: #5f6775;
 }
+.thread-item__delete {
+  margin-top: 20%;
 
+  transition:
+    box-shadow 0.18s ease,
+    background 0.18s ease,
+    transform 0.12s ease;
+  display: inline-grid;
+  place-items: center;
+}
+
+/* 删除按钮单独悬停时只对其圆形容器应用阴影 */
+.thread-item__delete:hover {
+  background: rgba(213, 213, 213, 0.7);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.7);
+  transform: translateY(-1px);
+}
 .chat-stage {
   display: flex;
   width: 100%;
@@ -973,11 +1000,13 @@
 }
 
 .citation-card {
-  height: 35px;
+  width: 100%;
+  min-height: 44px;
   display: flex;
-  flex-direction: column;
-  gap: 4px;
-  padding: 5px 5px;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 8px 10px;
   border-radius: 14px;
   background: #fff;
   border: 1px solid rgba(192, 199, 212, 0.45);
@@ -986,6 +1015,13 @@
 
 .citation-card--web {
   background: rgba(255, 255, 255, 0.92);
+}
+
+.citation-card__content {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
 }
 
 .citation-card__title {
@@ -998,6 +1034,23 @@
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.citation-card__meta {
+  color: #66707a;
+  font-size: 12px;
+}
+
+.citation-card__action {
+  border: 0;
+  border-radius: 999px;
+  padding: 6px 12px;
+  background: rgba(0, 96, 169, 0.12);
+  color: #0060a9;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  flex-shrink: 0;
 }
 
 .attachment-dialog--modern,
