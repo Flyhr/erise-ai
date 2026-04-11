@@ -237,6 +237,7 @@ class SparseKnowledgeSupport {
 class KnowledgeTokenizerSupport {
 
     private static final Pattern ASCII_TERM_PATTERN = Pattern.compile("[a-z0-9][a-z0-9_\\-.]{1,31}");
+    private static final int MAX_TERM_LENGTH = 96;
     private static final Set<String> STOP_WORDS = Set.of(
             "a", "an", "and", "are", "as", "at", "be", "by", "for", "from", "in", "into", "is",
             "of", "on", "or", "that", "the", "this", "to", "with",
@@ -325,6 +326,9 @@ class KnowledgeTokenizerSupport {
         }
         String normalized = normalize(raw).replace(" ", "");
         if (normalized.isBlank() || STOP_WORDS.contains(normalized)) {
+            return null;
+        }
+        if (normalized.length() > MAX_TERM_LENGTH) {
             return null;
         }
         if (containsHan(normalized)) {

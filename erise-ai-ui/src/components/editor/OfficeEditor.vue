@@ -76,6 +76,8 @@ const content = computed({
 
 const resolvedLocale = computed(() => localeMeta[props.toolbarLocale])
 const resolvedPlaceholder = computed(() => props.placeholder || resolvedLocale.value.placeholder)
+const resolvedLanguage = computed(() => (props.toolbarLocale === 'zh' ? 'zh-CN' : 'en'))
+const resolvedLanguageUrl = computed(() => (props.toolbarLocale === 'zh' ? '/tinymce/langs/zh-CN.js' : undefined))
 
 const filePickerCallback = (callback: (url: string, meta?: Record<string, string>) => void, _value: string, meta: { filetype?: string }) => {
   if (meta.filetype !== 'image') {
@@ -132,6 +134,8 @@ const editorInit = computed(() => ({
   branding: false,
   promotion: false,
   help_accessibility: false,
+  language: resolvedLanguage.value,
+  language_url: resolvedLanguageUrl.value,
   readonly: props.readonly,
   skin: false,
   content_css: false,

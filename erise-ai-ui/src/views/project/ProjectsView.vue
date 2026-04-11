@@ -1,33 +1,34 @@
 <template>
   <div class="page-shell">
     <AppFilterBar>
-      <el-input v-model="keyword" style="grid-column: span 6" clearable placeholder="按项目名称或描述搜索"
-        @keyup.enter="runSearch" />
-      <el-select v-model="statusFilter" style="grid-column: span 3" clearable placeholder="筛选状态">
-        <el-option label="进行中" value="ACTIVE" />
-        <el-option label="草稿" value="DRAFT" />
-        <el-option label="已归档" value="ARCHIVED" />
-      </el-select>
-      <div class="projects-total">{{ total }} 个项目</div>
+      <el-input v-model="keyword" class="projects-search" clearable placeholder="按项目名称或描述搜索" @keyup.enter="runSearch">
+        <template #prefix>
+          <span class="material-symbols-outlined">search</span>
+        </template>
+      </el-input>
+
+      <div class="projects-total">共 {{ total }} 个项目</div>
       <template #actions>
         <el-button @click="resetFilters">重置</el-button>
-        <el-button type="primary" @click="openCreateDialog">新建项目</el-button>
+        <el-button type="primary" class="projects-create-button" @click="openCreateDialog">
+          <span class="material-symbols-outlined">add</span>
+          <span>创建项目</span>
+        </el-button>
       </template>
     </AppFilterBar>
 
     <div v-if="projects.length" class="project-grid">
-      <AppSectionCard v-for="project in projects" :key="project.id" compact class="project-card"
-        @click="openProject(project.id)">
+      <AppSectionCard v-for="project in projects" :key="project.id" compact class="project-card" @click="openProject(project.id)">
         <div class="project-card__top">
           <div class="project-card__title">{{ project.name }}</div>
-          <el-dropdown trigger="click" @command="(command) => handleProjectCommand(command, project)">
+          <el-dropdown trigger="click" @command="handleProjectCommand($event, project)">
             <button type="button" class="project-card__menu" aria-label="更多操作" @click.stop>
               <span class="project-card__menu-dots">···</span>
             </button>
             <template #dropdown>
               <el-dropdown-menu>
-                <el-dropdown-item command="edit">编辑项目</el-dropdown-item>
-                <el-dropdown-item command="delete" class="project-card__danger">删除项目</el-dropdown-item>
+                <el-dropdown-item command="edit">编辑</el-dropdown-item>
+                <el-dropdown-item command="delete" class="project-card__danger">删除</el-dropdown-item>
               </el-dropdown-menu>
             </template>
           </el-dropdown>
@@ -35,16 +36,20 @@
         <div class="project-card__summary">{{ project.description || '暂无项目简介' }}</div>
       </AppSectionCard>
     </div>
-    <AppEmptyState v-else title="没有匹配的项目" description="调整筛选条件，或者先创建一个新的项目空间。">
-      <el-button type="primary" @click="openCreateDialog">创建项目</el-button>
+
+    <AppEmptyState v-else title="没有匹配的项目" description="调整搜索条件，或者先创建一个新的项目空间。">
+      <el-button type="primary" class="projects-create-button" @click="openCreateDialog">
+        <span class="material-symbols-outlined">add</span>
+        <span>创建项目</span>
+      </el-button>
     </AppEmptyState>
 
     <div class="projects-footer">
-      <span class="page-subtitle">每页最多展示 25 个项目</span>
-      <CompactPager :page-num="pageNum" :page-size="pageSize" :total="total" @change="handlePageChange" />
+      <span class="projects-footer__count">共 {{ total }} 个项目</span>
+      <CompactPager variant="project" :page-num="pageNum" :page-size="pageSize" :total="total" @change="handlePageChange" />
     </div>
 
-    <el-dialog v-model="dialogVisible" :title="editingProjectId ? '编辑项目' : '新建项目'" width="460px">
+    <el-dialog v-model="dialogVisible" :title="editingProjectId ? '编辑项目' : '创建项目'" width="460px">
       <el-form :model="form" label-position="top">
         <el-form-item label="项目名称">
           <el-input v-model="form.name" maxlength="80" show-word-limit />
@@ -208,7 +213,7 @@ const removeProject = async (project: ProjectDetailView) => {
     ElMessage.success('项目已删除')
     await load()
     await ensureCurrentPage()
-  } catch (error: any) {
+  } catch (error) {
     if (error !== 'cancel' && error !== 'close') {
       ElMessage.error(resolveErrorMessage(error, '项目删除失败，请稍后重试'))
     }
@@ -226,12 +231,44 @@ watch(
 </script>
 
 <style scoped>
+.projects-search {
+  grid-column: span 6;
+}
+
+.projects-search :deep(.el-input__wrapper) {
+  min-height: 46px;
+  border-radius: 14px;
+  background: #e0e2e9;
+  box-shadow: none;
+}
+
+.projects-search :deep(.el-input__wrapper.is-focus) {
+  background: #ffffff;
+  box-shadow: 0 0 0 2px rgba(0, 96, 169, 0.12);
+}
+
+.projects-search :deep(.el-input__prefix-inner) {
+  color: #5f6775;
+}
+
 .projects-total {
   grid-column: span 3;
   display: flex;
   align-items: center;
   color: var(--muted);
   font-size: 13px;
+}
+
+.projects-create-button {
+  min-height: 46px;
+  padding: 0 18px;
+  border-radius: 14px;
+  font-weight: 800;
+  box-shadow: 0 12px 24px rgba(0, 96, 169, 0.16);
+}
+
+.projects-create-button :global(.material-symbols-outlined) {
+  font-size: 18px;
 }
 
 .project-grid {
@@ -311,7 +348,6 @@ watch(
   font-size: 18px;
   line-height: 1;
   letter-spacing: 1px;
-  transform: translateY(-4px);
 }
 
 .projects-footer {
@@ -320,6 +356,12 @@ watch(
   gap: 12px;
   align-items: center;
   flex-wrap: wrap;
+}
+
+.projects-footer__count {
+  color: #667085;
+  font-size: 13px;
+  font-weight: 600;
 }
 
 @media (max-width: 1440px) {
@@ -335,6 +377,10 @@ watch(
 }
 
 @media (max-width: 760px) {
+  .projects-search {
+    grid-column: span 12;
+  }
+
   .project-grid {
     grid-template-columns: 1fr;
   }

@@ -54,12 +54,35 @@ const fetchBinary = async (path: string) => {
   return response
 }
 
+const openPreviewWindow = () => {
+  const previewWindow = window.open('', '_blank')
+  if (!previewWindow) {
+    throw new Error('预览窗口被浏览器拦截，请允许弹出窗口后重试')
+  }
+  return previewWindow
+}
+
+const normalizePreviewContentType = (response: Response) => {
+  const contentType = response.headers.get('content-type') || 'application/octet-stream'
+  if (/^text\/(html|plain|markdown)\b/i.test(contentType) && !/charset=/i.test(contentType)) {
+    return `${contentType};charset=UTF-8`
+  }
+  return contentType
+}
+
 const openBlobWindow = async (path: string) => {
-  const response = await fetchBinary(path)
-  const blob = await response.blob()
-  const url = URL.createObjectURL(blob)
-  window.open(url, '_blank', 'noopener,noreferrer')
-  window.setTimeout(() => URL.revokeObjectURL(url), 5000)
+  const previewWindow = openPreviewWindow()
+  try {
+    const response = await fetchBinary(path)
+    const buffer = await response.arrayBuffer()
+    const blob = new Blob([buffer], { type: normalizePreviewContentType(response) })
+    const url = URL.createObjectURL(blob)
+    previewWindow.location.replace(url)
+    window.setTimeout(() => URL.revokeObjectURL(url), 5000)
+  } catch (error) {
+    previewWindow.close()
+    throw error
+  }
 }
 
 export const previewFileBinary = async (id: number) => openBlobWindow(`/v1/files/${id}/preview`)

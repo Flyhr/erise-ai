@@ -132,15 +132,18 @@
                 <div v-if="messages.length" class="transcript-list transcript-list--modern">
                   <article v-for="message in messages" :key="message.id" class="transcript-item"
                     :class="message.roleCode === 'USER' ? 'is-user' : 'is-assistant'">
-                    <div class="transcript-item__avatar"
-                      :class="{ 'transcript-item__avatar--assistant': message.roleCode === 'ASSISTANT' }">
+                    <div class="transcript-item__avatar-wrap"
+                      :class="{ 'transcript-item__avatar-wrap--assistant': message.roleCode === 'ASSISTANT' }">
+                      <span v-if="assistantThinkingLabel(message)" class="transcript-item__metric transcript-item__metric--aside">
+                        {{ assistantThinkingLabel(message) }}
+                      </span>
+                      <div class="transcript-item__avatar"
+                        :class="{ 'transcript-item__avatar--assistant': message.roleCode === 'ASSISTANT' }">
                       <span v-if="message.roleCode === 'USER'" class="material-symbols-outlined">person</span>
                       <template v-else>
                         <span class="material-symbols-outlined" style="font-variation-settings: 'FILL' 1">smart_toy</span>
-                        <span v-if="assistantThinkingLabel(message)" class="transcript-item__metric transcript-item__metric--aside">
-                          {{ assistantThinkingLabel(message) }}
-                        </span>
                       </template>
+                      </div>
                     </div>
                     <div class="transcript-item__panel">
                       <div class="transcript-item__head">

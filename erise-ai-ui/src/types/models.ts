@@ -137,7 +137,7 @@ export interface SearchResultView {
 }
 
 export interface KnowledgeAssetView {
-  assetType: 'FILE' | 'DOCUMENT'
+  assetType: 'FILE' | 'DOCUMENT' | 'CONTENT'
   assetId: number
   projectId?: number
   title: string
@@ -149,6 +149,7 @@ export interface KnowledgeAssetView {
   indexStatus?: string
   parseErrorMessage?: string
   docStatus?: string
+  itemType?: 'SHEET' | 'BOARD' | 'DATA_TABLE'
   updatedAt: string
   createdAt?: string
 }

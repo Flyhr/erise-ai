@@ -115,7 +115,7 @@ const errorText = ref('')
 const captcha = reactive({ captchaId: '', captchaImage: '' })
 const form = reactive({
   username: '',
-  // displayName: '',
+  displayName: '',
   email: '',
   password: '',
   captchaCode: ''
@@ -160,7 +160,7 @@ const submit = async () => {
       authStore.applySession(session)
       ElMessage.success('注册成功')
     }
-    await router.push('/workspace')
+    await router.push(authStore.isAdmin ? '/admin' : '/workspace')
   } catch (error) {
     errorText.value = resolveErrorMessage(error, '暂时无法登录，请稍后重试。')
   } finally {

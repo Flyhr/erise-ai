@@ -4,6 +4,8 @@ import com.erise.ai.backend.common.config.EriseProperties;
 import com.erise.ai.backend.common.exception.BizException;
 import com.erise.ai.backend.common.exception.ErrorCodes;
 import io.minio.BucketExistsArgs;
+import io.minio.CopyObjectArgs;
+import io.minio.CopySource;
 import io.minio.GetObjectArgs;
 import io.minio.MakeBucketArgs;
 import io.minio.MinioClient;
@@ -81,6 +83,29 @@ public class MinioStorageClient {
             );
         } catch (Exception ignored) {
             // Cleanup is best-effort.
+        }
+    }
+
+    public void moveObject(String sourceKey, String targetKey) {
+        try {
+            minioClient.copyObject(
+                    CopyObjectArgs.builder()
+                            .bucket(properties.getStorage().getBucket())
+                            .object(targetKey)
+                            .source(CopySource.builder()
+                                    .bucket(properties.getStorage().getBucket())
+                                    .object(sourceKey)
+                                    .build())
+                            .build()
+            );
+            minioClient.removeObject(
+                    RemoveObjectArgs.builder()
+                            .bucket(properties.getStorage().getBucket())
+                            .object(sourceKey)
+                            .build()
+            );
+        } catch (Exception exception) {
+            throw new BizException(ErrorCodes.FILE_ERROR, "Failed to move file: " + exception.getMessage());
         }
     }
 

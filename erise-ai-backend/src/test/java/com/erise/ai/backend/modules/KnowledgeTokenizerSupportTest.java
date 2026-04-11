@@ -29,4 +29,11 @@ class KnowledgeTokenizerSupportTest {
         assertThat(frequencies.entrySet()).anyMatch(entry -> entry.getKey().contains("搜索") && entry.getValue() >= 2);
         assertThat(frequencies).doesNotContainKeys("的", "a");
     }
+
+    @Test
+    void countTermsSkipsOverlongFallbackNoise() {
+        Map<String, Integer> frequencies = support.countTerms("@".repeat(160), 16);
+
+        assertThat(frequencies).isEmpty();
+    }
 }

@@ -19,6 +19,7 @@ import jakarta.validation.constraints.NotBlank;
 import java.sql.Timestamp;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.LocalTime;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -95,6 +96,7 @@ public class AdminController {
 @RequiredArgsConstructor
 class AdminService {
 
+    private static final int DASHBOARD_TREND_DAYS = 7;
     private static final Set<String> RETRYABLE_FAILURE_STATUSES = Set.of("FAILED", "NEEDS_REPAIR");
 
     private final UserMapper userMapper;
@@ -132,8 +134,10 @@ class AdminService {
         return new AdminDashboardView(
                 overview,
                 metrics,
-                loginTrend(7),
-                downloadTrend(7),
+                loginTrend(DASHBOARD_TREND_DAYS),
+                apiCallSeries(DASHBOARD_TREND_DAYS),
+                tokenSeries(DASHBOARD_TREND_DAYS),
+                tokenUsage(),
                 securityLogs(),
                 downloadLogs(),
                 topActions()
@@ -395,20 +399,40 @@ class AdminService {
         return fillDailyTrend(days, jdbcTemplate.queryForList("""
                 select date(created_at) as point_date, count(*) as total
                 from ea_user_login_log
-                where deleted = 0 and success = 1 and created_at >= date_sub(curdate(), interval ? day)
+                where deleted = 0 and success = 1 and created_at >= ?
                 group by date(created_at)
                 order by point_date asc
-                """, days, days));
+                """, dashboardTrendStart(days)));
     }
 
-    private List<AdminTrendPointView> downloadTrend(int days) {
-        return fillDailyTrend(days, jdbcTemplate.queryForList("""
-                select date(created_at) as point_date, count(*) as total
-                from ea_audit_log
-                where deleted = 0 and action_code = 'FILE_DOWNLOAD' and created_at >= date_sub(curdate(), interval ? day)
-                group by date(created_at)
-                order by point_date asc
-                """, days, days));
+    private List<AdminSeriesView> apiCallSeries(int days) {
+        return fillSeriesTrend(days, jdbcTemplate.queryForList("""
+                select date(r.created_at) as point_date,
+                       coalesce(nullif(r.model_code, ''), 'unknown-model') as series_key,
+                       coalesce(nullif(mc.model_name, ''), nullif(r.model_code, ''), '未识别模型') as series_label,
+                       count(*) as total
+                from ai_request_log r
+                left join ai_model_config mc on mc.model_code = r.model_code
+                where r.created_at >= ?
+                group by date(r.created_at), coalesce(nullif(r.model_code, ''), 'unknown-model'),
+                         coalesce(nullif(mc.model_name, ''), nullif(r.model_code, ''), '未识别模型')
+                order by point_date asc, total desc, series_label asc
+                """, dashboardTrendStart(days)));
+    }
+
+    private List<AdminSeriesView> tokenSeries(int days) {
+        return fillSeriesTrend(days, jdbcTemplate.queryForList("""
+                select date(r.created_at) as point_date,
+                       coalesce(nullif(r.model_code, ''), 'unknown-model') as series_key,
+                       coalesce(nullif(mc.model_name, ''), nullif(r.model_code, ''), '未识别模型') as series_label,
+                       coalesce(sum(coalesce(r.input_token_count, 0) + coalesce(r.output_token_count, 0)), 0) as total
+                from ai_request_log r
+                left join ai_model_config mc on mc.model_code = r.model_code
+                where r.created_at >= ?
+                group by date(r.created_at), coalesce(nullif(r.model_code, ''), 'unknown-model'),
+                         coalesce(nullif(mc.model_name, ''), nullif(r.model_code, ''), '未识别模型')
+                order by point_date asc, total desc, series_label asc
+                """, dashboardTrendStart(days)));
     }
 
     private List<AdminTrendPointView> fillDailyTrend(int days, List<Map<String, Object>> rows) {
@@ -427,6 +451,64 @@ class AdminService {
             trend.add(new AdminTrendPointView(date.toString(), values.getOrDefault(date, 0L)));
         }
         return trend;
+    }
+
+    private List<AdminSeriesView> fillSeriesTrend(int days, List<Map<String, Object>> rows) {
+        Map<String, String> labels = new LinkedHashMap<>();
+        Map<String, Map<LocalDate, Long>> seriesValues = new LinkedHashMap<>();
+        for (Map<String, Object> row : rows) {
+            Object pointDate = row.get("point_date");
+            LocalDate date = pointDate instanceof java.sql.Date sqlDate
+                    ? sqlDate.toLocalDate()
+                    : LocalDate.parse(String.valueOf(pointDate));
+            String seriesKey = String.valueOf(row.get("series_key"));
+            String seriesLabel = String.valueOf(row.get("series_label"));
+            labels.putIfAbsent(seriesKey, seriesLabel);
+            seriesValues.computeIfAbsent(seriesKey, ignored -> new LinkedHashMap<>())
+                    .put(date, ((Number) row.get("total")).longValue());
+        }
+        List<AdminSeriesView> series = new ArrayList<>();
+        LocalDate start = LocalDate.now().minusDays(days - 1L);
+        for (Map.Entry<String, String> entry : labels.entrySet()) {
+            List<AdminTrendPointView> points = new ArrayList<>();
+            Map<LocalDate, Long> values = seriesValues.getOrDefault(entry.getKey(), Map.of());
+            for (int i = 0; i < days; i++) {
+                LocalDate date = start.plusDays(i);
+                points.add(new AdminTrendPointView(date.toString(), values.getOrDefault(date, 0L)));
+            }
+            series.add(new AdminSeriesView(entry.getKey(), entry.getValue(), points));
+        }
+        return series;
+    }
+
+    private AdminTokenUsageView tokenUsage() {
+        Long promptTokens7d = scalar("""
+                select coalesce(sum(input_token_count), 0)
+                from ai_request_log
+                where created_at >= ?
+                """, trailingDaysStart(7));
+        Long completionTokens7d = scalar("""
+                select coalesce(sum(output_token_count), 0)
+                from ai_request_log
+                where created_at >= ?
+                """, trailingDaysStart(7));
+        Long totalTokens24h = scalar("""
+                select coalesce(sum(coalesce(input_token_count, 0) + coalesce(output_token_count, 0)), 0)
+                from ai_request_log
+                where created_at >= ?
+                """, LocalDateTime.now().minusHours(24));
+        Long apiCalls24h = scalar("""
+                select count(*)
+                from ai_request_log
+                where created_at >= ?
+                """, LocalDateTime.now().minusHours(24));
+        return new AdminTokenUsageView(
+                promptTokens7d == null ? 0L : promptTokens7d,
+                completionTokens7d == null ? 0L : completionTokens7d,
+                (promptTokens7d == null ? 0L : promptTokens7d) + (completionTokens7d == null ? 0L : completionTokens7d),
+                totalTokens24h == null ? 0L : totalTokens24h,
+                apiCalls24h == null ? 0L : apiCalls24h
+        );
     }
 
     private List<AdminSecurityLogView> securityLogs() {
@@ -465,12 +547,13 @@ class AdminService {
         return jdbcTemplate.query("""
                         select action_code, count(*) as total
                         from ea_audit_log
-                        where deleted = 0 and created_at >= date_sub(now(), interval 7 day)
+                        where deleted = 0 and created_at >= ?
                         group by action_code
                         order by total desc
                         limit 8
                         """,
-                (rs, rowNum) -> new AdminActionMetricView(rs.getString("action_code"), rs.getLong("total")));
+                (rs, rowNum) -> new AdminActionMetricView(rs.getString("action_code"), rs.getLong("total")),
+                trailingDaysStart(7));
     }
 
     private long count(String table) {
@@ -479,8 +562,20 @@ class AdminService {
     }
 
     private long scalar(String sql) {
-        Long value = jdbcTemplate.queryForObject(sql, Long.class);
+        return scalar(sql, new Object[0]);
+    }
+
+    private long scalar(String sql, Object... args) {
+        Long value = jdbcTemplate.queryForObject(sql, Long.class, args);
         return value == null ? 0 : value;
+    }
+
+    private LocalDateTime dashboardTrendStart(int days) {
+        return LocalDate.now().minusDays(Math.max(days - 1L, 0L)).atStartOfDay();
+    }
+
+    private LocalDateTime trailingDaysStart(int days) {
+        return LocalDateTime.of(LocalDate.now().minusDays(Math.max(days - 1L, 0L)), LocalTime.MIN);
     }
 
     private LocalDateTime toLocalDateTime(Timestamp timestamp) {
@@ -529,7 +624,9 @@ record AdminDashboardView(
         AdminOverviewView overview,
         AdminOperationalMetricsView metrics,
         List<AdminTrendPointView> visitTrend,
-        List<AdminTrendPointView> downloadTrend,
+        List<AdminSeriesView> apiCallSeries,
+        List<AdminSeriesView> tokenSeries,
+        AdminTokenUsageView tokenUsage,
         List<AdminSecurityLogView> securityLogs,
         List<AdminDownloadLogView> downloadLogs,
         List<AdminActionMetricView> topActions
@@ -537,6 +634,18 @@ record AdminDashboardView(
 }
 
 record AdminTrendPointView(String label, long value) {
+}
+
+record AdminSeriesView(String key, String label, List<AdminTrendPointView> points) {
+}
+
+record AdminTokenUsageView(
+        long promptTokens7d,
+        long completionTokens7d,
+        long totalTokens7d,
+        long totalTokens24h,
+        long apiCalls24h
+) {
 }
 
 record AdminSecurityLogView(String username, String loginIp, String userAgent, LocalDateTime createdAt) {

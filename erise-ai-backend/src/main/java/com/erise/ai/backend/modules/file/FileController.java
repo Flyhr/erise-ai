@@ -30,6 +30,9 @@ import java.util.Locale;
 import java.util.UUID;
 import lombok.Data;
 import lombok.RequiredArgsConstructor;
+import org.commonmark.ext.gfm.tables.TablesExtension;
+import org.commonmark.parser.Parser;
+import org.commonmark.renderer.html.HtmlRenderer;
 import org.apache.pdfbox.Loader;
 import org.apache.pdfbox.pdmodel.PDDocument;
 import org.apache.pdfbox.text.PDFTextStripper;
@@ -131,6 +134,14 @@ public class FileController {
 class FileService {
 
     private static final List<String> INDEXABLE_TYPES = List.of("pdf", "md", "markdown", "txt", "doc", "docx");
+    private static final Parser MARKDOWN_PARSER = Parser.builder()
+            .extensions(List.of(TablesExtension.create()))
+            .build();
+    private static final HtmlRenderer MARKDOWN_RENDERER = HtmlRenderer.builder()
+            .extensions(List.of(TablesExtension.create()))
+            .escapeHtml(true)
+            .softbreak("<br />\n")
+            .build();
 
     private final FileMapper fileMapper;
     private final FileParseTaskMapper fileParseTaskMapper;
@@ -265,11 +276,17 @@ class FileService {
         var currentUser = SecurityUtils.currentUser();
         FileEntity entity = requireAccessibleFile(fileId);
         auditLogService.log(currentUser, inline ? "FILE_PREVIEW" : "FILE_DOWNLOAD", "FILE", fileId, null);
-        if (inline && "docx".equalsIgnoreCase(entity.getFileExt())) {
-            return docxPreview(entity);
-        }
-        if (inline && "txt".equalsIgnoreCase(entity.getFileExt())) {
-            return txtPreview(entity);
+        String extension = entity.getFileExt() == null ? "" : entity.getFileExt().toLowerCase(Locale.ROOT);
+        if (inline) {
+            if ("docx".equals(extension)) {
+                return docxPreview(entity);
+            }
+            if ("txt".equals(extension)) {
+                return txtPreview(entity);
+            }
+            if ("md".equals(extension) || "markdown".equals(extension)) {
+                return markdownPreview(entity);
+            }
         }
         InputStream stream = storageClient.getObject(entity.getStorageKey());
         ContentDisposition disposition = inline
@@ -318,9 +335,11 @@ class FileService {
     void delete(Long fileId) {
         var currentUser = SecurityUtils.currentUser();
         FileEntity entity = requireAccessibleFile(fileId);
+        if (storageClient.objectExists(entity.getStorageKey())) {
+            storageClient.moveObject(entity.getStorageKey(), buildTrashStorageKey(entity));
+        }
         fileMapper.deleteById(fileId);
         fileEditContentMapper.delete(new LambdaQueryWrapper<FileEditContentEntity>().eq(FileEditContentEntity::getFileId, fileId));
-        storageClient.removeObject(entity.getStorageKey());
         ragKnowledgeService.deleteKbSource(entity.getOwnerUserId(), entity.getProjectId(), "FILE", fileId);
         auditLogService.log(currentUser, "FILE_DELETE", "FILE", fileId, null);
     }
@@ -518,6 +537,18 @@ class FileService {
         return index > -1 ? name.substring(index + 1).toLowerCase(Locale.ROOT) : "bin";
     }
 
+    private String buildTrashStorageKey(FileEntity entity) {
+        String safeFileName = entity.getFileName() == null
+                ? "deleted-file"
+                : entity.getFileName().replace('\\', '_').replace('/', '_');
+        return "projects/%d/trash/%d-%d-%s".formatted(
+                entity.getProjectId(),
+                System.currentTimeMillis(),
+                entity.getId(),
+                safeFileName
+        );
+    }
+
     private void enqueueParseTask(FileEntity entity, Long operatorUserId) {
         Long existingCount = fileParseTaskMapper.selectCount(new LambdaQueryWrapper<FileParseTaskEntity>()
                 .eq(FileParseTaskEntity::getFileId, entity.getId())
@@ -545,7 +576,7 @@ class FileService {
                     .build();
             return ResponseEntity.ok()
                     .header(HttpHeaders.CONTENT_DISPOSITION, disposition.toString())
-                    .contentType(MediaType.TEXT_HTML)
+                    .contentType(MediaType.parseMediaType("text/html;charset=UTF-8"))
                     .body(new InputStreamResource(new ByteArrayInputStream(html.getBytes(StandardCharsets.UTF_8))));
         } catch (IOException exception) {
             throw new BizException(ErrorCodes.FILE_ERROR, "Docx preview failed: " + exception.getMessage());
@@ -554,16 +585,32 @@ class FileService {
 
     private ResponseEntity<InputStreamResource> txtPreview(FileEntity entity) {
         try (InputStream stream = storageClient.getObject(entity.getStorageKey())) {
-            String html = wrapDocumentHtml(entity.getFileName(), "TXT Preview", escapeHtml(TextContentUtils.decodeText(stream.readAllBytes())));
+            String html = wrapDocumentHtml(entity.getFileName(), "TXT 在线预览", escapeHtml(TextContentUtils.decodeText(stream.readAllBytes())));
             ContentDisposition disposition = ContentDisposition.inline()
                     .filename(stripExtension(entity.getFileName()) + ".html", StandardCharsets.UTF_8)
                     .build();
             return ResponseEntity.ok()
                     .header(HttpHeaders.CONTENT_DISPOSITION, disposition.toString())
-                    .contentType(MediaType.TEXT_HTML)
+                    .contentType(MediaType.parseMediaType("text/html;charset=UTF-8"))
                     .body(new InputStreamResource(new ByteArrayInputStream(html.getBytes(StandardCharsets.UTF_8))));
         } catch (IOException exception) {
             throw new BizException(ErrorCodes.FILE_ERROR, "TXT preview failed: " + exception.getMessage());
+        }
+    }
+
+    private ResponseEntity<InputStreamResource> markdownPreview(FileEntity entity) {
+        try (InputStream stream = storageClient.getObject(entity.getStorageKey())) {
+            String markdown = TextContentUtils.decodeText(stream.readAllBytes());
+            String html = renderMarkdownPreview(entity.getFileName(), markdown);
+            ContentDisposition disposition = ContentDisposition.inline()
+                    .filename(stripExtension(entity.getFileName()) + ".html", StandardCharsets.UTF_8)
+                    .build();
+            return ResponseEntity.ok()
+                    .header(HttpHeaders.CONTENT_DISPOSITION, disposition.toString())
+                    .contentType(MediaType.parseMediaType("text/html;charset=UTF-8"))
+                    .body(new InputStreamResource(new ByteArrayInputStream(html.getBytes(StandardCharsets.UTF_8))));
+        } catch (IOException exception) {
+            throw new BizException(ErrorCodes.FILE_ERROR, "Markdown preview failed: " + exception.getMessage());
         }
     }
 
@@ -589,7 +636,7 @@ class FileService {
                     .append(".docx-meta{color:#66707a;font-size:14px;margin-bottom:18px;}")
                     .append(".docx-bullet{display:inline-block;min-width:1.25em;color:#14532d;font-weight:700;}")
                     .append("</style></head><body><main><article>")
-                    .append("<div class=\"docx-meta\">DOCX 鍦ㄧ嚎棰勮</div>");
+                    .append("<div class=\"docx-meta\">DOCX 在线预览</div>");
             for (IBodyElement element : document.getBodyElements()) {
                 if (element.getElementType() == BodyElementType.PARAGRAPH) {
                     appendParagraphHtml(html, (XWPFParagraph) element);
@@ -610,7 +657,7 @@ class FileService {
         String tag = resolveParagraphTag(paragraph);
         html.append('<').append(tag).append('>');
         if (paragraph.getNumID() != null) {
-            html.append("<span class=\"docx-bullet\">鈥?/span>");
+            html.append("<span class=\"docx-bullet\">•</span>");
         }
         html.append(content);
         html.append("</").append(tag).append('>');
@@ -658,7 +705,7 @@ class FileService {
             chunk.append("<img src=\"")
                     .append(pictureDataToDataUrl(pictureData))
                     .append("\" alt=\"")
-                    .append("鎻掑浘")
+                    .append("插图")
                     .append("\" />");
         }
         String content = chunk.toString();
@@ -733,6 +780,32 @@ class FileService {
                 + "</style></head><body><main><article><div class=\"eyebrow\">" + eyebrow + "</div><pre>"
                 + bodyText
                 + "</pre></article></main></body></html>";
+    }
+
+    private String renderMarkdownPreview(String fileName, String markdown) {
+        String bodyHtml = MARKDOWN_RENDERER.render(MARKDOWN_PARSER.parse(markdown == null ? "" : markdown));
+        return "<!DOCTYPE html><html lang=\"zh-CN\"><head><meta charset=\"UTF-8\" />"
+                + "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\" />"
+                + "<title>" + escapeHtml(stripExtension(fileName)) + "</title>"
+                + "<style>"
+                + "body{margin:0;background:#f4f7fb;font-family:'Segoe UI','PingFang SC','Microsoft YaHei',sans-serif;color:#1c2536;}"
+                + "main{max-width:960px;margin:0 auto;padding:32px 20px 56px;}"
+                + "article{background:#fff;border:1px solid rgba(66,92,145,.16);border-radius:18px;box-shadow:0 12px 32px rgba(15,23,42,.08);padding:32px;line-height:1.85;}"
+                + ".eyebrow{color:#667085;font-size:13px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;margin-bottom:16px;}"
+                + "h1,h2,h3,h4,h5,h6{margin:1.2em 0 .6em;line-height:1.35;color:#101828;}"
+                + "p,ul,ol,blockquote,pre,table{margin:0 0 1em;}"
+                + "blockquote{padding:12px 16px;border-left:4px solid rgba(0,96,169,.28);background:rgba(0,96,169,.06);border-radius:12px;}"
+                + "code{padding:2px 6px;border-radius:6px;background:rgba(15,23,42,.06);font-family:'Cascadia Code','Consolas',monospace;font-size:.92em;}"
+                + "pre{overflow:auto;padding:16px;border-radius:14px;background:#0f172a;color:#e2e8f0;}"
+                + "pre code{padding:0;background:transparent;color:inherit;}"
+                + "table{width:100%;border-collapse:collapse;}"
+                + "td,th{border:1px solid rgba(66,92,145,.16);padding:10px 12px;vertical-align:top;}"
+                + "img{max-width:100%;height:auto;border-radius:12px;}"
+                + "a{color:#005ea6;text-decoration:none;}"
+                + "a:hover{text-decoration:underline;}"
+                + "</style></head><body><main><article><div class=\"eyebrow\">Markdown 在线预览</div>"
+                + (bodyHtml.isBlank() ? "<p>暂无内容</p>" : bodyHtml)
+                + "</article></main></body></html>";
     }
 
     private String stripMarkdown(String markdown) {

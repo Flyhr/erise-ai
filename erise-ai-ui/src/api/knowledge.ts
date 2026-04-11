@@ -2,7 +2,7 @@ import http from './http'
 import type { KnowledgeAssetView, PageResponse } from '@/types/models'
 
 export const getKnowledgeAssets = (params: {
-  type?: 'FILE' | 'DOCUMENT'
+  type?: 'FILE' | 'DOCUMENT' | 'CONTENT'
   projectId?: number
   q?: string
   knowledgeOnly?: boolean

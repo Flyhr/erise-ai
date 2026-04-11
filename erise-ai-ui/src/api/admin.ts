@@ -22,6 +22,20 @@ export interface AdminTrendPointView {
   value: number
 }
 
+export interface AdminSeriesView {
+  key: string
+  label: string
+  points: AdminTrendPointView[]
+}
+
+export interface AdminTokenUsageView {
+  promptTokens7d: number
+  completionTokens7d: number
+  totalTokens7d: number
+  totalTokens24h: number
+  apiCalls24h: number
+}
+
 export interface AdminSecurityLogView {
   username?: string
   loginIp?: string
@@ -45,7 +59,9 @@ export interface AdminDashboardView {
   overview: AdminOverviewView
   metrics: AdminOperationalMetricsView
   visitTrend: AdminTrendPointView[]
-  downloadTrend: AdminTrendPointView[]
+  apiCallSeries: AdminSeriesView[]
+  tokenSeries: AdminSeriesView[]
+  tokenUsage: AdminTokenUsageView
   securityLogs: AdminSecurityLogView[]
   downloadLogs: AdminDownloadLogView[]
   topActions: AdminActionMetricView[]

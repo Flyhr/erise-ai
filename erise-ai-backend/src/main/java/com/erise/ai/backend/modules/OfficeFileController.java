@@ -142,13 +142,23 @@ class OfficeFileService {
     ResponseEntity<InputStreamResource> preview(Long fileId) {
         FileEntity file = requireEditableFile(fileId);
         EditableOfficeFileView detail = detail(fileId);
+        String snapshotHtml = detail.contentHtmlSnapshot() == null ? "" : detail.contentHtmlSnapshot();
+        var parsed = Jsoup.parse(snapshotHtml);
+        var article = parsed.selectFirst("main > article");
+        if (article != null) {
+            article.select(".docx-meta, .eyebrow").remove();
+        }
+        String previewBody = article != null ? article.html() : parsed.body().html();
+        String previewHtml = wrapOfficeDocumentStart(stripExtension(file.getFileName()), "文件在线预览")
+                + (previewBody == null || previewBody.isBlank() ? "<p>暂无正文内容</p>" : previewBody)
+                + "</article></main></body></html>";
         ContentDisposition disposition = ContentDisposition.inline()
                 .filename(stripExtension(file.getFileName()) + ".html", StandardCharsets.UTF_8)
                 .build();
         return ResponseEntity.ok()
                 .header(HttpHeaders.CONTENT_DISPOSITION, disposition.toString())
-                .contentType(MediaType.TEXT_HTML)
-                .body(new InputStreamResource(new ByteArrayInputStream(detail.contentHtmlSnapshot().getBytes(StandardCharsets.UTF_8))));
+                .contentType(MediaType.parseMediaType("text/html;charset=UTF-8"))
+                .body(new InputStreamResource(new ByteArrayInputStream(previewHtml.getBytes(StandardCharsets.UTF_8))));
     }
 
     private void syncKnowledge(FileEntity file, String plainText, Long operatorUserId) {

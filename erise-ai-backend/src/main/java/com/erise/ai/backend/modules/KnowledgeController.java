@@ -71,12 +71,16 @@ class KnowledgeQueryService {
                                  List<Object> params) {
         boolean includeFiles = type == null || type.isBlank() || "FILE".equalsIgnoreCase(type);
         boolean includeDocuments = type == null || type.isBlank() || "DOCUMENT".equalsIgnoreCase(type);
+        boolean includeContents = type == null || type.isBlank() || "CONTENT".equalsIgnoreCase(type);
         List<String> parts = new ArrayList<>();
         if (includeFiles) {
             parts.add(fileSql(projectId, keyword, knowledgeOnly, userId, admin, params));
         }
         if (includeDocuments) {
             parts.add(documentSql(projectId, keyword, userId, admin, params));
+        }
+        if (includeContents) {
+            parts.add(contentSql(projectId, keyword, userId, admin, params));
         }
         if (parts.isEmpty()) {
             return """
@@ -93,6 +97,7 @@ class KnowledgeQueryService {
                       null as index_status,
                       null as parse_error_message,
                       null as doc_status,
+                      null as item_type,
                       now() as created_at,
                       now() as updated_at
                     where 1 = 0
@@ -127,6 +132,7 @@ class KnowledgeQueryService {
                     limit 1
                   ) as parse_error_message,
                   null as doc_status,
+                  null as item_type,
                   f.created_at,
                   f.updated_at
                 from ea_file f
@@ -197,6 +203,7 @@ class KnowledgeQueryService {
                     limit 1
                   ) as parse_error_message,
                   d.doc_status,
+                  null as item_type,
                   d.created_at,
                   d.updated_at
                 from ea_document d
@@ -218,6 +225,77 @@ class KnowledgeQueryService {
         return sql.toString();
     }
 
+    private String contentSql(Long projectId,
+                              String keyword,
+                              Long userId,
+                              boolean admin,
+                              List<Object> params) {
+        StringBuilder sql = new StringBuilder("""
+                select
+                  'CONTENT' as asset_type,
+                  ci.id as asset_id,
+                  ci.project_id,
+                  ci.title as title,
+                  ci.summary as summary,
+                  null as file_ext,
+                  'CONTENT' as mime_type,
+                  null as file_size,
+                  'SKIPPED' as parse_status,
+                  coalesce((
+                    select case
+                      when upper(coalesce(s.status, '')) = 'READY' then 'READY'
+                      when upper(coalesce(s.status, '')) = 'PROCESSING' then 'PROCESSING'
+                      when upper(coalesce(s.status, '')) in ('FAILED', 'NEEDS_REPAIR') then 'FAILED'
+                      when upper(coalesce(s.status, '')) = 'DELETED' then 'DELETED'
+                      else 'PENDING'
+                    end
+                    from ea_rag_source s
+                    where s.deleted = 0
+                      and s.scope_type = 'KB'
+                      and s.source_type = ci.item_type
+                      and s.source_id = ci.id
+                      and s.owner_user_id = ci.owner_user_id
+                      and coalesce(s.session_id, 0) = 0
+                    order by s.updated_at desc, s.id desc
+                    limit 1
+                  ), 'PENDING') as index_status,
+                  (
+                    select s.last_error
+                    from ea_rag_source s
+                    where s.deleted = 0
+                      and s.scope_type = 'KB'
+                      and s.source_type = ci.item_type
+                      and s.source_id = ci.id
+                      and s.owner_user_id = ci.owner_user_id
+                      and coalesce(s.session_id, 0) = 0
+                    order by s.updated_at desc, s.id desc
+                    limit 1
+                  ) as parse_error_message,
+                  null as doc_status,
+                  ci.item_type as item_type,
+                  ci.created_at,
+                  ci.updated_at
+                from ea_content_item ci
+                where ci.deleted = 0
+                """);
+        if (!admin) {
+            sql.append(" and ci.owner_user_id = ? ");
+            params.add(userId);
+        }
+        if (projectId != null) {
+            sql.append(" and ci.project_id = ? ");
+            params.add(projectId);
+        }
+        if (keyword != null && !keyword.isBlank()) {
+            sql.append(" and (ci.title like ? or ci.summary like ? or ci.plain_text like ?) ");
+            String likeKeyword = "%" + keyword.trim() + "%";
+            params.add(likeKeyword);
+            params.add(likeKeyword);
+            params.add(likeKeyword);
+        }
+        return sql.toString();
+    }
+
     private KnowledgeAssetView mapAsset(ResultSet rs) throws SQLException {
         return new KnowledgeAssetView(
                 rs.getString("asset_type"),
@@ -232,6 +310,7 @@ class KnowledgeQueryService {
                 rs.getString("index_status"),
                 rs.getString("parse_error_message"),
                 rs.getString("doc_status"),
+                rs.getString("item_type"),
                 rs.getTimestamp("created_at").toLocalDateTime(),
                 rs.getTimestamp("updated_at").toLocalDateTime()
         );
@@ -251,6 +330,7 @@ record KnowledgeAssetView(
         String indexStatus,
         String parseErrorMessage,
         String docStatus,
+        String itemType,
         java.time.LocalDateTime createdAt,
         java.time.LocalDateTime updatedAt
 ) {
