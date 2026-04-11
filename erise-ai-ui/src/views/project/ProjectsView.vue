@@ -20,10 +20,17 @@
         @click="openProject(project.id)">
         <div class="project-card__top">
           <div class="project-card__title">{{ project.name }}</div>
-          <div class="project-card__actions">
-            <el-button text @click.stop="openEditDialog(project)">编辑</el-button>
-            <el-button text class="project-card__danger" @click.stop="removeProject(project)">删除</el-button>
-          </div>
+          <el-dropdown trigger="click" @command="(command) => handleProjectCommand(command, project)">
+            <button type="button" class="project-card__menu" aria-label="更多操作" @click.stop>
+              <span class="project-card__menu-dots">···</span>
+            </button>
+            <template #dropdown>
+              <el-dropdown-menu>
+                <el-dropdown-item command="edit">编辑项目</el-dropdown-item>
+                <el-dropdown-item command="delete" class="project-card__danger">删除项目</el-dropdown-item>
+              </el-dropdown-menu>
+            </template>
+          </el-dropdown>
         </div>
         <div class="project-card__summary">{{ project.description || '暂无项目简介' }}</div>
       </AppSectionCard>
@@ -146,6 +153,19 @@ const openEditDialog = (project: ProjectDetailView) => {
   dialogVisible.value = true
 }
 
+const handleProjectCommand = async (command: string | number | object, project: ProjectDetailView) => {
+  switch (String(command)) {
+    case 'edit':
+      openEditDialog(project)
+      break
+    case 'delete':
+      await removeProject(project)
+      break
+    default:
+      break
+  }
+}
+
 const ensureCurrentPage = async () => {
   if (!projects.value.length && total.value > 0 && pageNum.value > 1) {
     pageNum.value = Math.max(1, Math.ceil(total.value / pageSize))
@@ -257,15 +277,41 @@ watch(
   overflow: hidden;
 }
 
-.project-card__actions {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  flex-shrink: 0;
+:deep(.project-card__danger) {
+  color: var(--danger);
 }
 
-.project-card__danger {
-  color: var(--danger);
+.project-card__menu {
+  flex-shrink: 0;
+  width: 34px;
+  height: 34px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.82);
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition:
+    background 0.18s ease,
+    color 0.18s ease,
+    transform 0.18s ease,
+    box-shadow 0.18s ease;
+}
+
+.project-card__menu:hover {
+  background: rgba(64, 158, 255, 0.12);
+  color: var(--primary);
+  transform: translateY(-1px);
+  box-shadow: 0 8px 18px rgba(15, 23, 42, 0.08);
+}
+
+.project-card__menu-dots {
+  font-size: 18px;
+  line-height: 1;
+  letter-spacing: 1px;
+  transform: translateY(-4px);
 }
 
 .projects-footer {

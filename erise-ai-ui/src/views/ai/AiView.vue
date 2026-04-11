@@ -16,10 +16,20 @@
           <aside class="conversation-history">
             <div class="conversation-history__head">
               <div>
+                <div class="conversation-history__eyebrow">Recent</div>
                 <h3>会话列表</h3>
               </div>
-              <button type="button" class="soft-chip" :disabled="sending" @click="resetConversation">新对话</button>
             </div>
+
+            <button type="button" class="history-create-button" :disabled="sending" @click="resetConversation">
+              <span class="material-symbols-outlined">add_circle</span>
+              <span>新对话</span>
+            </button>
+
+            <label class="history-search">
+              <span class="material-symbols-outlined">search</span>
+              <input v-model.trim="sessionKeyword" type="text" placeholder="搜索会话..." />
+            </label>
 
             <!-- <div class="knowledge-card">
               <div class="knowledge-subtabs">
@@ -122,18 +132,18 @@
                 <div v-if="messages.length" class="transcript-list transcript-list--modern">
                   <article v-for="message in messages" :key="message.id" class="transcript-item"
                     :class="message.roleCode === 'USER' ? 'is-user' : 'is-assistant'">
-                    <div class="transcript-item__avatar">
+                    <div class="transcript-item__avatar"
+                      :class="{ 'transcript-item__avatar--assistant': message.roleCode === 'ASSISTANT' }">
                       <span v-if="message.roleCode === 'USER'" class="material-symbols-outlined">person</span>
-                      <span v-else class="material-symbols-outlined"
-                        style="font-variation-settings: 'FILL' 1">smart_toy</span>
+                      <template v-else>
+                        <span class="material-symbols-outlined" style="font-variation-settings: 'FILL' 1">smart_toy</span>
+                        <span v-if="assistantThinkingLabel(message)" class="transcript-item__metric transcript-item__metric--aside">
+                          {{ assistantThinkingLabel(message) }}
+                        </span>
+                      </template>
                     </div>
                     <div class="transcript-item__panel">
                       <div class="transcript-item__head">
-                        <span class="transcript-item__label">{{ message.roleCode === 'USER' ? '' : 'Erise AI' }}</span>
-                        <span v-if="message.roleCode === 'ASSISTANT' && assistantThinkingLabel(message)"
-                          class="transcript-item__metric">
-                          {{ assistantThinkingLabel(message) }}
-                        </span>
                         <span class="transcript-item__time">{{ formatTime(message.createdAt) }}</span>
                       </div>
                       <div class="transcript-item__body" :class="surfaceClasses(message)">
@@ -219,7 +229,7 @@
                         <div v-for="asset in message.attachments" :key="asset.key"
                           class="composer-asset composer-asset--transcript" :class="assetSurfaceClass(asset)">
                           <div class="composer-asset__icon">
-                            <span class="material-symbols-outlined">{{ assetIcon(asset) }}</span>
+                            <span class="composer-asset__type">{{ assetTypeBadge(asset) }}</span>
                           </div>
                           <div class="composer-asset__copy">
                             <strong>{{ asset.title }}</strong>
@@ -253,13 +263,13 @@
                   <div v-for="asset in pendingComposerAssets" :key="asset.key" class="composer-asset"
                     :class="assetSurfaceClass(asset)">
                     <div class="composer-asset__icon">
-                      <span class="material-symbols-outlined">{{ assetIcon(asset) }}</span>
+                      <span class="composer-asset__type">{{ assetTypeBadge(asset) }}</span>
                     </div>
                     <div class="composer-asset__copy">
                       <strong>{{ asset.title }}</strong>
                       <small>{{ asset.subtitle }}</small>
                     </div>
-                    <button type="button" class="composer-asset__remove" :disabled="sending || uploadingTempFile"
+                    <button type="button" class="composer-asset__remove" :disabled="uploadingTempFile"
                       @click="removeComposerAsset(asset)">
                       <span class="material-symbols-outlined">close</span>
                     </button>
@@ -268,7 +278,7 @@
 
                 <div class="composer-box__meta">
                   <el-dropdown trigger="click" @command="handleComposerMenuCommand">
-                    <button type="button" class="composer-plus-button" :disabled="sending || uploadingTempFile">
+                    <button type="button" class="composer-plus-button" :disabled="uploadingTempFile">
                       <span class="material-symbols-outlined">add</span>
                     </button>
                     <template #dropdown>
@@ -282,7 +292,7 @@
                         <el-dropdown-item command="temp-file" :disabled="!activeSessionId || uploadingTempFile">
                           <span class="composer-dropdown__item">
                             <span class="material-symbols-outlined">upload_file</span>
-                            <span>{{ uploadingTempFile ? '上传中…' : '上传文件' }}</span>
+                            <span>{{ uploadingTempFile ? '上传中…' : '上传临时文件' }}</span>
                           </span>
                         </el-dropdown-item>
 
@@ -300,7 +310,7 @@
                   <div class="composer-model-picker">
                     <span class="material-symbols-outlined">expand_circle_down</span>
                     <el-select v-model="selectedModelCode" size="small" class="toolbar-model-select"
-                      :disabled="sending || loadingModels || !modelChoices.length" placeholder="选择模型">
+                      :disabled="loadingModels || !modelChoices.length" placeholder="选择模型">
                       <el-option v-for="model in modelChoices" :key="model.modelCode" :label="modelOptionLabel(model)"
                         :value="model.modelCode" />
                     </el-select>
@@ -314,7 +324,7 @@
 
                 <div class="composer-box__content composer-box__content--architect">
                   <textarea ref="composerRef" v-model="question"
-                    class="composer-box__input composer-box__input--architect" rows="1" :disabled="sending"
+                    class="composer-box__input composer-box__input--architect" rows="1"
                     :placeholder="composerPlaceholder" @input="resizeComposer" @keydown="handleComposerKeydown" />
 
                   <div class="composer-box__toolbar composer-box__toolbar--architect">
@@ -489,6 +499,7 @@ interface UiMessage {
 }
 
 interface StreamDonePayload {
+  requestId?: string
   sessionId?: number
   messageId?: number
   latencyMs?: number
@@ -680,6 +691,7 @@ const attachmentDialogVisible = ref(false)
 const selectedModelCode = ref('')
 const currentRequestId = ref('')
 const searchKeyword = ref('')
+const sessionKeyword = ref('')
 const question = ref('')
 const sending = ref(false)
 const uploadingTempFile = ref(false)
@@ -710,10 +722,16 @@ const hasScopedContext = computed(() =>
 
 const baseAiPath = computed(() => (props.id ? `/projects/${props.id}/ai` : '/ai'))
 const visibleSessions = computed(() => {
+  const keyword = sessionKeyword.value.trim().toLowerCase()
   if (!projectLocked.value || !routeProjectId.value) {
-    return sessions.value
+    return keyword
+      ? sessions.value.filter((session) => session.title.toLowerCase().includes(keyword))
+      : sessions.value
   }
-  return sessions.value.filter((session) => session.projectId === routeProjectId.value || session.id === activeSessionId.value)
+  const scoped = sessions.value.filter((session) => session.projectId === routeProjectId.value || session.id === activeSessionId.value)
+  return keyword
+    ? scoped.filter((session) => session.title.toLowerCase().includes(keyword))
+    : scoped
 })
 const modelChoices = computed(() => {
   const preferredProviders = new Set(['openai', 'deepseek'])
@@ -921,21 +939,14 @@ const assistantThinkingLabel = (message: UiMessage) => {
     : `思考耗时 ${message.latencyMs}ms`
 }
 
-const assetIcon = (asset: ComposerAssetSnapshot) => {
+const assetTypeBadge = (asset: ComposerAssetSnapshot) => {
   if (asset.assetType === 'DOCUMENT') {
-    return 'article'
+    return 'DOC'
   }
-  const name = (asset.title || '').toLowerCase()
-  if (name.endsWith('.pdf')) {
-    return 'picture_as_pdf'
-  }
-  if (name.endsWith('.csv') || name.endsWith('.xls') || name.endsWith('.xlsx')) {
-    return 'table_chart'
-  }
-  if (name.endsWith('.png') || name.endsWith('.jpg') || name.endsWith('.jpeg') || name.endsWith('.gif') || name.endsWith('.webp')) {
-    return 'image'
-  }
-  return asset.assetType === 'TEMP_FILE' ? 'draft' : 'description'
+  const fileName = asset.title || ''
+  const extension = fileName.includes('.') ? fileName.split('.').pop() || '' : ''
+  const badge = extension.trim().toUpperCase()
+  return (badge || (asset.assetType === 'TEMP_FILE' ? 'FILE' : asset.assetType)).slice(0, 4)
 }
 
 const assetSurfaceClass = (asset: ComposerAssetSnapshot) => ({
@@ -1458,7 +1469,7 @@ const ensureTempFileSession = () => {
 }
 
 const triggerTempFileUpload = () => {
-  if (!ensureTempFileSession() || sending.value || uploadingTempFile.value) {
+  if (!ensureTempFileSession() || uploadingTempFile.value) {
     return
   }
   tempFileInputRef.value?.click()
@@ -1691,7 +1702,12 @@ const removeSession = async (sessionId: number) => {
  */
 const streamChat = async (
   payload: AiChatPayload,
-  handlers: { onOpen?: (requestId?: string) => void; onChunk?: (chunk: string) => void; onDone?: (payload: StreamDonePayload) => Promise<void> | void },
+  handlers: {
+    onOpen?: () => void
+    onStart?: (payload: StreamDonePayload) => void
+    onChunk?: (chunk: string) => void
+    onDone?: (payload: StreamDonePayload) => Promise<void> | void
+  },
 ) => {
   const token = localStorage.getItem('erise-access-token')
   const response = await fetch(resolveApiUrl('/v1/ai/chat/stream'), {
@@ -1712,7 +1728,7 @@ const streamChat = async (
     throw new Error('AI response stream is unavailable')
   }
 
-  handlers.onOpen?.(response.headers.get('X-Trace-Id') || undefined)
+  handlers.onOpen?.()
 
   const reader = response.body.getReader()
   const decoder = new TextDecoder()
@@ -1735,6 +1751,14 @@ const streamChat = async (
       return
     }
 
+    if (eventName === 'start') {
+      try {
+        handlers.onStart?.(JSON.parse(payloadText) as StreamDonePayload)
+      } catch {
+        handlers.onStart?.({})
+      }
+      return
+    }
     if (eventName === 'chunk') {
       handlers.onChunk?.(payloadText)
       return
@@ -1804,10 +1828,13 @@ const stopGeneration = async () => {
   if (!currentRequestId.value) {
     return
   }
+  const requestId = currentRequestId.value
+  currentRequestId.value = ''
   try {
-    await cancelChat(currentRequestId.value)
+    await cancelChat(requestId)
     ElMessage.success('已发送停止请求')
   } catch (error) {
+    currentRequestId.value = requestId
     ElMessage.error(errorMessageOf(error))
   }
 }
@@ -1915,10 +1942,15 @@ const send = async (presetQuestion?: string) => {
     }
 
     await streamChat(payload, {
-      onOpen: (requestId) => {
+      onOpen: () => {
         opened = true
         userMessage.status = 'sent'
-        currentRequestId.value = requestId || ''
+      },
+      onStart: (startPayload) => {
+        currentRequestId.value = startPayload.requestId || currentRequestId.value
+        if (startPayload.sessionId) {
+          void syncSessionRoute(startPayload.sessionId)
+        }
       },
       onChunk: (chunk) => {
         opened = true
@@ -1931,6 +1963,7 @@ const send = async (presetQuestion?: string) => {
         assistantMessage.status = 'sent'
         assistantMessage.serverId = donePayload.messageId
         assistantMessage.latencyMs = donePayload.latencyMs
+        currentRequestId.value = ''
         persistMessageAssetRecord(donePayload.sessionId, messageAssetRecord)
         await syncSessionRoute(donePayload.sessionId)
         if (donePayload.sessionId) {
