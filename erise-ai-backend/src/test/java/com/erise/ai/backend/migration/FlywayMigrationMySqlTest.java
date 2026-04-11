@@ -20,7 +20,7 @@ import org.testcontainers.utility.DockerImageName;
 class FlywayMigrationMySqlTest {
 
     @Test
-    void migratesFreshSchemaThroughV9AndPreservesExpectedColumns() throws SQLException {
+    void migratesFreshSchemaThroughV10AndPreservesExpectedColumns() throws SQLException {
         Assumptions.assumeTrue(
                 DockerClientFactory.instance().isDockerAvailable(),
                 "Docker is required to run the MySQL Flyway migration regression test"
@@ -38,7 +38,7 @@ class FlywayMigrationMySqlTest {
             flyway.migrate();
 
             assertThat(flyway.info().current()).isNotNull();
-            assertThat(flyway.info().current().getVersion().getVersion()).isEqualTo("9");
+            assertThat(flyway.info().current().getVersion().getVersion()).isEqualTo("10");
 
             try (Connection connection = DriverManager.getConnection(
                     mysql.getJdbcUrl(),
@@ -56,12 +56,15 @@ class FlywayMigrationMySqlTest {
                         .containsKeys("project_id", "index_status", "last_error", "retry_count", "parse_status");
                 assertThat(tempFileColumns.get("parse_status")).isEqualTo("PENDING");
                 assertThat(tempFileColumns.get("index_status")).isEqualTo("PENDING");
+
+                assertThat(columnDefaultsFor(connection, "ea_rag_sparse_term"))
+                        .containsKeys("term", "field_code", "term_freq", "doc_len");
             }
         }
     }
 
     @Test
-    void migratesLegacyAiSchemaThroughV9AndBackfillsMissingColumns() throws SQLException {
+    void migratesLegacyAiSchemaThroughV10AndBackfillsMissingColumns() throws SQLException {
         Assumptions.assumeTrue(
                 DockerClientFactory.instance().isDockerAvailable(),
                 "Docker is required to run the MySQL Flyway migration regression test"
@@ -152,7 +155,7 @@ class FlywayMigrationMySqlTest {
             flyway.migrate();
 
             assertThat(flyway.info().current()).isNotNull();
-            assertThat(flyway.info().current().getVersion().getVersion()).isEqualTo("9");
+            assertThat(flyway.info().current().getVersion().getVersion()).isEqualTo("10");
 
             try (Connection connection = DriverManager.getConnection(
                     mysql.getJdbcUrl(),
@@ -170,6 +173,9 @@ class FlywayMigrationMySqlTest {
                         .containsKeys("project_id", "index_status", "last_error", "retry_count", "parse_status");
                 assertThat(tempFileColumns.get("parse_status")).isEqualTo("PENDING");
                 assertThat(tempFileColumns.get("index_status")).isEqualTo("PENDING");
+
+                assertThat(columnDefaultsFor(connection, "ea_rag_sparse_term"))
+                        .containsKeys("term", "field_code", "term_freq", "doc_len");
             }
         }
     }

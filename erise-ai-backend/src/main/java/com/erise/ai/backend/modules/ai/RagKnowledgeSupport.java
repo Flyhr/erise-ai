@@ -38,6 +38,7 @@ class RagKnowledgeService {
     private final RagTaskMapper ragTaskMapper;
     private final CloudAiClient cloudAiClient;
     private final ObjectMapper objectMapper;
+    private final SparseKnowledgeSupport sparseKnowledgeSupport;
 
     @Transactional(noRollbackFor = Exception.class)
     void replaceKbSource(Long ownerUserId,
@@ -147,6 +148,7 @@ class RagKnowledgeService {
             String collectionName = response == null || response.collectionName() == null
                     ? defaultCollection(scopeType)
                     : response.collectionName();
+            List<RagChunkEntity> insertedChunks = new ArrayList<>();
             for (ChunkInput chunk : normalizedChunks) {
                 RagChunkEntity entity = new RagChunkEntity();
                 entity.setRagSourceId(source.getId());
@@ -167,7 +169,9 @@ class RagKnowledgeService {
                 entity.setCreatedBy(ownerUserId);
                 entity.setUpdatedBy(ownerUserId);
                 ragChunkMapper.insert(entity);
+                insertedChunks.add(entity);
             }
+            sparseKnowledgeSupport.rebuildSourceIndex(source, insertedChunks, ownerUserId);
 
             source.setStatus(STATUS_READY);
             source.setChunkCount(normalizedChunks.size());
@@ -226,6 +230,7 @@ class RagKnowledgeService {
                     requestId(scopeType, sourceType, sourceId)
             );
             ragChunkMapper.delete(new LambdaQueryWrapper<RagChunkEntity>().eq(RagChunkEntity::getRagSourceId, source.getId()));
+            sparseKnowledgeSupport.deleteSourceIndex(source.getId());
             source.setStatus(STATUS_DELETED);
             source.setChunkCount(0);
             source.setLastError(null);

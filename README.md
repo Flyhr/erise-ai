@@ -57,12 +57,15 @@ docker compose --env-file .env.dev -f docker-compose.dev.yml down
   <tr>
     <td><img src="./artifacts/login-page.png" alt="登入界面" width="300px" /></td>
     <td><img src="./artifacts/workspace-page.png" alt="首页界面" width="300px" /></td>
-    <td><img src="./artifacts/project-page.png" alt="项目界面" width="300px" /></td>
   </tr>
   <tr>
+    <td><img src="./artifacts/project-page.png" alt="项目界面" width="300px" /></td>
     <td><img src="./artifacts/Konwledge-page.png" alt="知识库界面" width="300px" /></td>
-    <td><img src="./artifacts/AiChat-page.png" alt="AI聊天界面" width="300px" /></td>
     <td></td>
+  </tr>
+  <tr>
+    <td><img src="./artifacts/AiChat-page.png" alt="AI聊天界面" width="300px" /></td>
+
   </tr>
 </table>
 

@@ -10,17 +10,24 @@ import com.erise.ai.backend.common.api.ApiResponse;
 import com.erise.ai.backend.common.api.PageResponse;
 import com.erise.ai.backend.common.config.EriseProperties;
 import com.erise.ai.backend.common.entity.AuditableEntity;
+import com.erise.ai.backend.common.exception.BizException;
+import com.erise.ai.backend.common.exception.ErrorCodes;
 import com.erise.ai.backend.common.util.SecurityUtils;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
 import java.sql.Timestamp;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 import lombok.Data;
 import lombok.RequiredArgsConstructor;
+import org.springframework.http.HttpStatus;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -66,6 +73,12 @@ public class AdminController {
         return ApiResponse.success(adminService.tasks(pageNum, pageSize));
     }
 
+    @PostMapping("/tasks/{taskOrigin}/{id}/retry")
+    public ApiResponse<Void> retryTask(@PathVariable String taskOrigin, @PathVariable Long id) {
+        adminService.retryTask(taskOrigin, id);
+        return ApiResponse.success("success", null);
+    }
+
     @GetMapping("/audit-logs")
     public ApiResponse<PageResponse<AdminAuditLogView>> auditLogs(@RequestParam(defaultValue = "1") long pageNum,
                                                                   @RequestParam(defaultValue = "10") long pageSize) {
@@ -82,13 +95,21 @@ public class AdminController {
 @RequiredArgsConstructor
 class AdminService {
 
+    private static final Set<String> RETRYABLE_FAILURE_STATUSES = Set.of("FAILED", "NEEDS_REPAIR");
+
     private final UserMapper userMapper;
     private final UserProfileMapper userProfileMapper;
     private final FileParseTaskMapper fileParseTaskMapper;
+    private final RagTaskMapper ragTaskMapper;
+    private final TaskMapper taskMapper;
     private final AuditLogMapper auditLogMapper;
     private final JdbcTemplate jdbcTemplate;
     private final AuditLogService auditLogService;
     private final EriseProperties eriseProperties;
+    private final FileService fileService;
+    private final DocumentService documentService;
+    private final AiTempFileService aiTempFileService;
+    private final ObjectMapper objectMapper;
 
     AdminOverviewView overview() {
         long userCount = count("ea_user");
@@ -147,13 +168,46 @@ class AdminService {
     }
 
     PageResponse<AdminTaskView> tasks(long pageNum, long pageSize) {
-        Page<FileParseTaskEntity> page = fileParseTaskMapper.selectPage(Page.of(pageNum, pageSize),
-                new LambdaQueryWrapper<FileParseTaskEntity>().orderByDesc(FileParseTaskEntity::getCreatedAt));
-        List<AdminTaskView> records = page.getRecords().stream()
-                .map(task -> new AdminTaskView(task.getId(), "FILE_PARSE", task.getTaskStatus(),
-                        task.getRetryCount(), task.getLastError(), task.getCreatedAt()))
-                .toList();
-        return PageResponse.of(records, pageNum, pageSize, page.getTotal());
+        long total = totalTaskCount();
+        long safePageNum = Math.max(pageNum, 1L);
+        long safePageSize = Math.max(pageSize, 1L);
+        long offset = (safePageNum - 1L) * safePageSize;
+        List<AdminTaskView> records = jdbcTemplate.query(taskPageSql(), (rs, rowNum) -> {
+                    String taskOrigin = rs.getString("task_origin");
+                    String taskType = rs.getString("task_type");
+                    String taskStatus = rs.getString("task_status");
+                    String resourceType = rs.getString("resource_type");
+                    Long resourceId = rs.getObject("resource_id") == null ? null : rs.getLong("resource_id");
+                    return new AdminTaskView(
+                            rs.getLong("id"),
+                            taskOrigin,
+                            taskType,
+                            taskStatus,
+                            resourceType,
+                            resourceId,
+                            rs.getString("resource_title"),
+                            rs.getObject("retry_count") == null ? 0 : rs.getInt("retry_count"),
+                            rs.getString("last_error"),
+                            isRetryableTask(taskOrigin, taskType, taskStatus, resourceType),
+                            toLocalDateTime(rs.getTimestamp("created_at"))
+                    );
+                },
+                safePageSize,
+                offset
+        );
+        return PageResponse.of(records, safePageNum, safePageSize, total);
+    }
+
+    void retryTask(String taskOrigin, Long taskId) {
+        var currentUser = SecurityUtils.currentUser();
+        String normalizedOrigin = normalize(taskOrigin);
+        switch (normalizedOrigin) {
+            case "FILE_PARSE" -> retryFileParseTask(taskId);
+            case "RAG" -> retryRagTask(taskId);
+            case "TEMP_FILE_PARSE" -> retryTempFileParseTask(taskId);
+            default -> throw new BizException(ErrorCodes.BAD_REQUEST, "Unsupported task origin", HttpStatus.BAD_REQUEST);
+        }
+        auditLogService.log(currentUser, "ADMIN_TASK_RETRY", "ADMIN_TASK", taskId, Map.of("taskOrigin", normalizedOrigin));
     }
 
     PageResponse<AdminAuditLogView> auditLogs(long pageNum, long pageSize) {
@@ -189,6 +243,154 @@ class AdminService {
                 ));
     }
 
+    private void retryFileParseTask(Long taskId) {
+        FileParseTaskEntity task = fileParseTaskMapper.selectById(taskId);
+        if (task == null) {
+            throw new BizException(ErrorCodes.NOT_FOUND, "Task not found", HttpStatus.NOT_FOUND);
+        }
+        if (!isRetryableTask("FILE_PARSE", "FILE_PARSE", task.getTaskStatus(), "FILE")) {
+            throw new BizException(ErrorCodes.BAD_REQUEST, "This task cannot be retried", HttpStatus.BAD_REQUEST);
+        }
+        fileService.retryParse(task.getFileId());
+    }
+
+    private void retryRagTask(Long taskId) {
+        RagTaskEntity task = ragTaskMapper.selectById(taskId);
+        if (task == null) {
+            throw new BizException(ErrorCodes.NOT_FOUND, "Task not found", HttpStatus.NOT_FOUND);
+        }
+        if (!isRetryableTask("RAG", task.getTaskType(), task.getTaskStatus(), task.getSourceType())) {
+            throw new BizException(ErrorCodes.BAD_REQUEST, "This task cannot be retried", HttpStatus.BAD_REQUEST);
+        }
+        String sourceType = normalize(task.getSourceType());
+        switch (sourceType) {
+            case "FILE" -> fileService.retryParse(task.getSourceId());
+            case "DOCUMENT" -> documentService.retryIndex(task.getSourceId());
+            case "TEMP_FILE" -> aiTempFileService.retryByAdmin(task.getSourceId());
+            default -> throw new BizException(ErrorCodes.BAD_REQUEST, "Unsupported RAG resource type", HttpStatus.BAD_REQUEST);
+        }
+    }
+
+    private void retryTempFileParseTask(Long taskId) {
+        TaskEntity task = taskMapper.selectById(taskId);
+        if (task == null) {
+            throw new BizException(ErrorCodes.NOT_FOUND, "Task not found", HttpStatus.NOT_FOUND);
+        }
+        if (!isRetryableTask("TEMP_FILE_PARSE", task.getTaskType(), task.getTaskStatus(), "TEMP_FILE")) {
+            throw new BizException(ErrorCodes.BAD_REQUEST, "This task cannot be retried", HttpStatus.BAD_REQUEST);
+        }
+        TempFileParseTaskPayload payload;
+        try {
+            payload = objectMapper.readValue(task.getPayloadJson(), TempFileParseTaskPayload.class);
+        } catch (Exception exception) {
+            throw new BizException(ErrorCodes.BAD_REQUEST, "Task payload is invalid", HttpStatus.BAD_REQUEST);
+        }
+        if (payload == null || payload.tempFileId() == null) {
+            throw new BizException(ErrorCodes.BAD_REQUEST, "Task payload is invalid", HttpStatus.BAD_REQUEST);
+        }
+        aiTempFileService.retryByAdmin(payload.tempFileId());
+    }
+
+    private boolean isRetryableTask(String taskOrigin, String taskType, String taskStatus, String resourceType) {
+        String normalizedOrigin = normalize(taskOrigin);
+        String normalizedTaskType = normalize(taskType);
+        String normalizedStatus = normalize(taskStatus);
+        String normalizedResourceType = normalize(resourceType);
+        if (!RETRYABLE_FAILURE_STATUSES.contains(normalizedStatus)) {
+            return false;
+        }
+        return switch (normalizedOrigin) {
+            case "FILE_PARSE", "TEMP_FILE_PARSE" -> true;
+            case "RAG" -> "INDEX".equals(normalizedTaskType)
+                    && Set.of("FILE", "DOCUMENT", "TEMP_FILE").contains(normalizedResourceType);
+            default -> false;
+        };
+    }
+
+    private long totalTaskCount() {
+        Long value = jdbcTemplate.queryForObject("""
+                        select count(*) from (
+                            select fp.id
+                            from ea_file_parse_task fp
+                            where fp.deleted = 0
+                            union all
+                            select rt.id
+                            from ea_rag_task rt
+                            where rt.deleted = 0
+                            union all
+                            select t.id
+                            from ea_task t
+                            where t.deleted = 0
+                              and t.task_type = 'TEMP_FILE_PARSE'
+                        ) task_union
+                        """,
+                Long.class
+        );
+        return value == null ? 0L : value;
+    }
+
+    private String taskPageSql() {
+        return """
+                select *
+                from (
+                    select fp.id,
+                           'FILE_PARSE' as task_origin,
+                           'FILE_PARSE' as task_type,
+                           fp.task_status,
+                           'FILE' as resource_type,
+                           f.id as resource_id,
+                           f.file_name as resource_title,
+                           fp.retry_count,
+                           fp.last_error,
+                           fp.created_at
+                    from ea_file_parse_task fp
+                    left join ea_file f on f.id = fp.file_id and f.deleted = 0
+                    where fp.deleted = 0
+
+                    union all
+
+                    select rt.id,
+                           'RAG' as task_origin,
+                           rt.task_type,
+                           rt.task_status,
+                           rt.source_type as resource_type,
+                           rt.source_id as resource_id,
+                           coalesce(f.file_name, d.title, ci.title, tf.file_name, rs.source_title) as resource_title,
+                           rt.retry_count,
+                           rt.last_error,
+                           rt.created_at
+                    from ea_rag_task rt
+                    left join ea_rag_source rs on rs.id = rt.rag_source_id and rs.deleted = 0
+                    left join ea_file f on rt.source_type = 'FILE' and f.id = rt.source_id and f.deleted = 0
+                    left join ea_document d on rt.source_type = 'DOCUMENT' and d.id = rt.source_id and d.deleted = 0
+                    left join ea_content_item ci on rt.source_type in ('SHEET', 'BOARD', 'DATA_TABLE') and ci.id = rt.source_id and ci.deleted = 0
+                    left join ea_ai_temp_file tf on rt.source_type = 'TEMP_FILE' and tf.id = rt.source_id and tf.deleted = 0
+                    where rt.deleted = 0
+
+                    union all
+
+                    select t.id,
+                           'TEMP_FILE_PARSE' as task_origin,
+                           t.task_type,
+                           t.task_status,
+                           'TEMP_FILE' as resource_type,
+                           cast(json_unquote(json_extract(t.payload_json, '$.tempFileId')) as unsigned) as resource_id,
+                           coalesce(tf.file_name, json_unquote(json_extract(t.payload_json, '$.fileName'))) as resource_title,
+                           t.retry_count,
+                           t.last_error,
+                           t.created_at
+                    from ea_task t
+                    left join ea_ai_temp_file tf
+                      on tf.id = cast(json_unquote(json_extract(t.payload_json, '$.tempFileId')) as unsigned)
+                     and tf.deleted = 0
+                    where t.deleted = 0
+                      and t.task_type = 'TEMP_FILE_PARSE'
+                ) task_union
+                order by created_at desc, id desc
+                limit ? offset ?
+                """;
+    }
+
     private List<AdminTrendPointView> loginTrend(int days) {
         return fillDailyTrend(days, jdbcTemplate.queryForList("""
                 select date(created_at) as point_date, count(*) as total
@@ -210,7 +412,7 @@ class AdminService {
     }
 
     private List<AdminTrendPointView> fillDailyTrend(int days, List<Map<String, Object>> rows) {
-        Map<LocalDate, Long> values = new java.util.HashMap<>();
+        Map<LocalDate, Long> values = new LinkedHashMap<>();
         for (Map<String, Object> row : rows) {
             Object pointDate = row.get("point_date");
             LocalDate date = pointDate instanceof java.sql.Date sqlDate
@@ -283,6 +485,10 @@ class AdminService {
 
     private LocalDateTime toLocalDateTime(Timestamp timestamp) {
         return timestamp == null ? null : timestamp.toLocalDateTime();
+    }
+
+    private String normalize(String value) {
+        return value == null ? "" : value.trim().toUpperCase(Locale.ROOT);
     }
 }
 
@@ -357,8 +563,19 @@ record AdminUserView(
 record AdminUserStatusRequest(@NotBlank String status) {
 }
 
-record AdminTaskView(Long id, String taskType, String taskStatus, Integer retryCount, String lastError,
-                     LocalDateTime createdAt) {
+record AdminTaskView(
+        Long id,
+        String taskOrigin,
+        String taskType,
+        String taskStatus,
+        String resourceType,
+        Long resourceId,
+        String resourceTitle,
+        Integer retryCount,
+        String lastError,
+        Boolean retryable,
+        LocalDateTime createdAt
+) {
 }
 
 record AdminAuditLogView(

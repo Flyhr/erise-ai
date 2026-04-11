@@ -12,6 +12,8 @@ import com.erise.ai.backend.common.exception.BizException;
 import com.erise.ai.backend.common.exception.ErrorCodes;
 import com.erise.ai.backend.common.util.SecurityUtils;
 import com.erise.ai.backend.integration.storage.MinioStorageClient;
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.DecimalMax;
 import jakarta.validation.constraints.DecimalMin;
@@ -29,6 +31,7 @@ import lombok.Data;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 import org.springframework.stereotype.Service;
@@ -89,11 +92,16 @@ public class AiSupportController {
 @RequiredArgsConstructor
 class AiTempFileService {
 
+    private static final String TEMP_FILE_PARSE_TASK_TYPE = "TEMP_FILE_PARSE";
+
     private final AiTempFileMapper aiTempFileMapper;
+    private final TaskMapper taskMapper;
     private final ProjectService projectService;
     private final MinioStorageClient storageClient;
     private final StoredTextExtractionSupport storedTextExtractionSupport;
     private final RagKnowledgeService ragKnowledgeService;
+    private final JdbcTemplate jdbcTemplate;
+    private final ObjectMapper objectMapper;
 
     AiTempFileView upload(MultipartFile file, Long sessionId, Long projectId) {
         if (sessionId == null || sessionId <= 0) {
@@ -140,6 +148,7 @@ class AiTempFileService {
             aiTempFileMapper.deleteById(entity.getId());
             throw exception;
         }
+        createTempParseTask(entity, currentUser.userId());
         return toView(entity);
     }
 
@@ -157,6 +166,16 @@ class AiTempFileService {
     AiTempFileView retryCurrentUserTempFile(Long id) {
         var currentUser = SecurityUtils.currentUser();
         AiTempFileEntity entity = requireOwnedTempFile(currentUser.userId(), id);
+        return retryTempFile(entity, currentUser.userId());
+    }
+
+    AiTempFileView retryByAdmin(Long id) {
+        var currentUser = SecurityUtils.currentUser();
+        AiTempFileEntity entity = requireExistingTempFile(id);
+        return retryTempFile(entity, currentUser.userId());
+    }
+
+    private AiTempFileView retryTempFile(AiTempFileEntity entity, Long operatorUserId) {
         if (!isFailedStatus(entity.getParseStatus()) && !isFailedStatus(entity.getIndexStatus())) {
             throw new BizException(ErrorCodes.BAD_REQUEST, "Only failed temp files can be retried");
         }
@@ -164,8 +183,9 @@ class AiTempFileService {
         entity.setIndexStatus("PENDING");
         entity.setLastError(null);
         entity.setRetryCount(0);
-        entity.setUpdatedBy(currentUser.userId());
+        entity.setUpdatedBy(operatorUserId);
         aiTempFileMapper.updateById(entity);
+        createTempParseTask(entity, operatorUserId);
         return toView(entity);
     }
 
@@ -240,6 +260,8 @@ class AiTempFileService {
         if (latest == null) {
             return;
         }
+        TaskEntity task = ensureTempParseTask(latest);
+        markTempTaskProcessing(task, latest.getOwnerUserId());
         latest.setParseStatus("PROCESSING");
         latest.setIndexStatus("PROCESSING");
         latest.setLastError(null);
@@ -271,6 +293,7 @@ class AiTempFileService {
             latest.setRetryCount(0);
             latest.setUpdatedBy(latest.getOwnerUserId());
             aiTempFileMapper.updateById(latest);
+            markTempTaskSuccess(task, latest);
         } catch (Exception exception) {
             String errorMessage = parseTempErrorMessage(exception);
             int nextRetryCount = (latest.getRetryCount() == null ? 0 : latest.getRetryCount()) + 1;
@@ -282,6 +305,7 @@ class AiTempFileService {
             latest.setIndexStatus(retryable && !exhausted ? "PENDING" : "FAILED");
             latest.setUpdatedBy(latest.getOwnerUserId());
             aiTempFileMapper.updateById(latest);
+            markTempTaskFailure(task, latest.getOwnerUserId(), nextRetryCount, errorMessage, retryable && !exhausted);
         }
     }
 
@@ -335,6 +359,103 @@ class AiTempFileService {
 
     private boolean isFailedStatus(String status) {
         return "FAILED".equalsIgnoreCase(status) || "DELETED".equalsIgnoreCase(status);
+    }
+
+    private TaskEntity ensureTempParseTask(AiTempFileEntity entity) {
+        TaskEntity task = latestTempParseTask(entity.getId());
+        if (task != null) {
+            return task;
+        }
+        Long taskId = createTempParseTask(entity, entity.getOwnerUserId());
+        return taskMapper.selectById(taskId);
+    }
+
+    private Long createTempParseTask(AiTempFileEntity entity, Long operatorUserId) {
+        TaskEntity task = new TaskEntity();
+        task.setOwnerUserId(entity.getOwnerUserId());
+        task.setTaskType(TEMP_FILE_PARSE_TASK_TYPE);
+        task.setTaskStatus("PENDING");
+        task.setRetryCount(entity.getRetryCount() == null ? 0 : entity.getRetryCount());
+        task.setPayloadJson(writeTaskPayload(new TempFileParseTaskPayload(
+                entity.getId(),
+                entity.getSessionId(),
+                entity.getProjectId(),
+                entity.getFileName(),
+                entity.getOwnerUserId()
+        )));
+        task.setCreatedBy(operatorUserId);
+        task.setUpdatedBy(operatorUserId);
+        taskMapper.insert(task);
+        return task.getId();
+    }
+
+    private TaskEntity latestTempParseTask(Long tempFileId) {
+        List<Long> ids = jdbcTemplate.query("""
+                        select id
+                        from ea_task
+                        where deleted = 0
+                          and task_type = ?
+                          and cast(json_unquote(json_extract(payload_json, '$.tempFileId')) as unsigned) = ?
+                        order by id desc
+                        limit 1
+                        """,
+                (rs, rowNum) -> rs.getLong("id"),
+                TEMP_FILE_PARSE_TASK_TYPE,
+                tempFileId
+        );
+        return ids.isEmpty() ? null : taskMapper.selectById(ids.get(0));
+    }
+
+    private void markTempTaskProcessing(TaskEntity task, Long operatorUserId) {
+        if (task == null) {
+            return;
+        }
+        task.setTaskStatus("PROCESSING");
+        task.setLastError(null);
+        task.setUpdatedBy(operatorUserId);
+        taskMapper.updateById(task);
+    }
+
+    private void markTempTaskSuccess(TaskEntity task, AiTempFileEntity entity) {
+        if (task == null) {
+            return;
+        }
+        task.setTaskStatus("SUCCESS");
+        task.setRetryCount(entity.getRetryCount() == null ? 0 : entity.getRetryCount());
+        task.setLastError(null);
+        task.setResultJson(writeTaskPayload(Map.of(
+                "tempFileId", entity.getId(),
+                "parseStatus", entity.getParseStatus(),
+                "indexStatus", entity.getIndexStatus()
+        )));
+        task.setUpdatedBy(entity.getOwnerUserId());
+        taskMapper.updateById(task);
+    }
+
+    private void markTempTaskFailure(TaskEntity task,
+                                     Long operatorUserId,
+                                     int retryCount,
+                                     String errorMessage,
+                                     boolean pendingRetry) {
+        if (task == null) {
+            return;
+        }
+        task.setTaskStatus(pendingRetry ? "PENDING" : "FAILED");
+        task.setRetryCount(retryCount);
+        task.setLastError(errorMessage);
+        task.setUpdatedBy(operatorUserId);
+        taskMapper.updateById(task);
+    }
+
+    private String writeTaskPayload(Object value) {
+        if (value == null) {
+            return null;
+        }
+        try {
+            return objectMapper.writeValueAsString(value);
+        } catch (JsonProcessingException exception) {
+            return "{}";
+        }
     }
 
     private void deleteStoredTempFile(AiTempFileEntity entity) {
@@ -539,6 +660,13 @@ record AiTempFileView(
         String parseErrorMessage,
         LocalDateTime createdAt
 ) {
+}
+
+record TempFileParseTaskPayload(Long tempFileId,
+                                Long sessionId,
+                                Long projectId,
+                                String fileName,
+                                Long ownerUserId) {
 }
 
 record InternalAiTempFileContextView(

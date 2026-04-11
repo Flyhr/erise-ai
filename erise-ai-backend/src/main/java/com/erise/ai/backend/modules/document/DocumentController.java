@@ -179,7 +179,7 @@ class DocumentService {
         document.setTitle(title);
         document.setUpdatedBy(document.getOwnerUserId());
         documentMapper.updateById(document);
-        syncRagKnowledge(document, content.getPlainText());
+        syncRagKnowledge(document, content.getPlainText(), false);
         return toInternalContext(document, content);
     }
 
@@ -198,7 +198,7 @@ class DocumentService {
         content.setUpdatedBy(currentUser.userId());
         documentContentMapper.updateById(content);
 
-        syncRagKnowledge(document, request.plainText());
+        syncRagKnowledge(document, request.plainText(), false);
         auditLogService.log(currentUser, "DOCUMENT_SAVE", "DOCUMENT", id, request);
         return toDetail(document, content);
     }
@@ -226,7 +226,7 @@ class DocumentService {
         document.setUpdatedBy(currentUser.userId());
         documentMapper.updateById(document);
 
-        syncRagKnowledge(document, content.getPlainText());
+        syncRagKnowledge(document, content.getPlainText(), false);
         auditLogService.log(currentUser, "DOCUMENT_PUBLISH", "DOCUMENT", id, java.util.Map.of("versionNo", nextVersion));
         return detail(id);
     }
@@ -235,7 +235,7 @@ class DocumentService {
         var currentUser = SecurityUtils.currentUser();
         DocumentEntity document = requireAccessibleDocument(id);
         DocumentContentEntity content = contentByDocumentId(id);
-        syncRagKnowledge(document, content.getPlainText());
+        syncRagKnowledge(document, content.getPlainText(), true);
         auditLogService.log(currentUser, "DOCUMENT_INDEX_RETRY", "DOCUMENT", id, null);
         return detail(id);
     }
@@ -278,7 +278,7 @@ class DocumentService {
         version.setUpdatedBy(currentUser.userId());
         documentVersionMapper.insert(version);
 
-        syncRagKnowledge(document, content.getPlainText());
+        syncRagKnowledge(document, content.getPlainText(), false);
         auditLogService.log(currentUser, "DOCUMENT_PUBLISH_NEW", "DOCUMENT", document.getId(), request);
         return detail(document.getId());
     }
@@ -314,7 +314,7 @@ class DocumentService {
         auditLogService.log(currentUser, "DOCUMENT_DELETE", "DOCUMENT", id, null);
     }
 
-    private void syncRagKnowledge(DocumentEntity document, String plainText) {
+    private void syncRagKnowledge(DocumentEntity document, String plainText, boolean propagateFailure) {
         try {
             ragKnowledgeService.replaceKbSource(
                     document.getOwnerUserId(),
@@ -326,6 +326,9 @@ class DocumentService {
             );
         } catch (RuntimeException exception) {
             log.warn("Failed to sync document knowledge index, documentId={}", document.getId(), exception);
+            if (propagateFailure) {
+                throw exception;
+            }
         }
     }
 

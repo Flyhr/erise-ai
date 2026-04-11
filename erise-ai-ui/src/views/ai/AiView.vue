@@ -21,7 +21,7 @@
               <button type="button" class="soft-chip" :disabled="sending" @click="resetConversation">新对话</button>
             </div>
 
-            <div class="knowledge-card">
+            <!-- <div class="knowledge-card">
               <div class="knowledge-subtabs">
                 <span class="section-eyebrow">知识库文件</span>
               </div>
@@ -68,7 +68,7 @@
                   {{ activeSessionId ? '当前会话还没有临时文件。' : '当前会话还没有临时文件' }}
                 </div>
               </div>
-            </div>
+            </div> -->
 
             <div class="thread-list thread-list--history">
               <div v-for="session in visibleSessions" :key="session.id" class="thread-item"
@@ -93,22 +93,22 @@
                 <h3>{{ sessionTitleText }}</h3>
               </div>
               <div class="chat-stage__meta">
-                <div class="header-model-chip">
-                  <span class="material-symbols-outlined">data_object</span>
-                  <div class="header-model-chip__copy">
+                <!-- <div class="header-model-chip"> -->
+                <!-- <span class="material-symbols-outlined">data_object</span> -->
+                <!-- <div class="header-model-chip__copy">
                     <strong>{{ headerModelName }}</strong>
-                  </div>
-                </div>
+                  </div> -->
+                <!-- </div> -->
                 <div class="web-search-toggle">
                   <span class="web-search-toggle__label">联网搜索</span>
                   <el-switch v-model="retrievalSettings.webSearchEnabledDefault" size="small" inline-prompt
                     active-text="开" inactive-text="关" :loading="savingRetrievalSettings"
                     :disabled="sending || savingRetrievalSettings" @change="handleWebSearchToggle" />
                 </div>
-                <div class="run-chip" :class="{ 'is-live': sending }">
+                <!-- <div class="run-chip" :class="{ 'is-live': sending }">
                   <span class="run-chip__dot"></span>
                   <span>{{ thinkingStatusText }}</span>
-                </div>
+                </div> -->
               </div>
             </div>
 
@@ -130,6 +130,10 @@
                     <div class="transcript-item__panel">
                       <div class="transcript-item__head">
                         <span class="transcript-item__label">{{ message.roleCode === 'USER' ? '' : 'Erise AI' }}</span>
+                        <span v-if="message.roleCode === 'ASSISTANT' && assistantThinkingLabel(message)"
+                          class="transcript-item__metric">
+                          {{ assistantThinkingLabel(message) }}
+                        </span>
                         <span class="transcript-item__time">{{ formatTime(message.createdAt) }}</span>
                       </div>
                       <div class="transcript-item__body" :class="surfaceClasses(message)">
@@ -193,6 +197,35 @@
                           type="button" class="retry-button" :disabled="sending" @click="retryMessage(message)">
                           重新发送
                         </button>
+
+                        <div v-if="message.roleCode === 'ASSISTANT' && assistantActionVisible(message)"
+                          class="assistant-actions">
+                          <button type="button" class="assistant-actions__button"
+                            :disabled="!assistantCopyText(message)" @click="copyAssistantReply(message)">
+                            <span class="material-symbols-outlined">content_copy</span>
+                            <span>复制</span>
+                          </button>
+                          <button type="button" class="assistant-actions__button"
+                            :disabled="sending || !assistantSourceQuestion(message)"
+                            @click="regenerateAssistantReply(message)">
+                            <span class="material-symbols-outlined">refresh</span>
+                            <span>刷新</span>
+                          </button>
+                        </div>
+                      </div>
+
+                      <div v-if="message.roleCode === 'USER' && message.attachments?.length"
+                        class="transcript-attachments">
+                        <div v-for="asset in message.attachments" :key="asset.key"
+                          class="composer-asset composer-asset--transcript" :class="assetSurfaceClass(asset)">
+                          <div class="composer-asset__icon">
+                            <span class="material-symbols-outlined">{{ assetIcon(asset) }}</span>
+                          </div>
+                          <div class="composer-asset__copy">
+                            <strong>{{ asset.title }}</strong>
+                            <small>{{ asset.subtitle }}</small>
+                          </div>
+                        </div>
                       </div>
                     </div>
                   </article>
@@ -216,48 +249,76 @@
 
             <footer class="composer-wrap--architect">
               <div class="composer-box--architect">
-                <div class="composer-box__toptools">
-                  <button type="button" class="toolbar-ghost" :disabled="sending" @click="openAttachmentPicker">
-                    <span class="material-symbols-outlined">attach_file</span>
-                    <span>知识库文件</span>
-                  </button>
-                  <button type="button" class="toolbar-ghost" :disabled="sending || uploadingTempFile"
-                    @click="triggerTempFileUpload">
-                    <span class="material-symbols-outlined">note_add</span>
-                    <span>{{ uploadingTempFile ? '上传中' : '临时文件' }}</span>
-                  </button>
-                  <button type="button" class="toolbar-ghost" @click="showUnavailable('图片上传')">
-                    <span class="material-symbols-outlined">image</span>
-                    <span>图片</span>
-                  </button>
-                  <div class="toolbar-model-picker">
-                    <span class="material-symbols-outlined">tune</span>
+                <div v-if="pendingComposerAssets.length" class="composer-staged-assets">
+                  <div v-for="asset in pendingComposerAssets" :key="asset.key" class="composer-asset"
+                    :class="assetSurfaceClass(asset)">
+                    <div class="composer-asset__icon">
+                      <span class="material-symbols-outlined">{{ assetIcon(asset) }}</span>
+                    </div>
+                    <div class="composer-asset__copy">
+                      <strong>{{ asset.title }}</strong>
+                      <small>{{ asset.subtitle }}</small>
+                    </div>
+                    <button type="button" class="composer-asset__remove" :disabled="sending || uploadingTempFile"
+                      @click="removeComposerAsset(asset)">
+                      <span class="material-symbols-outlined">close</span>
+                    </button>
+                  </div>
+                </div>
+
+                <div class="composer-box__meta">
+                  <el-dropdown trigger="click" @command="handleComposerMenuCommand">
+                    <button type="button" class="composer-plus-button" :disabled="sending || uploadingTempFile">
+                      <span class="material-symbols-outlined">add</span>
+                    </button>
+                    <template #dropdown>
+                      <el-dropdown-menu class="composer-dropdown">
+                        <el-dropdown-item command="knowledge">
+                          <span class="composer-dropdown__item">
+                            <span class="material-symbols-outlined">folder_managed</span>
+                            <span>知识库项目/文件</span>
+                          </span>
+                        </el-dropdown-item>
+                        <el-dropdown-item command="temp-file" :disabled="!activeSessionId || uploadingTempFile">
+                          <span class="composer-dropdown__item">
+                            <span class="material-symbols-outlined">upload_file</span>
+                            <span>{{ uploadingTempFile ? '上传中…' : '上传文件' }}</span>
+                          </span>
+                        </el-dropdown-item>
+
+                      </el-dropdown-menu>
+                    </template>
+                  </el-dropdown>
+
+
+
+                  <!-- <div class="composer-meta-pill composer-meta-pill--status">
+                    <span class="material-symbols-outlined">psychology</span>
+                    <span>{{ thinkingStatusText }}</span>
+                  </div> -->
+
+                  <div class="composer-model-picker">
+                    <span class="material-symbols-outlined">expand_circle_down</span>
                     <el-select v-model="selectedModelCode" size="small" class="toolbar-model-select"
                       :disabled="sending || loadingModels || !modelChoices.length" placeholder="选择模型">
                       <el-option v-for="model in modelChoices" :key="model.modelCode" :label="modelOptionLabel(model)"
                         :value="model.modelCode" />
                     </el-select>
                   </div>
+
+                  <div v-if="selectedProjectDisplay" class="composer-meta-pill composer-meta-pill--project">
+                    <span class="material-symbols-outlined">folder</span>
+                    <span>{{ selectedProjectDisplay }}</span>
+                  </div>
                 </div>
 
-                <div class="composer-box__content">
+                <div class="composer-box__content composer-box__content--architect">
                   <textarea ref="composerRef" v-model="question"
                     class="composer-box__input composer-box__input--architect" rows="1" :disabled="sending"
                     :placeholder="composerPlaceholder" @input="resizeComposer" @keydown="handleComposerKeydown" />
 
-                  <div class="composer-box__toolbar">
-                    <div class="composer-box__left-tools">
-                      <!-- <button type="button" class="toolbar-chip" disabled>{{ modelProviderLabel }}</button> -->
-                      <button v-if="selectedProjectDisplay" type="button" class="toolbar-chip" disabled>{{
-                        selectedProjectDisplay
-                        }}</button>
-                      <button v-if="selectedAttachments.length" type="button" class="toolbar-chip" disabled>
-                        已附加 {{ selectedAttachments.length }} 份资料
-                      </button>
-                      <button v-if="tempFiles.length" type="button" class="toolbar-chip" disabled>
-                        临时文件 {{ indexedTempFiles.length }}/{{ tempFiles.length }}
-                      </button>
-                    </div>
+                  <div class="composer-box__toolbar composer-box__toolbar--architect">
+
                     <div class="composer-box__right-tools">
                       <span class="composer-box__hint">Enter 发送，Shift + Enter 换行</span>
                       <button v-if="sending" type="button" class="send-button is-danger" :disabled="!currentRequestId"
@@ -270,10 +331,6 @@
                   </div>
                 </div>
               </div>
-              <!-- <p class="composer-footnote">
-                AI Assistant may provide generated content that still requires your review.
-                <button type="button" class="mini-link" @click="showUnavailable('服务条款')">Terms of Service</button>
-              </p> -->
             </footer>
           </section>
         </div>
@@ -389,8 +446,28 @@ import type {
   ProjectDetailView,
 } from '@/types/models'
 import { knowledgeReadinessLabel, resolveKnowledgeReadiness, sortAiModelsByPreference } from '@/utils/formatters'
+import { copyToClipboard } from '@/utils/object-operations'
 
 type MessageStatus = 'sent' | 'sending' | 'streaming' | 'failed'
+type ComposerAssetState = 'ready' | 'pending' | 'failed'
+
+interface ComposerAssetSnapshot {
+  key: string
+  assetType: 'DOCUMENT' | 'FILE' | 'TEMP_FILE'
+  title: string
+  subtitle: string
+  sourceId?: number
+  tempFileId?: number
+  projectId?: number
+  sizeBytes?: number
+  state: ComposerAssetState
+}
+
+interface StoredMessageAssetRecord {
+  question: string
+  createdAt: string
+  attachments: ComposerAssetSnapshot[]
+}
 
 interface UiMessage {
   id: string
@@ -408,6 +485,7 @@ interface UiMessage {
   modelCode?: string
   providerCode?: string
   latencyMs?: number
+  attachments?: ComposerAssetSnapshot[]
 }
 
 interface StreamDonePayload {
@@ -489,6 +567,7 @@ const buildLocalId = (prefix: string) => `${prefix}-${Date.now()}-${Math.random(
  * @param sessionId 会话 ID
  */
 const attachmentStorageKey = (sessionId: number) => `erise-ai-attachments:${sessionId}`
+const messageAttachmentStorageKey = (sessionId: number) => `erise-ai-message-attachments:${sessionId}`
 
 /**
  * 生成附件的唯一键（用于 UI 列表等）。
@@ -667,7 +746,7 @@ const sessionStatusText = computed(() => {
 const composerPlaceholder = computed(() =>
   routeProjectId.value
     ? '围绕当前项目继续提问，或先附加文档、文件、临时资料后再发起指令。'
-    : '输入你的问题，或先附加项目资料与临时文件。',
+    : '输入你的问题。',
 )
 const runningSeconds = computed(() => {
   if (!sending.value || !sendStartedAt.value) {
@@ -676,6 +755,28 @@ const runningSeconds = computed(() => {
   return Math.max(1, Math.floor((clockNow.value - sendStartedAt.value) / 1000))
 })
 const canSend = computed(() => Boolean(question.value.trim()) && !sending.value)
+const pendingComposerAssets = computed<ComposerAssetSnapshot[]>(() => [
+  ...selectedAttachments.value.map((attachment) => ({
+    key: attachmentKeyOf(attachment),
+    assetType: attachment.attachmentType,
+    title: attachment.title || `${citationSourceLabel(attachment.attachmentType)} #${attachment.sourceId}`,
+    subtitle: attachment.attachmentType === 'FILE' ? '知识库文件' : '知识库文档',
+    sourceId: attachment.sourceId,
+    projectId: attachment.projectId,
+    state: 'ready' as const,
+  })),
+  ...tempFiles.value.map((file) => ({
+    key: `TEMP_FILE:${file.id}`,
+    assetType: 'TEMP_FILE' as const,
+    title: file.fileName,
+    subtitle: tempFileStatusLabel(file),
+    tempFileId: file.id,
+    sourceId: file.id,
+    projectId: file.projectId,
+    sizeBytes: file.sizeBytes,
+    state: tempFileState(file) as ComposerAssetState,
+  })),
+])
 const modelProviderLabel = computed(() => activeModel.value?.providerCode || (loadingModels.value ? '加载中' : '模型服务'))
 const headerModelName = computed(() => {
   const modelCode = lastAssistantMessage.value?.modelCode
@@ -690,16 +791,16 @@ const headerModelName = computed(() => {
 const headerProviderName = computed(() =>
   lastAssistantMessage.value?.providerCode || activeModel.value?.providerCode || (loadingModels.value ? '加载中' : '模型服务'),
 )
-const thinkingStatusText = computed(() => {
-  if (sending.value) {
-    return `思考中 ${runningSeconds.value}s`
-  }
-  const latencyMs = lastAssistantMessage.value?.latencyMs
-  if (latencyMs && latencyMs > 0) {
-    return latencyMs >= 1000 ? `思考耗时 ${(latencyMs / 1000).toFixed(latencyMs >= 10000 ? 0 : 1)}s` : `思考耗时 ${latencyMs}ms`
-  }
-  return sessionStatusText.value
-})
+// const thinkingStatusText = computed(() => {
+//   if (sending.value) {
+//     return `思考中 ${runningSeconds.value}s`
+//   }
+//   const latencyMs = lastAssistantMessage.value?.latencyMs
+//   if (latencyMs && latencyMs > 0) {
+//     return latencyMs >= 1000 ? `思考耗时 ${(latencyMs / 1000).toFixed(latencyMs >= 10000 ? 0 : 1)}s` : `思考耗时 ${latencyMs}ms`
+//   }
+//   return sessionStatusText.value
+// })
 // const modelModeLabel = computed(() => (activeModel.value?.supportStream === false ? '普通回复' : '流式回复'))
 const quickPrompts = computed(() => [
   selectedAttachments.value.length || indexedTempFiles.value.length
@@ -774,6 +875,7 @@ const toUiMessage = (message: AiMessageView): UiMessage => ({
   refusedReason: message.refusedReason,
   status: message.status === 'streaming' ? 'streaming' : 'sent',
   errorMessage: message.errorMessage,
+  pendingQuestion: message.roleCode === 'USER' ? message.content : undefined,
   expanded: true,
   citationsExpanded: false,
   citations: message.citations || [],
@@ -798,6 +900,123 @@ const assistantContentOf = (message: UiMessage) => {
 }
 
 const renderAssistantContent = (message: UiMessage) => markdownRenderer.render(assistantContentOf(message))
+
+const assistantCopyText = (message: UiMessage) => assistantContentOf(message).trim()
+
+const assistantActionVisible = (message: UiMessage) =>
+  message.roleCode === 'ASSISTANT' && Boolean(assistantCopyText(message) || message.errorMessage)
+
+const assistantThinkingLabel = (message: UiMessage) => {
+  if (message.roleCode !== 'ASSISTANT') {
+    return ''
+  }
+  if (message.status === 'streaming') {
+    return '思考中'
+  }
+  if (!message.latencyMs || message.latencyMs <= 0) {
+    return ''
+  }
+  return message.latencyMs >= 1000
+    ? `思考耗时 ${(message.latencyMs / 1000).toFixed(message.latencyMs >= 10000 ? 0 : 1)}s`
+    : `思考耗时 ${message.latencyMs}ms`
+}
+
+const assetIcon = (asset: ComposerAssetSnapshot) => {
+  if (asset.assetType === 'DOCUMENT') {
+    return 'article'
+  }
+  const name = (asset.title || '').toLowerCase()
+  if (name.endsWith('.pdf')) {
+    return 'picture_as_pdf'
+  }
+  if (name.endsWith('.csv') || name.endsWith('.xls') || name.endsWith('.xlsx')) {
+    return 'table_chart'
+  }
+  if (name.endsWith('.png') || name.endsWith('.jpg') || name.endsWith('.jpeg') || name.endsWith('.gif') || name.endsWith('.webp')) {
+    return 'image'
+  }
+  return asset.assetType === 'TEMP_FILE' ? 'draft' : 'description'
+}
+
+const assetSurfaceClass = (asset: ComposerAssetSnapshot) => ({
+  'is-ready': asset.state === 'ready',
+  'is-pending': asset.state === 'pending',
+  'is-failed': asset.state === 'failed',
+})
+
+const cloneComposerAssets = (attachments: ComposerAssetSnapshot[]) => attachments.map((item) => ({ ...item }))
+
+const readStoredMessageAssets = (sessionId?: number): StoredMessageAssetRecord[] => {
+  if (!sessionId) {
+    return []
+  }
+  const raw = window.sessionStorage.getItem(messageAttachmentStorageKey(sessionId))
+  if (!raw) {
+    return []
+  }
+  try {
+    const parsed = JSON.parse(raw) as StoredMessageAssetRecord[]
+    return Array.isArray(parsed)
+      ? parsed.filter((item) => item?.question && item?.createdAt && Array.isArray(item.attachments))
+      : []
+  } catch {
+    window.sessionStorage.removeItem(messageAttachmentStorageKey(sessionId))
+    return []
+  }
+}
+
+const writeStoredMessageAssets = (sessionId: number, records: StoredMessageAssetRecord[]) => {
+  window.sessionStorage.setItem(messageAttachmentStorageKey(sessionId), JSON.stringify(records))
+}
+
+const persistMessageAssetRecord = (sessionId: number | undefined, record: StoredMessageAssetRecord) => {
+  if (!sessionId || !record.attachments.length) {
+    return
+  }
+  const records = readStoredMessageAssets(sessionId)
+  const exists = records.some((item) => item.question === record.question && item.createdAt === record.createdAt)
+  if (exists) {
+    return
+  }
+  writeStoredMessageAssets(
+    sessionId,
+    [...records, { ...record, attachments: cloneComposerAssets(record.attachments) }].slice(-80),
+  )
+}
+
+const removeStoredMessageAssets = (sessionId: number) => {
+  window.sessionStorage.removeItem(messageAttachmentStorageKey(sessionId))
+}
+
+const attachStoredAssets = (sessionId: number | undefined, sourceMessages: UiMessage[]) => {
+  if (!sessionId || !sourceMessages.length) {
+    return sourceMessages
+  }
+  const records = readStoredMessageAssets(sessionId)
+  if (!records.length) {
+    return sourceMessages
+  }
+  const used = new Set<number>()
+  return sourceMessages.map((message) => {
+    if (message.roleCode !== 'USER') {
+      return message
+    }
+    const matchedIndex = records.findIndex((record, index) => {
+      if (used.has(index)) {
+        return false
+      }
+      return record.question.trim() === (message.pendingQuestion || message.content || '').trim()
+    })
+    if (matchedIndex < 0) {
+      return message
+    }
+    used.add(matchedIndex)
+    return {
+      ...message,
+      attachments: cloneComposerAssets(records[matchedIndex].attachments),
+    }
+  })
+}
 
 const pageLabelFromNumbers = (pageNumbers: number[]) => {
   if (!pageNumbers.length) {
@@ -1195,6 +1414,41 @@ const removeAttachment = (attachment: AiAttachmentPayload) => {
   persistAttachmentState(activeSessionId.value)
 }
 
+const removeComposerAsset = async (asset: ComposerAssetSnapshot) => {
+  if (asset.assetType === 'TEMP_FILE' && asset.tempFileId) {
+    const target = tempFiles.value.find((item) => item.id === asset.tempFileId)
+    if (target) {
+      await removeTempFile(target)
+    }
+    return
+  }
+  if (!asset.sourceId || (asset.assetType !== 'FILE' && asset.assetType !== 'DOCUMENT')) {
+    return
+  }
+  removeAttachment({
+    attachmentType: asset.assetType,
+    sourceId: asset.sourceId,
+    projectId: asset.projectId,
+    title: asset.title,
+  })
+}
+
+const handleComposerMenuCommand = async (command: string | number | object) => {
+  switch (String(command)) {
+    case 'knowledge':
+      await openAttachmentPicker()
+      break
+    case 'temp-file':
+      triggerTempFileUpload()
+      break
+    case 'new-conversation':
+      await resetConversation()
+      break
+    default:
+      break
+  }
+}
+
 const ensureTempFileSession = () => {
   if (activeSessionId.value) {
     return true
@@ -1334,7 +1588,12 @@ const syncSessionRoute = async (sessionId?: number) => {
  * @param userMessage 本地用户消息对象
  * @param assistantMessage 本地助理占位消息对象
  */
-const applyChatResponse = async (response: AiChatResponse, userMessage: UiMessage, assistantMessage: UiMessage) => {
+const applyChatResponse = async (
+  response: AiChatResponse,
+  userMessage: UiMessage,
+  assistantMessage: UiMessage,
+  messageAssetRecord?: StoredMessageAssetRecord,
+) => {
   userMessage.status = 'sent'
   assistantMessage.status = 'sent'
   assistantMessage.serverId = response.messageId
@@ -1347,6 +1606,9 @@ const applyChatResponse = async (response: AiChatResponse, userMessage: UiMessag
   if (response.modelCode && availableModels.value.some((model) => model.modelCode === response.modelCode)) {
     selectedModelCode.value = response.modelCode
   }
+  if (messageAssetRecord) {
+    persistMessageAssetRecord(response.sessionId, messageAssetRecord)
+  }
   await syncSessionRoute(response.sessionId)
   await refreshTempFiles(response.sessionId)
   await refreshSessions()
@@ -1358,7 +1620,7 @@ const syncFromRoute = async () => {
     try {
       const detail = await getSession(sessionId)
       activeSessionId.value = detail.id
-      messages.value = detail.messages.map(toUiMessage)
+      messages.value = attachStoredAssets(detail.id, detail.messages.map(toUiMessage))
       restoreAttachmentState(detail.id, detail.projectId)
       await refreshTempFiles(detail.id)
       networkError.value = ''
@@ -1414,6 +1676,7 @@ const removeSession = async (sessionId: number) => {
   await ElMessageBox.confirm('删除后无法恢复，确定继续吗？', '删除会话', { type: 'warning' })
   await deleteSession(sessionId)
   removeAttachmentState(sessionId)
+  removeStoredMessageAssets(sessionId)
   ElMessage.success('会话已删除')
   await refreshSessions()
   if (sessionId === activeSessionId.value) {
@@ -1594,6 +1857,11 @@ const send = async (presetQuestion?: string) => {
   await resizeComposer()
 
   const now = new Date().toISOString()
+  const messageAssetRecord: StoredMessageAssetRecord = {
+    question: text,
+    createdAt: now,
+    attachments: cloneComposerAssets(pendingComposerAssets.value),
+  }
   const userMessage: UiMessage = {
     id: buildLocalId('user'),
     roleCode: 'USER',
@@ -1602,6 +1870,7 @@ const send = async (presetQuestion?: string) => {
     status: 'sending',
     pendingQuestion: text,
     expanded: true,
+    attachments: cloneComposerAssets(messageAssetRecord.attachments),
   }
   const assistantMessage: UiMessage = {
     id: buildLocalId('assistant'),
@@ -1619,6 +1888,7 @@ const send = async (presetQuestion?: string) => {
   sendStartedAt.value = Date.now()
   startClock()
   currentRequestId.value = ''
+  persistMessageAssetRecord(activeSessionId.value, messageAssetRecord)
 
   const payload: AiChatPayload = {
     projectId: activeProjectId.value,
@@ -1640,7 +1910,7 @@ const send = async (presetQuestion?: string) => {
   try {
     if (!useStream) {
       const response = await chat(payload)
-      await applyChatResponse(response, userMessage, assistantMessage)
+      await applyChatResponse(response, userMessage, assistantMessage, messageAssetRecord)
       return
     }
 
@@ -1661,10 +1931,11 @@ const send = async (presetQuestion?: string) => {
         assistantMessage.status = 'sent'
         assistantMessage.serverId = donePayload.messageId
         assistantMessage.latencyMs = donePayload.latencyMs
+        persistMessageAssetRecord(donePayload.sessionId, messageAssetRecord)
         await syncSessionRoute(donePayload.sessionId)
         if (donePayload.sessionId) {
           const detail = await getSession(donePayload.sessionId)
-          messages.value = detail.messages.map(toUiMessage)
+          messages.value = attachStoredAssets(donePayload.sessionId, detail.messages.map(toUiMessage))
           restoreAttachmentState(detail.id, detail.projectId)
           await refreshTempFiles(donePayload.sessionId)
         }
@@ -1684,7 +1955,7 @@ const send = async (presetQuestion?: string) => {
     } else if (!opened && !chunkReceived) {
       try {
         const response = await chat(payload)
-        await applyChatResponse(response, userMessage, assistantMessage)
+        await applyChatResponse(response, userMessage, assistantMessage, messageAssetRecord)
       } catch (fallbackError) {
         markSendFailed(userMessage, assistantMessage, errorMessageOf(fallbackError), text)
       }
@@ -1705,6 +1976,36 @@ const retryMessage = async (message: UiMessage) => {
     return
   }
   await send(message.pendingQuestion)
+}
+
+const assistantSourceQuestion = (message: UiMessage) => {
+  const messageIndex = messages.value.findIndex((item) => item.id === message.id)
+  if (messageIndex <= 0) {
+    return ''
+  }
+  for (let index = messageIndex - 1; index >= 0; index -= 1) {
+    const candidate = messages.value[index]
+    if (candidate.roleCode === 'USER') {
+      return (candidate.pendingQuestion || candidate.content || '').trim()
+    }
+  }
+  return ''
+}
+
+const copyAssistantReply = async (message: UiMessage) => {
+  const content = assistantCopyText(message)
+  if (!content) {
+    return
+  }
+  await copyToClipboard(content, '回答内容')
+}
+
+const regenerateAssistantReply = async (message: UiMessage) => {
+  const sourceQuestion = assistantSourceQuestion(message)
+  if (!sourceQuestion || sending.value) {
+    return
+  }
+  await send(sourceQuestion)
 }
 
 const usePrompt = async (prompt: string) => {

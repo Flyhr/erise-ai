@@ -64,10 +64,15 @@ export interface AdminUserView {
 
 export interface AdminTaskView {
   id: number
+  taskOrigin: 'FILE_PARSE' | 'RAG' | 'TEMP_FILE_PARSE'
   taskType: string
-  taskStatus: number
+  taskStatus: string
+  resourceType?: string
+  resourceId?: number
+  resourceTitle?: string
   retryCount: number
   lastError?: string
+  retryable: boolean
   createdAt: string
 }
 
@@ -107,6 +112,9 @@ export const updateAdminUserStatus = (id: number, status: string) =>
 
 export const getAdminTasks = (params: { pageNum?: number; pageSize?: number }) =>
   http.get<never, PageResponse<AdminTaskView>>('/v1/admin/tasks', { params })
+
+export const retryAdminTask = (taskOrigin: string, id: number) =>
+  http.post(`/v1/admin/tasks/${taskOrigin}/${id}/retry`)
 
 export const getAdminAuditLogs = (params: { pageNum?: number; pageSize?: number }) =>
   http.get<never, PageResponse<AdminAuditLogView>>('/v1/admin/audit-logs', { params })
