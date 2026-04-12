@@ -115,8 +115,8 @@ import KnowledgeSyncStatus from '@/components/common/KnowledgeSyncStatus.vue'
 import ProjectScopedListShell from '@/components/common/ProjectScopedListShell.vue'
 import { useFilePreview } from '@/composables/useFilePreview'
 import { knowledgeFileAccept, useKnowledgeFileUpload } from '@/composables/useKnowledgeFileUpload'
-import { useKnowledgeStatusPolling } from '@/composables/useKnowledgeStatusPolling'
 import { useProjectDirectory } from '@/composables/useProjectDirectory'
+import { useVisibleFileStatusPolling } from '@/composables/useVisibleFileStatusPolling'
 import type { FileView } from '@/types/models'
 import {
   formatDateTime,
@@ -139,10 +139,16 @@ const keyword = ref('')
 const pageNum = ref(1)
 const pageSize = 12
 const total = ref(0)
+const optimisticUploadedFiles = ref<Record<number, FileView>>({})
 
 const parsedScopedProjectId = Number(props.id)
 const scopedProjectId = Number.isFinite(parsedScopedProjectId) && parsedScopedProjectId > 0 ? parsedScopedProjectId : undefined
 const selectedProjectId = ref<number | undefined>(scopedProjectId)
+const ACTIVE_FILE_STATUSES = new Set(['INIT', 'UPLOADING', 'PENDING', 'PROCESSING'])
+const normalizeFileStatus = (value?: string) => (value || '').trim().toUpperCase()
+const hasActiveFileStatus = (record?: { parseStatus?: string; indexStatus?: string }) =>
+  ACTIVE_FILE_STATUSES.has(normalizeFileStatus(record?.parseStatus)) ||
+  ACTIVE_FILE_STATUSES.has(normalizeFileStatus(record?.indexStatus))
 
 const rootShell = computed(() => (scopedProjectId ? ProjectScopedListShell : 'div'))
 const rootShellProps = computed(() =>
@@ -158,6 +164,77 @@ const rootShellProps = computed(() =>
     },
 )
 
+const upsertOptimisticUploadedFile = (file: FileView) => {
+  optimisticUploadedFiles.value = {
+    ...optimisticUploadedFiles.value,
+    [file.id]: file,
+  }
+}
+
+const removeOptimisticUploadedFile = (fileId: number) => {
+  if (!optimisticUploadedFiles.value[fileId]) {
+    return
+  }
+  const nextFiles = { ...optimisticUploadedFiles.value }
+  delete nextFiles[fileId]
+  optimisticUploadedFiles.value = nextFiles
+}
+
+const mergeOptimisticUploadedFiles = (rows: FileView[]) => {
+  const existingIds = new Set(rows.map((row) => row.id))
+  const optimisticRows = Object.values(optimisticUploadedFiles.value).filter((file) => !existingIds.has(file.id))
+  return optimisticRows.length ? [...optimisticRows, ...rows] : rows
+}
+
+const reconcileOptimisticUploadedFiles = (rows: FileView[]) => {
+  const nextFiles = { ...optimisticUploadedFiles.value }
+  let changed = false
+
+  rows.forEach((row) => {
+    if (!nextFiles[row.id]) {
+      return
+    }
+    delete nextFiles[row.id]
+    changed = true
+  })
+
+  Object.values(nextFiles).forEach((file) => {
+    if (hasActiveFileStatus(file)) {
+      return
+    }
+    delete nextFiles[file.id]
+    changed = true
+  })
+
+  if (changed) {
+    optimisticUploadedFiles.value = nextFiles
+  }
+}
+
+const applyFileDetail = (row: FileView, detail: FileView) => {
+  row.fileName = detail.fileName
+  row.fileExt = detail.fileExt
+  row.mimeType = detail.mimeType
+  row.fileSize = detail.fileSize
+  row.uploadStatus = detail.uploadStatus
+  row.parseStatus = detail.parseStatus
+  row.indexStatus = detail.indexStatus
+  row.parseErrorMessage = detail.parseErrorMessage
+  row.createdAt = detail.createdAt
+  row.updatedAt = detail.updatedAt
+}
+
+const mergeUploadedFile = (file: FileView) => {
+  upsertOptimisticUploadedFile(file)
+  const existingIndex = files.value.findIndex((item) => item.id === file.id)
+  if (existingIndex >= 0) {
+    files.value[existingIndex] = file
+    return
+  }
+  files.value = [file, ...files.value]
+  total.value = Math.max(total.value + 1, files.value.length)
+}
+
 const load = async () => {
   const page = await getFiles({
     projectId: scopedProjectId || selectedProjectId.value,
@@ -165,8 +242,9 @@ const load = async () => {
     pageNum: pageNum.value,
     pageSize,
   })
-  files.value = page.records
+  files.value = mergeOptimisticUploadedFiles(page.records)
   total.value = page.total
+  reconcileOptimisticUploadedFiles(page.records)
 }
 
 const ensureCurrentPage = async () => {
@@ -223,14 +301,26 @@ const handleScopedKeywordUpdate = (value: string) => {
 
 const { beforeUpload } = useKnowledgeFileUpload({
   resolveProjectId: () => scopedProjectId || selectedProjectId.value,
-  onUploaded: async () => {
-    await load()
+  onUploaded: async (uploadedFile) => {
+    mergeUploadedFile(uploadedFile)
   },
 })
 
-useKnowledgeStatusPolling({
-  records: files,
-  reload: load,
+useVisibleFileStatusPolling({
+  rows: files,
+  intervalMs: 1000,
+  getFileId: (row) => row.id,
+  isFileActive: (row) => hasActiveFileStatus(row),
+  applyDetail: applyFileDetail,
+  onDetails: (details) => {
+    details.forEach((detail) => {
+      if (hasActiveFileStatus(detail)) {
+        upsertOptimisticUploadedFile(detail)
+        return
+      }
+      removeOptimisticUploadedFile(detail.id)
+    })
+  },
 })
 
 const retryKnowledgeFile = async (file: FileView) => {

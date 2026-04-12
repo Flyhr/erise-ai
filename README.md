@@ -32,7 +32,7 @@ FastAPI
    - `WEB_SEARCH_PROVIDER=tavily`
    - `TAVILY_API_KEY=<your tavily key>`
    - ！！！不要把 API Key 填到 `WEB_SEARCH_PROVIDER`里
-4. 在仓库根目录执行：
+4. 在根目录执行：
 
 ```bash
 docker compose --env-file .env.dev -f docker-compose.dev.yml up --build
@@ -68,30 +68,6 @@ docker compose --env-file .env.dev -f docker-compose.dev.yml down
 
   </tr>
 </table>
-
-## 热更新说明
-
-目前代码处于开发配置，源码直接挂载到容器内，依赖和构建产物保留在容器卷中：
-
-- 前端：Vite HMR + polling，本地修改 Vue / TS / CSS 后浏览器直接热更新
-- Python AI：`uvicorn --reload`，修改 `AiAssistant/src` 后容器内自动 reload
-- Java Backend：容器内 watcher + `spring-boot:run` / DevTools 自动重启
-
-说明：
-
-- 前端和 Python 服务可以做到不重新构建镜像即可生效
-- Java 代码无法做到“完全不编译就生效”，但编译与重启都发生在容器内部，不需要重新执行 `docker compose up --build`
-
-## 什么时候需要重新 `--build`
-
-仅在以下场景建议重新构建：
-
-- `package.json` / `package-lock.json` 发生变化
-- `requirements.txt` 发生变化
-- `pom.xml` 或 Maven 依赖发生变化
-- `Dockerfile.dev` 或基础镜像发生变化
-
-日常业务代码、样式、配置文件调整通常不需要重新 `--build`
 
 ## 生产与其他说明
 

@@ -41,7 +41,7 @@
               </el-form-item> -->
 
               <el-form-item v-if="mode === 'register'" label="邮箱">
-                <el-input v-model="form.email" autocomplete="email" placeholder="example@domain.com" />
+                <el-input v-model="form.email" autocomplete="email" placeholder="请输入邮箱地址" />
               </el-form-item>
 
               <el-form-item label="密码">
@@ -53,7 +53,7 @@
                 <div class="captcha-row">
                   <el-input v-model="form.captchaCode" maxlength="4" placeholder="4位验证码" @keyup.enter="submit" />
                   <button class="captcha-button" type="button" @click="loadCaptcha">
-                    <img :src="captcha.captchaImage" alt="captcha" class="captcha-image" />
+                    <img :src="captcha.captchaImage" alt="验证码" class="captcha-image" />
                   </button>
                 </div>
               </el-form-item>
@@ -91,7 +91,7 @@
             </div> -->
           </div>
 
-          <div class="login-footer">© 2026 ERISE AI 知识库. ALL RIGHTS RESERVED.</div>
+          <div class="login-footer">© 2026 ERISE AI 知识库 · 保留所有权利</div>
         </div>
       </main>
     </div>
@@ -181,7 +181,6 @@ onMounted(() => {
 
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap');
-@import url('https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap');
 
 body {
   font-family: 'Plus Jakarta Sans', sans-serif;

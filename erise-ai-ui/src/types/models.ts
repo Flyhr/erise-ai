@@ -13,6 +13,20 @@ export interface PageResponse<T> {
   totalPages: number
 }
 
+export interface UserNotificationView {
+  id: number
+  notificationType: string
+  title: string
+  content: string
+  read: boolean
+  senderName?: string
+  createdAt: string
+}
+
+export interface NotificationUnreadCountView {
+  unreadCount: number
+}
+
 export interface UserView {
   id: number
   username: string
@@ -140,6 +154,8 @@ export interface KnowledgeAssetView {
   assetType: 'FILE' | 'DOCUMENT' | 'CONTENT'
   assetId: number
   projectId?: number
+  ownerUserId?: number
+  ownerName?: string
   title: string
   summary?: string
   fileExt?: string

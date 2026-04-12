@@ -1,33 +1,38 @@
 import { createRouter, createWebHistory } from "vue-router";
 import { useAuthStore } from "@/stores/auth";
-import LoginView from "@/views/auth/LoginView.vue";
-import WorkspaceView from "@/views/workspace/WorkspaceView.vue";
-import ProjectsView from "@/views/project/ProjectsView.vue";
-import ProjectDetailView from "@/views/project/ProjectDetailView.vue";
-import FilesView from "@/views/file/FilesView.vue";
-import FileDetailView from "@/views/file/FileDetailView.vue";
-import OfficeFileEditView from "@/views/file/OfficeFileEditView.vue";
-import DocumentsView from "@/views/document/DocumentsView.vue";
-import DocumentEditView from "@/views/document/DocumentEditView.vue";
-import ContentItemsView from "@/views/content/ContentItemsView.vue";
-import ContentItemEditView from "@/views/content/ContentItemEditView.vue";
-import KnowledgeBaseView from "@/views/knowledge/KnowledgeBaseView.vue";
-import SearchView from "@/views/search/SearchView.vue";
-import AiView from "@/views/ai/AiView.vue";
-import ProfileView from "@/views/settings/ProfileView.vue";
-import AdminLayout from "@/components/layout/AdminLayout.vue";
-import AdminDashboardView from "@/views/admin/AdminDashboardView.vue";
-import AdminProjectAssetsView from "@/views/admin/AdminProjectAssetsView.vue";
-import AdminUsersView from "@/views/admin/AdminUsersView.vue";
-import AdminTasksView from "@/views/admin/AdminTasksView.vue";
-import AdminAuditLogsView from "@/views/admin/AdminAuditLogsView.vue";
-import AdminModelsView from "@/views/admin/AdminModelsView.vue";
-import NotFoundView from "@/views/admin/NotFoundView.vue";
-import WorkspaceShellLayout from "@/components/common/WorkspaceShellLayout.vue";
 import {
   cancelRouteLoading,
   startRouteLoading,
 } from "@/composables/useRouteLoading";
+
+const LoginView = () => import("@/views/auth/LoginView.vue");
+const WorkspaceView = () => import("@/views/workspace/WorkspaceView.vue");
+const ProjectsView = () => import("@/views/project/ProjectsView.vue");
+const ProjectDetailView = () => import("@/views/project/ProjectDetailView.vue");
+const FilesView = () => import("@/views/file/FilesView.vue");
+const FileDetailView = () => import("@/views/file/FileDetailView.vue");
+const OfficeFileEditView = () => import("@/views/file/OfficeFileEditView.vue");
+const DocumentsView = () => import("@/views/document/DocumentsView.vue");
+const DocumentEditView = () => import("@/views/document/DocumentEditView.vue");
+const ContentItemsView = () => import("@/views/content/ContentItemsView.vue");
+const ContentItemEditView = () =>
+  import("@/views/content/ContentItemEditView.vue");
+const KnowledgeBaseView = () =>
+  import("@/views/knowledge/KnowledgeBaseView.vue");
+const SearchView = () => import("@/views/search/SearchView.vue");
+const AiView = () => import("@/views/ai/AiView.vue");
+const ProfileView = () => import("@/views/settings/ProfileView.vue");
+const AdminLayout = () => import("@/components/layout/AdminLayout.vue");
+const AdminDashboardView = () => import("@/views/admin/AdminDashboardView.vue");
+const AdminProjectAssetsView = () =>
+  import("@/views/admin/AdminProjectAssetsView.vue");
+const AdminUsersView = () => import("@/views/admin/AdminUsersView.vue");
+const AdminTasksView = () => import("@/views/admin/AdminTasksView.vue");
+const AdminAuditLogsView = () => import("@/views/admin/AdminAuditLogsView.vue");
+const AdminModelsView = () => import("@/views/admin/AdminModelsView.vue");
+const NotFoundView = () => import("@/views/admin/NotFoundView.vue");
+const WorkspaceShellLayout = () =>
+  import("@/components/common/WorkspaceShellLayout.vue");
 
 const ROUTE_LOADING_TITLE_PREFIX = "\u6b63\u5728\u6253\u5f00 ";
 const ROUTE_LOADING_DEFAULT_TITLE = "\u6b63\u5728\u8fdb\u5165\u9875\u9762";
@@ -157,7 +162,6 @@ const router = createRouter({
           props: true,
           meta: {
             title: "文件详情",
-            description: "查看文件元数据、预览方式和编辑入口。",
           },
         },
         {
@@ -223,7 +227,32 @@ const router = createRouter({
           component: AdminProjectAssetsView,
           meta: {
             title: "项目文件管理",
-            description: "跨项目查看文件、文档和表格资料。",
+          },
+        },
+        {
+          path: "files/:id",
+          component: FileDetailView,
+          props: true,
+          meta: {
+            title: "文件详情",
+            admin: true,
+          },
+        },
+        {
+          path: "files/:id/edit",
+          component: OfficeFileEditView,
+          props: true,
+          meta: {
+            title: "文件编辑",
+            admin: true,
+          },
+        },
+        {
+          path: "profile",
+          component: ProfileView,
+          meta: {
+            title: "涓汉璧勬枡",
+            admin: true,
           },
         },
         {
@@ -231,7 +260,6 @@ const router = createRouter({
           component: AdminUsersView,
           meta: {
             title: "用户管理",
-            description: "管理账号状态与访问权限。",
           },
         },
         {
@@ -239,7 +267,6 @@ const router = createRouter({
           component: AdminAuditLogsView,
           meta: {
             title: "日志管理",
-            description: "查看后台关键操作和审计明细。",
           },
         },
         {
@@ -247,7 +274,6 @@ const router = createRouter({
           component: AdminModelsView,
           meta: {
             title: "模型管理",
-            description: "查看已配置模型和提供方信息。",
           },
         },
         {
@@ -256,6 +282,24 @@ const router = createRouter({
           meta: {
             title: "任务",
             description: "查看后台任务执行状态与错误信息。",
+          },
+        },
+        {
+          path: "documents/:id/edit",
+          component: DocumentEditView,
+          props: true,
+          meta: {
+            title: "鏂囨。缂栬緫",
+            admin: true,
+          },
+        },
+        {
+          path: "contents/:id/edit",
+          component: ContentItemEditView,
+          props: true,
+          meta: {
+            title: "缁撴瀯鍖栫紪杈?",
+            admin: true,
           },
         },
         { path: "ai-models", redirect: "/admin/models" },
@@ -281,6 +325,10 @@ router.beforeEach(async (to) => {
 
   if (to.meta.requiresAuth && !authStore.isAuthenticated) {
     return "/login";
+  }
+
+  if (authStore.isAdmin && to.path === "/settings/profile") {
+    return "/admin/profile";
   }
 
   if (to.meta.admin && !authStore.isAdmin) {

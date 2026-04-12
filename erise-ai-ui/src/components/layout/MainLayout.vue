@@ -44,6 +44,7 @@
 
         <div class="app-topbar__actions">
           <el-button v-if="authStore.isAdmin" plain @click="router.push('/admin')">管理后台</el-button>
+          <NotificationCenterDrawer />
           <el-button plain @click="themeDrawerVisible = true">主题</el-button>
           <el-dropdown trigger="click" @command="handleCommand">
             <div class="avatar-chip shell-user-trigger">
@@ -101,9 +102,10 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { Menu } from '@element-plus/icons-vue'
+import { ChatLineRound, Document, Files, FolderOpened, House, Menu, Search, Setting } from '@element-plus/icons-vue'
 import { useAuthStore } from '@/stores/auth'
 import AppDrawerPanel from '@/components/common/AppDrawerPanel.vue'
+import NotificationCenterDrawer from '@/components/common/NotificationCenterDrawer.vue'
 import AppStatusTag from '@/components/common/AppStatusTag.vue'
 import ThemePanel from '@/components/common/ThemePanel.vue'
 
@@ -116,15 +118,15 @@ const themeDrawerVisible = ref(false)
 
 const navItems = computed(() => {
   const base = [
-    { index: '/workspace', label: '工作台', icon: 'House' },
-    { index: '/projects', label: '项目', icon: 'FolderOpened' },
-    { index: '/files', label: '文件', icon: 'Files' },
-    { index: '/documents', label: '文档', icon: 'Document' },
-    { index: '/search', label: '搜索', icon: 'Search' },
-    { index: '/ai', label: 'AI 助理', icon: 'ChatLineRound' },
+    { index: '/workspace', label: '工作台', icon: House },
+    { index: '/projects', label: '项目', icon: FolderOpened },
+    { index: '/files', label: '文件', icon: Files },
+    { index: '/documents', label: '文档', icon: Document },
+    { index: '/search', label: '搜索', icon: Search },
+    { index: '/ai', label: 'AI 助理', icon: ChatLineRound },
   ]
   if (authStore.isAdmin) {
-    base.push({ index: '/admin', label: '管理后台', icon: 'Setting' })
+    base.push({ index: '/admin', label: '管理后台', icon: Setting })
   }
   return base
 })
@@ -142,8 +144,8 @@ const activeNavIndex = computed(() => {
 const pageTitle = computed(() => (route.meta.title as string) || 'Erise')
 // const pageDescription = computed(() => (route.meta.description as string) || '在项目、搜索、文件、文档与 AI 对话之间组织知识工作。')
 const userInitials = computed(() => {
-  const raw = authStore.user?.displayName || authStore.user?.username || 'U'
-  return raw.trim().slice(0, 1).toUpperCase()
+  const raw = authStore.user?.displayName || authStore.user?.username || '我'
+  return raw.trim().slice(0, 1)
 })
 
 watch(

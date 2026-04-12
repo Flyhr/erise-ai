@@ -37,7 +37,9 @@ const activeNav = computed<'dashboard' | 'projects' | 'knowledge' | 'ai'>(() => 
   const path = route.path
   if (path.startsWith('/ai')) return 'ai'
   if (path.startsWith('/knowledge')) return 'knowledge'
-  if (path.startsWith('/projects')) return 'projects'
+  if (path.startsWith('/projects') || path.startsWith('/files') || path.startsWith('/documents') || path.startsWith('/contents')) {
+    return 'projects'
+  }
   if (path.startsWith('/workspace')) return 'dashboard'
   return 'dashboard'
 })

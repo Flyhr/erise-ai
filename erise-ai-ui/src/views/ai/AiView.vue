@@ -1,22 +1,21 @@
 <template>
   <div class="page-shell ai-admin-page">
-    <WorkspaceNavigationShell v-model="searchKeyword" active-nav="ai" brand-title="Erise Ai 知识库"
-      brand-subtitle="The Digital Curator" create-text="新建对话"
-      :footer-title="selectedProjectDisplay || 'Erise AI 知识库 V1.0'"
-      :footer-copy="activeModel?.providerCode || 'Premium Account'"
-      :footer-avatar="(selectedProjectDisplay || 'ER').slice(0, 2).toUpperCase()"
-      :user-name="activeModel?.modelName || 'AI 助理'" :user-role="sessionStatusText"
-      :user-avatar="(activeModel?.modelName || 'A').slice(0, 1)" search-placeholder="搜索项目、知识库、文件或 AI 会话..."
-      @create="resetConversation" @navigate-dashboard="router.push('/workspace')"
-      @navigate-projects="router.push('/projects')" @navigate-knowledge="router.push('/knowledge')"
-      @navigate-ai="router.push('/ai')" @search="openSearch" @notify="showComingSoon('通知中心')"
-      @settings="router.push('/settings/profile')" @profile="router.push('/settings/profile')">
+    <WorkspaceNavigationShell v-model="searchKeyword" active-nav="ai" brand-title="Erise AI 知识库" brand-subtitle=""
+      create-text="新建对话" :footer-title="selectedProjectDisplay || 'Erise AI 知识库 V1.0'"
+      :footer-copy="activeModel?.providerCode || '智能问答工作台'"
+      :footer-avatar="(selectedProjectDisplay || '知识').slice(0, 2)" :user-name="activeModel?.modelName || 'AI 助理'"
+      :user-role="sessionStatusText" :user-avatar="(activeModel?.modelName || '智').slice(0, 1)"
+      search-placeholder="搜索项目、知识库、文件或 AI 会话..." @create="resetConversation"
+      @navigate-dashboard="router.push('/workspace')" @navigate-projects="router.push('/projects')"
+      @navigate-knowledge="router.push('/knowledge')" @navigate-ai="router.push('/ai')" @search="openSearch"
+      @notify="showComingSoon('通知中心')" @settings="router.push('/settings/profile')"
+      @profile="router.push('/settings/profile')">
       <div class="workspace-shell-card app-card">
         <div class="ai-workspace">
           <aside class="conversation-history">
             <div class="conversation-history__head">
               <div>
-                <div class="conversation-history__eyebrow">Recent</div>
+                <div class="conversation-history__eyebrow">最近会话</div>
                 <h3>会话列表</h3>
               </div>
             </div>
@@ -134,15 +133,17 @@
                     :class="message.roleCode === 'USER' ? 'is-user' : 'is-assistant'">
                     <div class="transcript-item__avatar-wrap"
                       :class="{ 'transcript-item__avatar-wrap--assistant': message.roleCode === 'ASSISTANT' }">
-                      <span v-if="assistantThinkingLabel(message)" class="transcript-item__metric transcript-item__metric--aside">
+                      <span v-if="assistantThinkingLabel(message)"
+                        class="transcript-item__metric transcript-item__metric--aside">
                         {{ assistantThinkingLabel(message) }}
                       </span>
                       <div class="transcript-item__avatar"
                         :class="{ 'transcript-item__avatar--assistant': message.roleCode === 'ASSISTANT' }">
-                      <span v-if="message.roleCode === 'USER'" class="material-symbols-outlined">person</span>
-                      <template v-else>
-                        <span class="material-symbols-outlined" style="font-variation-settings: 'FILL' 1">smart_toy</span>
-                      </template>
+                        <span v-if="message.roleCode === 'USER'" class="material-symbols-outlined">person</span>
+                        <template v-else>
+                          <span class="material-symbols-outlined"
+                            style="font-variation-settings: 'FILL' 1">smart_toy</span>
+                        </template>
                       </div>
                     </div>
                     <div class="transcript-item__panel">
@@ -188,7 +189,7 @@
                               class="citation-card citation-card--web">
                               <div class="citation-card__content">
                                 <strong class="citation-card__title citation-card__title--single">{{ group.title
-                                  }}</strong>
+                                }}</strong>
                                 <small class="citation-card__meta">{{ group.urlLabel || '网页引用' }}</small>
                               </div>
                               <button type="button" class="citation-card__action"
@@ -333,7 +334,7 @@
                   <div class="composer-box__toolbar composer-box__toolbar--architect">
 
                     <div class="composer-box__right-tools">
-                      <span class="composer-box__hint">Enter 发送，Shift + Enter 换行</span>
+                      <span class="composer-box__hint">回车发送，使用换行组合键可继续输入</span>
                       <button v-if="sending" type="button" class="send-button is-danger" :disabled="!currentRequestId"
                         @click="stopGeneration">停止生成</button>
                       <button v-else type="button" class="send-button send-button--architect" :disabled="!canSend"
@@ -376,7 +377,7 @@
                   <strong>{{ file.fileName }}</strong>
                   <small>{{ knowledgeFileStatusText(file) }}</small>
                   <small v-if="file.parseErrorMessage" class="attachment-option__error">{{ file.parseErrorMessage
-                    }}</small>
+                  }}</small>
                 </span>
               </label>
             </div>

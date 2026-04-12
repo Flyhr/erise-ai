@@ -40,6 +40,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 import { ElMessage } from 'element-plus'
+import { useRoute } from 'vue-router'
 import { getEditableOfficeFile, previewOfficeFile, updateEditableOfficeFile } from '@/api/file'
 import AppPageHeader from '@/components/common/AppPageHeader.vue'
 import AppSectionCard from '@/components/common/AppSectionCard.vue'
@@ -50,6 +51,7 @@ import { formatDateTime, plainTextToHtml, resolveErrorMessage } from '@/utils/fo
 const props = defineProps<{ id: string }>()
 
 const file = ref<EditableOfficeFileView>()
+const route = useRoute()
 const bodyHtml = ref('<p></p>')
 const plainTextContent = ref('')
 const saving = ref(false)
@@ -61,11 +63,14 @@ const metaForm = reactive({
 const fileId = Number(props.id)
 
 const isTxtFile = computed(() => (file.value?.fileExt || '').toLowerCase() === 'txt')
+const isAdminContext = computed(() => route.path.startsWith('/admin/'))
 const headerTitle = computed(() => metaForm.title.trim() || stripExtension(file.value?.fileName || '文件编辑'))
 const editorSubtitle = computed(() => '支持 Ctrl+S 快捷保存，返回后会定位到项目详情中的文件列表。')
 const editorCardTitle = computed(() => (isTxtFile.value ? '正文文本编辑器' : '在线正文编辑器'))
 const backTarget = computed(() =>
-  file.value
+  isAdminContext.value && file.value
+    ? `/admin/files/${file.value.id}`
+    : file.value
     ? {
       path: `/projects/${file.value.projectId}`,
       query: { tab: 'files' },

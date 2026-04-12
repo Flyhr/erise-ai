@@ -12,6 +12,52 @@ export default defineConfig(({ mode }) => {
         '@': fileURLToPath(new URL('./src', import.meta.url)),
       },
     },
+    build: {
+      chunkSizeWarningLimit: 1400,
+      rollupOptions: {
+        output: {
+          manualChunks(id) {
+            if (!id.includes('node_modules')) {
+              return
+            }
+            if (id.includes('@tinymce/tinymce-vue')) {
+              return 'tinymce-vue'
+            }
+            if (id.includes('tinymce/')) {
+              return 'tinymce-core'
+            }
+            if (id.includes('@tiptap')) {
+              return 'tiptap'
+            }
+            if (id.includes('prosemirror')) {
+              return 'prosemirror'
+            }
+            if (id.includes('echarts')) {
+              return 'echarts'
+            }
+            if (id.includes('zrender')) {
+              return 'zrender'
+            }
+            if (id.includes('element-plus') || id.includes('@element-plus')) {
+              return 'element-plus'
+            }
+            if (id.includes('html2canvas')) {
+              return 'html2canvas'
+            }
+            if (id.includes('jspdf')) {
+              return 'jspdf'
+            }
+            if (id.includes('markdown-it')) {
+              return 'markdown-it'
+            }
+            if (id.includes('turndown')) {
+              return 'turndown'
+            }
+            return 'vendor'
+          },
+        },
+      },
+    },
     server: {
       port: 5173,
       strictPort: true,

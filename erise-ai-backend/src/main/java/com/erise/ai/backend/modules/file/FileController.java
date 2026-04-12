@@ -185,6 +185,7 @@ class FileService {
         entity.setUploadStatus("INIT");
         entity.setParseStatus("PENDING");
         entity.setPreviewStatus("PENDING");
+        entity.setReviewStatus("APPROVED");
         entity.setIndexStatus("PENDING");
         entity.setCreatedBy(currentUser.userId());
         entity.setUpdatedBy(currentUser.userId());
@@ -373,8 +374,10 @@ class FileService {
                 entity.getFileSize(),
                 entity.getUploadStatus(),
                 entity.getParseStatus(),
+                entity.getReviewStatus(),
                 entity.getIndexStatus(),
                 parseErrorMessage,
+                entity.getReviewComment(),
                 entity.getCreatedAt(),
                 entity.getUpdatedAt()
         );
@@ -921,6 +924,10 @@ class FileEntity extends AuditableEntity {
     private String uploadStatus;
     private String parseStatus;
     private String previewStatus;
+    private String reviewStatus;
+    private String reviewComment;
+    private Long reviewedByUserId;
+    private java.time.LocalDateTime reviewedAt;
     private String indexStatus;
 }
 
@@ -982,8 +989,10 @@ record FileView(
         Long fileSize,
         String uploadStatus,
         String parseStatus,
+        String reviewStatus,
         String indexStatus,
         String parseErrorMessage,
+        String reviewComment,
         java.time.LocalDateTime createdAt,
         java.time.LocalDateTime updatedAt
 ) {

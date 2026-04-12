@@ -12,3 +12,6 @@ export const updateMe = (payload: {
 
 export const updatePassword = (payload: { oldPassword: string; newPassword: string }) =>
   http.put('/v1/users/password', payload)
+
+export const deleteMe = (payload: { password: string }) =>
+  http.delete('/v1/users/me', { data: payload })

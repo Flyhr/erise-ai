@@ -1,25 +1,19 @@
 ﻿<template>
   <div v-if="file" class="page-shell">
-    <AppPageHeader
-      :title="file.fileName"
-      eyebrow="文件详情"
-      subtitle="查看文件元数据、预览方式、下载入口和在线编辑能力。"
-      show-back
-      back-label="返回项目文件"
-      :back-to="backTarget"
-    >
-      <template #actions>
-        <el-button plain @click="handlePreview">预览</el-button>
-        <el-button v-if="isOfficeFile" @click="$router.push(`/files/${file.id}/edit`)">在线编辑</el-button>
-        <el-button type="primary" @click="handleDownload">下载</el-button>
-      </template>
+    <AppPageHeader :title="file.fileName" show-back back-label="返回项目文件" :back-to="backTarget">
+
     </AppPageHeader>
 
     <AppSectionCard title="文件信息">
+      <template #actions>
+        <el-button plain @click="handlePreview">预览</el-button>
+        <el-button v-if="isOfficeFile" @click="handleEdit">在线编辑</el-button>
+        <el-button type="primary" @click="handleDownload">下载</el-button>
+      </template>
       <div class="detail-grid">
         <div class="detail-item"><span>所属项目</span><strong>{{ projectLabel(file.projectId) }}</strong></div>
         <div class="detail-item"><span>类型</span><strong>{{ normalizeFileTypeLabel(file.fileExt, file.mimeType)
-        }}</strong></div>
+            }}</strong></div>
         <div class="detail-item"><span>大小</span><strong>{{ formatFileSize(file.fileSize) }}</strong></div>
         <div class="detail-item"><span>上传状态</span><strong>{{ uploadStatusLabel(file.uploadStatus) }}</strong></div>
         <div class="detail-item"><span>上传时间</span><strong>{{ formatDateTime(file.createdAt) }}</strong></div>
@@ -33,6 +27,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import { ElMessage } from 'element-plus'
+import { useRoute, useRouter } from 'vue-router'
 import { downloadFileContent, getFile, previewFileBinary, previewOfficeFile } from '@/api/file'
 import { trackWorkspaceActivity } from '@/api/workspace'
 import AppPageHeader from '@/components/common/AppPageHeader.vue'
@@ -43,14 +38,19 @@ import { formatDateTime, formatFileSize, isOfficeEditableFile, normalizeFileType
 
 const props = defineProps<{ id: string }>()
 const file = ref<FileView>()
+const route = useRoute()
+const router = useRouter()
 const { loadProjects, projectLabel } = useProjectDirectory()
 const isOfficeFile = computed(() => isOfficeEditableFile(file.value?.fileExt))
+const isAdminContext = computed(() => route.path.startsWith('/admin/'))
 const backTarget = computed(() =>
-  file.value
+  isAdminContext.value
+    ? '/admin/project-files'
+    : file.value
     ? {
-        path: `/projects/${file.value.projectId}`,
-        query: { tab: 'files' },
-      }
+      path: `/projects/${file.value.projectId}`,
+      query: { tab: 'files' },
+    }
     : '/files',
 )
 
@@ -79,6 +79,11 @@ const handlePreview = async () => {
   } catch (error) {
     ElMessage.error(resolveErrorMessage(error, '文件预览失败，请稍后重试'))
   }
+}
+
+const handleEdit = async () => {
+  if (!file.value) return
+  await router.push(isAdminContext.value ? `/admin/files/${file.value.id}/edit` : `/files/${file.value.id}/edit`)
 }
 
 const handleDownload = async () => {

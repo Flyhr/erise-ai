@@ -4,6 +4,8 @@ import type { AiModelView } from '@/types/models'
 export const formatDateTime = (value?: string, pattern = 'YYYY-MM-DD HH:mm') =>
   value ? dayjs(value).format(pattern) : '--'
 
+const trimDecimalTail = (value: string) => value.replace(/\.?0+$/, '')
+
 export const formatFileSize = (value?: number) => {
   if (!value || value <= 0) {
     return '--'
@@ -14,6 +16,31 @@ export const formatFileSize = (value?: number) => {
   }
   const kb = value / 1024
   return `${Math.max(kb, 0.1).toFixed(kb >= 10 ? 0 : 1)} KB`
+}
+
+export const formatTokenCountInK = (value?: number) => {
+  if (!value || value <= 0) {
+    return '--'
+  }
+  const inK = value / 1000
+  if (Number.isInteger(inK)) {
+    return `${inK}K`
+  }
+  if (inK >= 10) {
+    return `${trimDecimalTail(inK.toFixed(1))}K`
+  }
+  return `${trimDecimalTail(inK.toFixed(3))}K`
+}
+
+export const toEditableTokenCountK = (value?: number) => {
+  if (!value || value <= 0) {
+    return ''
+  }
+  const inK = value / 1000
+  if (Number.isInteger(inK)) {
+    return String(inK)
+  }
+  return trimDecimalTail(inK.toFixed(inK >= 10 ? 1 : 3))
 }
 
 export const normalizeFileTypeLabel = (fileExt?: string, mimeType?: string) => {

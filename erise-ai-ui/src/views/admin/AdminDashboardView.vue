@@ -42,29 +42,29 @@
           </div>
         </AppSectionCard>
 
-        <AppSectionCard title="Token 消耗概览">
+        <AppSectionCard title="令牌消耗概览">
           <div class="token-summary">
             <div class="token-ring" :style="tokenRingStyle">
               <div class="token-ring__value">{{ compactNumber(normalizedDashboard.tokenUsage.totalTokens24h) }}</div>
-              <div class="token-ring__label">24h Tokens</div>
+              <div class="token-ring__label">24小时令牌</div>
             </div>
             <div class="token-breakdown">
               <div class="token-breakdown__row">
-                <span>近 7 日输入 Tokens</span>
+                <span>近 7 日输入令牌</span>
                 <strong>{{ compactNumber(normalizedDashboard.tokenUsage.promptTokens7d) }}</strong>
               </div>
               <div class="token-breakdown__bar">
                 <div class="is-prompt" :style="{ width: `${tokenPromptRatio}%` }"></div>
               </div>
               <div class="token-breakdown__row">
-                <span>近 7 日输出 Tokens</span>
+                <span>近 7 日输出令牌</span>
                 <strong>{{ compactNumber(normalizedDashboard.tokenUsage.completionTokens7d) }}</strong>
               </div>
               <div class="token-breakdown__bar">
                 <div class="is-completion" :style="{ width: `${tokenCompletionRatio}%` }"></div>
               </div>
               <div class="token-breakdown__row token-breakdown__row--total">
-                <span>近 7 日总 Tokens</span>
+                <span>近 7 日总令牌</span>
                 <strong>{{ compactNumber(normalizedDashboard.tokenUsage.totalTokens7d) }}</strong>
               </div>
             </div>
@@ -77,31 +77,33 @@
           <div ref="visitChartRef" class="chart-box"></div>
         </AppSectionCard>
 
-        <AppSectionCard title="每日 API 调用">
+        <AppSectionCard title="每日接口调用">
           <div ref="apiChartRef" class="chart-box"></div>
         </AppSectionCard>
 
-        <AppSectionCard title="每日 Token 消耗">
+        <AppSectionCard title="每日令牌消耗">
           <div ref="tokenChartRef" class="chart-box"></div>
         </AppSectionCard>
       </section>
 
       <section class="admin-dashboard__tables">
-        <AppSectionCard title="最近失败登录" :unpadded="true">
-          <AppDataTable :data="normalizedDashboard.securityLogs" stripe>
-            <el-table-column prop="username" label="账号" min-width="140" />
-            <el-table-column prop="loginIp" label="IP" min-width="140" />
-            <el-table-column prop="userAgent" label="设备信息" min-width="220" show-overflow-tooltip />
-            <el-table-column prop="createdAt" label="时间" min-width="180" />
-          </AppDataTable>
-        </AppSectionCard>
+      <AppSectionCard title="最近失败登录" :unpadded="true">
+        <AppDataTable :data="normalizedDashboard.securityLogs" stripe :max-height="520">
+          <el-table-column prop="username" label="账号" min-width="140" />
+          <el-table-column prop="loginIp" label="IP 地址" min-width="140" />
+          <el-table-column prop="userAgent" label="设备信息" min-width="220" show-overflow-tooltip />
+          <el-table-column prop="createdAt" label="时间" min-width="180" />
+        </AppDataTable>
+      </AppSectionCard>
 
-        <AppSectionCard title="高频动作" description="近 7 日最常触发的关键动作。" :unpadded="true">
-          <AppDataTable :data="normalizedDashboard.topActions" stripe>
-            <el-table-column prop="actionCode" label="动作编码" min-width="220" />
-            <el-table-column prop="total" label="次数" width="120" />
-          </AppDataTable>
-        </AppSectionCard>
+      <AppSectionCard title="高频动作" description="近 7 日最常触发的关键动作。" :unpadded="true">
+        <AppDataTable :data="normalizedDashboard.topActions" stripe :max-height="520">
+          <el-table-column label="动作类型" min-width="220">
+            <template #default="{ row }">{{ actionLabel(row.actionCode) }}</template>
+          </el-table-column>
+          <el-table-column prop="total" label="次数" width="120" />
+        </AppDataTable>
+      </AppSectionCard>
       </section>
     </template>
   </div>
@@ -160,7 +162,7 @@ const normalizedDashboard = computed(() => {
       downloads24h: dashboard.value.metrics?.downloads24h || 0,
       aiChats24h: dashboard.value.metrics?.aiChats24h || 0,
     },
-    visitTrend: dashboard.value.visitTrend || [],
+    visitSeries: dashboard.value.visitSeries || [],
     apiCallSeries: dashboard.value.apiCallSeries || [],
     tokenSeries: dashboard.value.tokenSeries || [],
     tokenUsage: {
@@ -186,21 +188,21 @@ const headlineCards = computed(() => {
   if (!normalizedDashboard.value) return []
   return [
     {
-      label: '今日访问流量',
-      value: normalizedDashboard.value.visitTrend.at(-1)?.value || 0,
-      hint: '按成功登录口径统计',
+      label: '今日页面浏览量',
+      value: normalizedDashboard.value.visitSeries.find((item) => item.key === 'pv')?.points.at(-1)?.value || 0,
+      hint: '按登录日志统计当日浏览量',
       icon: 'monitoring',
     },
     {
-      label: '24h API 调用',
+      label: '24小时接口调用',
       value: normalizedDashboard.value.tokenUsage.apiCalls24h,
-      hint: 'AI 请求日志总量',
+      hint: '智能请求日志总量',
       icon: 'api',
     },
     {
-      label: '24h Token 消耗',
+      label: '24小时令牌消耗',
       value: compactNumber(normalizedDashboard.value.tokenUsage.totalTokens24h),
-      hint: '输入与输出 Token 总和',
+      hint: '输入与输出令牌总和',
       icon: 'neurology',
     },
     {
@@ -219,10 +221,27 @@ const resourceMetrics = computed(() => {
     { label: '项目总数', value: normalizedDashboard.value.overview.projectCount, hint: '知识空间总量' },
     { label: '文件总数', value: normalizedDashboard.value.overview.fileCount, hint: '已上传文件' },
     { label: '文档总数', value: normalizedDashboard.value.overview.documentCount, hint: '在线文档' },
-    { label: 'AI 会话总数', value: normalizedDashboard.value.metrics.aiSessionCount, hint: '累计会话' },
+    { label: '智能会话总数', value: normalizedDashboard.value.metrics.aiSessionCount, hint: '累计会话' },
     { label: '搜索次数', value: normalizedDashboard.value.metrics.searchCount, hint: '站内检索动作' },
   ]
 })
+
+const actionLabel = (value?: string) => ({
+  FILE_UPLOAD: '文件上传',
+  FILE_DOWNLOAD: '文件下载',
+  FILE_PREVIEW: '文件预览',
+  FILE_DELETE: '文件删除',
+  DOCUMENT_SAVE: '文档保存',
+  DOCUMENT_PUBLISH: '文档发布',
+  DOCUMENT_DELETE: '文档删除',
+  SEARCH: '站内搜索',
+  AI_CHAT: '智能问答',
+  AI_SESSION_CREATE: '创建智能会话',
+  AI_SESSION_DELETE: '删除智能会话',
+  ADMIN_USER_STATUS: '修改用户状态',
+  ADMIN_TASK_RETRY: '重试后台任务',
+  ADMIN_MODEL_UPDATE: '更新模型配置',
+}[String(value || '').toUpperCase()] || value || '未命名动作')
 
 const tokenPromptRatio = computed(() => {
   if (!normalizedDashboard.value?.tokenUsage.totalTokens7d) return 0
@@ -239,6 +258,30 @@ const tokenRingStyle = computed(() => {
   return {
     background: `radial-gradient(circle at center, #ffffff 56%, transparent 57%), conic-gradient(#0060a9 0 ${promptRatio}%, #22c55e ${promptRatio}% 100%)`,
   }
+})
+
+const buildEmptyChartOption = (title: string) => ({
+  animation: false,
+  grid: { left: 0, right: 0, top: 0, bottom: 0 },
+  xAxis: { show: false, type: 'category', data: [] },
+  yAxis: { show: false, type: 'value' },
+  series: [],
+  graphic: {
+    type: 'group',
+    left: 'center',
+    top: 'middle',
+    children: [
+      {
+        type: 'text',
+        style: {
+          text: title,
+          fill: '#64748b',
+          fontSize: 15,
+          fontWeight: 600,
+        },
+      },
+    ],
+  },
 })
 
 const buildSeries = (
@@ -266,6 +309,15 @@ const buildSeries = (
     }
   })
 
+const chartCategoryLabels = computed(() => {
+  if (!normalizedDashboard.value) return []
+  const baseSeries =
+    normalizedDashboard.value.visitSeries[0] ||
+    normalizedDashboard.value.apiCallSeries[0] ||
+    normalizedDashboard.value.tokenSeries[0]
+  return baseSeries?.points.map((item) => item.label.slice(5)) || []
+})
+
 const renderCharts = async () => {
   if (!normalizedDashboard.value) return
   await nextTick()
@@ -280,12 +332,23 @@ const renderCharts = async () => {
     const currentVisitChart = resolveChart(visitChartRef.value, visitChart)
     if (!currentVisitChart) return
     visitChart = currentVisitChart
+    const visitSeries = buildSeries(normalizedDashboard.value.visitSeries, 'line')
+    const hasVisitData = visitSeries.some((item) => item.data.some((value: number) => value > 0))
+    if (!hasVisitData) {
+      currentVisitChart.setOption(buildEmptyChartOption('暂无访问流量数据'), true)
+      return
+    }
     currentVisitChart.setOption({
       tooltip: { trigger: 'axis' },
-      grid: { left: 42, right: 20, top: 28, bottom: 28 },
+      legend: {
+        top: 8,
+        textStyle: { color: muted },
+      },
+      color: chartPalette,
+      grid: { left: 42, right: 20, top: 52, bottom: 28 },
       xAxis: {
         type: 'category',
-        data: normalizedDashboard.value.visitTrend.map((item) => item.label.slice(5)),
+        data: chartCategoryLabels.value,
         axisLabel: { color: muted },
         axisLine: { lineStyle: { color: line } },
       },
@@ -294,16 +357,10 @@ const renderCharts = async () => {
         axisLabel: { color: muted },
         splitLine: { lineStyle: { color: line } },
       },
-      series: [
-        {
-          type: 'line',
-          smooth: true,
-          data: normalizedDashboard.value.visitTrend.map((item) => item.value),
-          areaStyle: { color: accentSoft },
-          lineStyle: { color: accent, width: 3 },
-          itemStyle: { color: accent },
-        },
-      ],
+      series: visitSeries.map((item, index) => ({
+        ...item,
+        areaStyle: index === 0 ? { color: accentSoft } : undefined,
+      })),
     })
   }
 
@@ -311,6 +368,12 @@ const renderCharts = async () => {
     const currentApiChart = resolveChart(apiChartRef.value, apiChart)
     if (!currentApiChart) return
     apiChart = currentApiChart
+    const apiSeries = buildSeries(normalizedDashboard.value.apiCallSeries, 'line')
+    const hasApiData = apiSeries.some((item) => item.data.some((value: number) => value > 0))
+    if (!hasApiData) {
+      currentApiChart.setOption(buildEmptyChartOption('暂无接口调用数据'), true)
+      return
+    }
     currentApiChart.setOption({
       tooltip: { trigger: 'axis' },
       legend: {
@@ -321,7 +384,7 @@ const renderCharts = async () => {
       grid: { left: 42, right: 20, top: 52, bottom: 28 },
       xAxis: {
         type: 'category',
-        data: normalizedDashboard.value.visitTrend.map((item) => item.label.slice(5)),
+        data: chartCategoryLabels.value,
         axisLabel: { color: muted },
         axisLine: { lineStyle: { color: line } },
       },
@@ -330,7 +393,7 @@ const renderCharts = async () => {
         axisLabel: { color: muted },
         splitLine: { lineStyle: { color: line } },
       },
-      series: buildSeries(normalizedDashboard.value.apiCallSeries, 'line'),
+      series: apiSeries,
     })
   }
 
@@ -338,6 +401,12 @@ const renderCharts = async () => {
     const currentTokenChart = resolveChart(tokenChartRef.value, tokenChart)
     if (!currentTokenChart) return
     tokenChart = currentTokenChart
+    const tokenSeries = buildSeries(normalizedDashboard.value.tokenSeries, 'bar', () => ({ stack: 'tokens' }))
+    const hasTokenData = tokenSeries.some((item) => item.data.some((value: number) => value > 0))
+    if (!hasTokenData) {
+      currentTokenChart.setOption(buildEmptyChartOption('暂无令牌消耗数据'), true)
+      return
+    }
     currentTokenChart.setOption({
       tooltip: { trigger: 'axis' },
       legend: {
@@ -348,7 +417,7 @@ const renderCharts = async () => {
       grid: { left: 42, right: 20, top: 52, bottom: 28 },
       xAxis: {
         type: 'category',
-        data: normalizedDashboard.value.visitTrend.map((item) => item.label.slice(5)),
+        data: chartCategoryLabels.value,
         axisLabel: { color: muted },
         axisLine: { lineStyle: { color: line } },
       },
@@ -357,7 +426,7 @@ const renderCharts = async () => {
         axisLabel: { color: muted },
         splitLine: { lineStyle: { color: line } },
       },
-      series: buildSeries(normalizedDashboard.value.tokenSeries, 'bar', () => ({ stack: 'tokens' })),
+      series: tokenSeries,
     })
   }
 }

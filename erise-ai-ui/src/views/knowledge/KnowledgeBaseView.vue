@@ -2,13 +2,7 @@
   <div class="page-shell knowledge-page">
     <section class="knowledge-toolbar">
       <div class="knowledge-toolbar__search">
-        <el-input
-          v-model="keyword"
-          clearable
-          placeholder="搜索知识资料..."
-          @clear="runSearch"
-          @keyup.enter="runSearch"
-        >
+        <el-input v-model="keyword" clearable placeholder="搜索知识资料..." @clear="runSearch" @keyup.enter="runSearch">
           <template #prefix>
             <span class="material-symbols-outlined">search</span>
           </template>
@@ -17,28 +11,26 @@
     </section>
 
     <section class="knowledge-subnav">
-      <ProjectSubnav
-        :project-id="0"
-        mode="value"
-        :model-value="activeAssetTab"
-        :items="knowledgeSubnavItems"
-        @update:modelValue="switchAssetTab"
-      />
+      <ProjectSubnav :project-id="0" mode="value" :model-value="activeAssetTab" :items="knowledgeSubnavItems"
+        @update:modelValue="switchAssetTab" />
     </section>
 
     <section class="knowledge-table-shell">
-      <div v-if="assetsLoading" class="knowledge-table-shell__state">
+      <div v-if="assetsLoading && !assets.length" class="knowledge-table-shell__state">
         <el-skeleton animated>
           <template #template>
             <el-skeleton-item variant="rect" style="width: 100%; height: 56px; border-radius: 18px;" />
-            <el-skeleton-item variant="rect" style="width: 100%; height: 72px; margin-top: 14px; border-radius: 16px;" />
-            <el-skeleton-item variant="rect" style="width: 100%; height: 72px; margin-top: 12px; border-radius: 16px;" />
-            <el-skeleton-item variant="rect" style="width: 100%; height: 72px; margin-top: 12px; border-radius: 16px;" />
+            <el-skeleton-item variant="rect"
+              style="width: 100%; height: 72px; margin-top: 14px; border-radius: 16px;" />
+            <el-skeleton-item variant="rect"
+              style="width: 100%; height: 72px; margin-top: 12px; border-radius: 16px;" />
+            <el-skeleton-item variant="rect"
+              style="width: 100%; height: 72px; margin-top: 12px; border-radius: 16px;" />
           </template>
         </el-skeleton>
       </div>
 
-      <div v-else-if="assetError" class="knowledge-table-shell__state">
+      <div v-else-if="assetError && !assets.length" class="knowledge-table-shell__state">
         <el-result icon="warning" title="知识资料加载失败" :sub-title="assetError">
           <template #extra>
             <el-button type="primary" @click="retryAssetLoad">重试加载</el-button>
@@ -46,7 +38,13 @@
         </el-result>
       </div>
 
-      <div v-else-if="assets.length" class="knowledge-assets-table">
+      <template v-else>
+      <div v-if="assetsLoading && assets.length" class="knowledge-table-shell__refreshing">
+        <span class="material-symbols-outlined knowledge-table-shell__refreshing-icon">progress_activity</span>
+        <span>正在刷新文件列表...</span>
+      </div>
+
+      <div v-if="assets.length" class="knowledge-assets-table">
         <table>
           <thead>
             <tr>
@@ -66,22 +64,17 @@
                   <div class="knowledge-assets-table__icon" :class="`is-${assetTone(row)}`">
                     <span class="material-symbols-outlined">{{ assetIcon(row) }}</span>
                   </div>
-                  <div class="knowledge-assets-table__copy">
-                    <strong>{{ row.title }}</strong>
-                    <small>{{ secondaryLine(row) }}</small>
+                  <div class="knowledge-assets-table__copy app-table-name-copy">
+                    <strong class="app-table-name-copy__title">{{ row.title }}</strong>
+                    <small class="app-table-name-copy__meta">{{ secondaryLine(row) }}</small>
                   </div>
                 </div>
               </td>
               <td><span class="knowledge-assets-table__type">{{ assetTypeLabel(row) }}</span></td>
               <td>
                 <div class="knowledge-assets-table__status-stack">
-                  <button
-                    v-if="canRetryAsset(row)"
-                    type="button"
-                    class="knowledge-assets-table__status is-clickable"
-                    :class="`is-${assetTone(row)}`"
-                    @click.stop="retryAsset(row)"
-                  >
+                  <button v-if="canRetryAsset(row)" type="button" class="knowledge-assets-table__status is-clickable"
+                    :class="`is-${assetTone(row)}`" @click.stop="retryAsset(row)">
                     <span class="material-symbols-outlined">{{ assetStatusIcon(row) }}</span>
                     <span>{{ assetStatusLabel(row) }}</span>
                   </button>
@@ -94,12 +87,15 @@
                   </small>
                 </div>
               </td>
-              <td class="knowledge-assets-table__mono">{{ row.assetType === 'FILE' ? formatFileSize(row.fileSize) : '--' }}</td>
+              <td class="knowledge-assets-table__mono">{{ row.assetType === 'FILE' ? formatFileSize(row.fileSize) : '--'
+                }}
+              </td>
               <td>{{ relativeTime(row.updatedAt) }}</td>
               <td>{{ formatDateTime(row.createdAt) }}</td>
               <td class="knowledge-assets-table__actions-cell" @click.stop>
                 <el-dropdown trigger="click" @command="handleRowCommand(row, $event)">
-                  <button type="button" class="knowledge-assets-table__menu-trigger" @click.stop><span>···</span></button>
+                  <button type="button" class="knowledge-assets-table__menu-trigger"
+                    @click.stop><span>···</span></button>
                   <template #dropdown>
                     <el-dropdown-menu>
                       <el-dropdown-item command="preview">预览</el-dropdown-item>
@@ -116,15 +112,13 @@
         </table>
       </div>
 
-      <el-empty
-        v-else
-        :image-size="84"
-        :description="`当前筛选下还没有${assetCollectionLabel}，可以通过右上角添加入口继续补充。`"
-      />
+      <el-empty v-else :image-size="84" :description="`当前筛选下还没有${assetCollectionLabel}，可以通过右上角添加入口继续补充。`" />
+      </template>
 
       <div v-if="!assetError" class="knowledge-table-shell__footer">
         <span class="knowledge-table-shell__count">共 {{ total }} 条{{ assetCollectionLabel }}</span>
-        <CompactPager variant="project" :page-num="pageNum" :page-size="pageSize" :total="total" @change="handlePageChange" />
+        <CompactPager variant="project" :page-num="pageNum" :page-size="pageSize" :total="total"
+          @change="handlePageChange" />
       </div>
     </section>
 
@@ -160,9 +154,9 @@ import { getKnowledgeAssets } from '@/api/knowledge'
 import CompactPager from '@/components/common/CompactPager.vue'
 import ProjectSubnav from '@/components/common/ProjectSubnav.vue'
 import { useFilePreview } from '@/composables/useFilePreview'
-import { useKnowledgeStatusPolling } from '@/composables/useKnowledgeStatusPolling'
 import { useProjectDirectory } from '@/composables/useProjectDirectory'
-import type { KnowledgeAssetView } from '@/types/models'
+import { useVisibleFileStatusPolling } from '@/composables/useVisibleFileStatusPolling'
+import type { FileView, KnowledgeAssetView } from '@/types/models'
 import {
   contentTypeLabel,
   formatDateTime,
@@ -208,6 +202,11 @@ const assetError = ref('')
 const exportDialogVisible = ref(false)
 const exporting = ref(false)
 const exportTarget = ref<KnowledgeAssetView>()
+const ACTIVE_FILE_STATUSES = new Set(['INIT', 'UPLOADING', 'PENDING', 'PROCESSING'])
+const normalizeFileStatus = (value?: string) => (value || '').trim().toUpperCase()
+const hasActiveFileStatus = (record?: { parseStatus?: string; indexStatus?: string }) =>
+  ACTIVE_FILE_STATUSES.has(normalizeFileStatus(record?.parseStatus)) ||
+  ACTIVE_FILE_STATUSES.has(normalizeFileStatus(record?.indexStatus))
 
 const selectedKnowledgeType = computed<'FILE' | 'DOCUMENT' | 'CONTENT' | undefined>(() => {
   if (activeAssetTab.value === 'files') return 'FILE'
@@ -293,6 +292,18 @@ const assetFailureReason = (row: KnowledgeAssetView) => {
   return '解析异常，请稍后重试'
 }
 
+const applyFileDetailToAssetRow = (row: KnowledgeAssetView, detail: FileView) => {
+  row.title = detail.fileName
+  row.fileExt = detail.fileExt
+  row.mimeType = detail.mimeType
+  row.fileSize = detail.fileSize
+  row.parseStatus = detail.parseStatus
+  row.indexStatus = detail.indexStatus
+  row.parseErrorMessage = detail.parseErrorMessage
+  row.createdAt = detail.createdAt
+  row.updatedAt = detail.updatedAt
+}
+
 const loadAssets = async () => {
   assetsLoading.value = true
   assetError.value = ''
@@ -357,11 +368,13 @@ const switchAssetTab = async (value: string) => {
   await pushRoute()
 }
 
-useKnowledgeStatusPolling({
-  records: assets,
-  reload: loadAssets,
-  enabled: computed(() => !assetError.value),
-  intervalMs: 5000,
+useVisibleFileStatusPolling({
+  rows: assets,
+  enabled: computed(() => !assetError.value && (activeAssetTab.value === 'overview' || activeAssetTab.value === 'files')),
+  intervalMs: 1000,
+  getFileId: (row) => (row.assetType === 'FILE' ? row.assetId : undefined),
+  isFileActive: (row) => row.assetType === 'FILE' && hasActiveFileStatus(row),
+  applyDetail: applyFileDetailToAssetRow,
 })
 
 const openAsset = (row: KnowledgeAssetView) => {
@@ -609,6 +622,21 @@ watch(
   padding: 24px;
 }
 
+.knowledge-table-shell__refreshing {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 14px 24px 0;
+  color: #667085;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.knowledge-table-shell__refreshing-icon {
+  font-size: 18px;
+  animation: knowledge-table-spin 1s linear infinite;
+}
+
 .knowledge-assets-table {
   overflow-x: auto;
 }
@@ -694,9 +722,6 @@ watch(
   font-size: 15px;
   font-weight: 700;
   color: #181c20;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
 }
 
 .knowledge-assets-table__copy small {
@@ -813,6 +838,16 @@ watch(
   color: #667085;
   font-size: 13px;
   font-weight: 600;
+}
+
+@keyframes knowledge-table-spin {
+  from {
+    transform: rotate(0deg);
+  }
+
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .knowledge-export-dialog {

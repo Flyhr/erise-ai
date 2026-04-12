@@ -58,7 +58,7 @@ export interface AdminActionMetricView {
 export interface AdminDashboardView {
   overview: AdminOverviewView
   metrics: AdminOperationalMetricsView
-  visitTrend: AdminTrendPointView[]
+  visitSeries: AdminSeriesView[]
   apiCallSeries: AdminSeriesView[]
   tokenSeries: AdminSeriesView[]
   tokenUsage: AdminTokenUsageView
@@ -102,6 +102,15 @@ export interface AdminAuditLogView {
   createdAt: string
 }
 
+export interface AdminAuditLogQuery {
+  pageNum?: number
+  pageSize?: number
+  q?: string
+  operatorUsername?: string
+  actionCode?: string
+  createdDate?: string
+}
+
 export interface ModelConfigView {
   id: number
   modelCode: string
@@ -116,11 +125,22 @@ export interface ModelConfigView {
   apiKeyRef?: string
 }
 
+export interface ModelConfigUpdatePayload {
+  modelName?: string
+  providerCode?: string
+  enabled?: boolean
+  supportStream?: boolean
+  maxContextTokens?: number | null
+  priorityNo?: number | null
+  baseUrl?: string
+  apiKeyRef?: string
+}
+
 export const getAdminOverview = () => http.get<never, AdminOverviewView>('/v1/admin/overview')
 
 export const getAdminDashboard = () => http.get<never, AdminDashboardView>('/v1/admin/dashboard')
 
-export const getAdminUsers = (params: { pageNum?: number; pageSize?: number }) =>
+export const getAdminUsers = (params: { pageNum?: number; pageSize?: number; q?: string; roleCode?: string }) =>
   http.get<never, PageResponse<AdminUserView>>('/v1/admin/users', { params })
 
 export const updateAdminUserStatus = (id: number, status: string) =>
@@ -132,7 +152,10 @@ export const getAdminTasks = (params: { pageNum?: number; pageSize?: number }) =
 export const retryAdminTask = (taskOrigin: string, id: number) =>
   http.post(`/v1/admin/tasks/${taskOrigin}/${id}/retry`)
 
-export const getAdminAuditLogs = (params: { pageNum?: number; pageSize?: number }) =>
+export const getAdminAuditLogs = (params: AdminAuditLogQuery) =>
   http.get<never, PageResponse<AdminAuditLogView>>('/v1/admin/audit-logs', { params })
 
 export const getAiModels = () => http.get<never, ModelConfigView[]>('/v1/admin/ai/models')
+
+export const updateAiModel = (id: number, payload: ModelConfigUpdatePayload) =>
+  http.put(`/v1/admin/ai/models/${id}`, payload)

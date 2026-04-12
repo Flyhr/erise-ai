@@ -93,15 +93,15 @@ interface Props {
 withDefaults(defineProps<Props>(), {
   modelValue: '',
   activeNav: 'dashboard',
-  brandTitle: 'Erise Ai 知识库',
-  brandSubtitle: 'The Digital Curator',
-  createText: 'New Entry',
-  footerTitle: 'Erise AI 知识库V1.0',
-  footerCopy: 'Premium Account',
-  footerAvatar: 'ER',
+  brandTitle: 'Erise AI 知识库',
+  brandSubtitle: '',
+  createText: '新建内容',
+  footerTitle: 'Erise AI 知识库 V1.0',
+  footerCopy: '企业版账号',
+  footerAvatar: '知库',
   userName: '个人资料',
-  userRole: '账号与主题偏好',
-  userAvatar: 'U',
+  userRole: '账号与偏好设置',
+  userAvatar: '我',
   searchPlaceholder: '搜索项目、知识库、文件或 AI 会话...',
 })
 

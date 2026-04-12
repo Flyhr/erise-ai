@@ -94,7 +94,7 @@
       </section>
 
       <section class="project-detail__table-shell">
-        <div v-if="assetsLoading" class="project-detail__state">
+        <div v-if="assetsLoading && !assets.length" class="project-detail__state">
           <el-skeleton animated>
             <template #template>
               <el-skeleton-item variant="rect" style="width: 100%; height: 56px; border-radius: 18px;" />
@@ -108,7 +108,7 @@
           </el-skeleton>
         </div>
 
-        <div v-else-if="assetError" class="project-detail__state">
+        <div v-else-if="assetError && !assets.length" class="project-detail__state">
           <el-result icon="warning" title="项目资料加载失败" :sub-title="assetError">
             <template #extra>
               <el-button type="primary" @click="retryAssetLoad">重试加载</el-button>
@@ -116,7 +116,13 @@
           </el-result>
         </div>
 
-        <div v-else-if="assets.length" class="project-assets-table">
+        <template v-else>
+        <div v-if="assetsLoading && assets.length" class="project-detail__refreshing">
+          <span class="material-symbols-outlined project-detail__refreshing-icon">progress_activity</span>
+          <span>正在刷新文件列表...</span>
+        </div>
+
+        <div v-if="assets.length" class="project-assets-table">
           <table>
             <thead>
               <tr>
@@ -136,9 +142,9 @@
                     <div class="project-assets-table__icon" :class="`is-${assetTone(row)}`">
                       <span class="material-symbols-outlined">{{ assetIcon(row) }}</span>
                     </div>
-                    <div class="project-assets-table__copy">
-                      <strong>{{ row.title }}</strong>
-                      <small>{{ secondaryLine(row) }}</small>
+                    <div class="project-assets-table__copy app-table-name-copy">
+                      <strong class="app-table-name-copy__title">{{ row.title }}</strong>
+                      <small class="app-table-name-copy__meta">{{ secondaryLine(row) }}</small>
                     </div>
                   </div>
                 </td>
@@ -184,6 +190,7 @@
           </table>
         </div>
         <el-empty v-else :image-size="84" :description="`当前筛选下还没有${assetCollectionLabel}，可以通过右上角添加入口继续补充。`" />
+        </template>
 
         <div v-if="!assetError" class="project-detail__table-footer">
           <span class="project-detail__table-count">共 {{ total }} 条{{ assetCollectionLabel }}</span>
@@ -239,8 +246,8 @@ import CompactPager from '@/components/common/CompactPager.vue'
 import ProjectSubnav from '@/components/common/ProjectSubnav.vue'
 import { useFilePreview } from '@/composables/useFilePreview'
 import { knowledgeFileAccept, useKnowledgeFileUpload } from '@/composables/useKnowledgeFileUpload'
-import { useKnowledgeStatusPolling } from '@/composables/useKnowledgeStatusPolling'
-import type { KnowledgeAssetView, ProjectDetailView } from '@/types/models'
+import { useVisibleFileStatusPolling } from '@/composables/useVisibleFileStatusPolling'
+import type { FileView, KnowledgeAssetView, ProjectDetailView } from '@/types/models'
 import {
   contentTypeLabel,
   documentStatusLabel,
@@ -290,6 +297,13 @@ const exporting = ref(false)
 const exportTarget = ref<KnowledgeAssetView>()
 const fileInputRef = ref<HTMLInputElement>()
 const form = reactive({ name: '', description: '' })
+const optimisticUploadedFiles = ref<Record<number, FileView>>({})
+
+const ACTIVE_FILE_STATUSES = new Set(['INIT', 'UPLOADING', 'PENDING', 'PROCESSING'])
+const normalizeFileStatus = (value?: string) => (value || '').trim().toUpperCase()
+const hasActiveFileStatus = (record?: { parseStatus?: string; indexStatus?: string }) =>
+  ACTIVE_FILE_STATUSES.has(normalizeFileStatus(record?.parseStatus)) ||
+  ACTIVE_FILE_STATUSES.has(normalizeFileStatus(record?.indexStatus))
 
 const projectSubnavItems: Array<{ key: ProjectAssetTab; label: string }> = [
   { key: 'overview', label: '概览' },
@@ -403,8 +417,135 @@ const createTableDefaults = () => ({
   plainText: '',
 })
 
-const focusFilesAfterUpload = async () => {
+const toFileAssetRow = (file: FileView): KnowledgeAssetView => ({
+  assetType: 'FILE',
+  assetId: file.id,
+  projectId: file.projectId,
+  title: file.fileName,
+  fileExt: file.fileExt,
+  mimeType: file.mimeType,
+  fileSize: file.fileSize,
+  parseStatus: file.parseStatus,
+  indexStatus: file.indexStatus,
+  parseErrorMessage: file.parseErrorMessage,
+  updatedAt: file.updatedAt,
+  createdAt: file.createdAt,
+})
+
+const upsertOptimisticUploadedFile = (file: FileView) => {
+  optimisticUploadedFiles.value = {
+    ...optimisticUploadedFiles.value,
+    [file.id]: file,
+  }
+}
+
+const removeOptimisticUploadedFile = (fileId: number) => {
+  if (!optimisticUploadedFiles.value[fileId]) {
+    return
+  }
+  const nextFiles = { ...optimisticUploadedFiles.value }
+  delete nextFiles[fileId]
+  optimisticUploadedFiles.value = nextFiles
+}
+
+const mergeOptimisticUploadedFiles = (rows: KnowledgeAssetView[]) => {
+  if (activeAssetTab.value !== 'overview' && activeAssetTab.value !== 'files') {
+    return rows
+  }
+
+  const existingFileIds = new Set(
+    rows
+      .filter((row) => row.assetType === 'FILE')
+      .map((row) => row.assetId),
+  )
+
+  const optimisticRows = Object.values(optimisticUploadedFiles.value)
+    .filter((file) => !existingFileIds.has(file.id))
+    .map(toFileAssetRow)
+
+  if (!optimisticRows.length) {
+    return rows
+  }
+
+  return [...optimisticRows, ...rows]
+}
+
+const reconcileOptimisticUploadedFiles = (rows: KnowledgeAssetView[]) => {
+  const nextFiles = { ...optimisticUploadedFiles.value }
+  let changed = false
+
+  rows.forEach((row) => {
+    if (row.assetType !== 'FILE' || !nextFiles[row.assetId]) {
+      return
+    }
+    delete nextFiles[row.assetId]
+    changed = true
+  })
+
+  Object.values(nextFiles).forEach((file) => {
+    if (hasActiveFileStatus(file)) {
+      return
+    }
+    delete nextFiles[file.id]
+    changed = true
+  })
+
+  if (changed) {
+    optimisticUploadedFiles.value = nextFiles
+  }
+}
+
+const applyFileDetailToAssetRow = (row: KnowledgeAssetView, detail: FileView) => {
+  row.title = detail.fileName
+  row.fileExt = detail.fileExt
+  row.mimeType = detail.mimeType
+  row.fileSize = detail.fileSize
+  row.parseStatus = detail.parseStatus
+  row.indexStatus = detail.indexStatus
+  row.parseErrorMessage = detail.parseErrorMessage
+  row.createdAt = detail.createdAt
+  row.updatedAt = detail.updatedAt
+}
+
+const mergeUploadedFile = (file: FileView) => {
+  upsertOptimisticUploadedFile(file)
+  const nextRow = toFileAssetRow(file)
+  const existingIndex = assets.value.findIndex((row) => row.assetType === 'FILE' && row.assetId === file.id)
+  if (existingIndex >= 0) {
+    assets.value[existingIndex] = nextRow
+    return
+  }
+
+  if (activeAssetTab.value === 'overview' || activeAssetTab.value === 'files') {
+    assets.value = [nextRow, ...assets.value]
+    total.value += 1
+  }
+}
+
+const primeFilesViewWithUpload = (file: FileView) => {
+  upsertOptimisticUploadedFile(file)
+  const nextRow = toFileAssetRow(file)
+  const alreadyExists = assets.value.some((row) => row.assetType === 'FILE' && row.assetId === file.id)
+  const existingFileRows = assets.value.filter((row) => row.assetType === 'FILE' && row.assetId !== file.id)
+  assets.value = [nextRow, ...existingFileRows]
+  total.value = Math.max(total.value + (alreadyExists ? 0 : 1), assets.value.length)
+}
+
+const focusFilesAfterUpload = async (uploadedFile?: FileView) => {
   const shouldPushRoute = activeAssetTab.value !== 'files' || Boolean(keyword.value.trim()) || pageNum.value !== 1
+  if (uploadedFile) {
+    if (shouldPushRoute) {
+      primeFilesViewWithUpload(uploadedFile)
+    } else {
+      mergeUploadedFile(uploadedFile)
+    }
+    if (project.value) {
+      project.value = {
+        ...project.value,
+        fileCount: project.value.fileCount + 1,
+      }
+    }
+  }
   activeAssetTab.value = 'files'
   keyword.value = ''
   pageNum.value = 1
@@ -412,13 +553,14 @@ const focusFilesAfterUpload = async () => {
     await pushRoute()
     return
   }
+  if (uploadedFile) return
   await Promise.all([loadProject(), loadAssets()])
 }
 
 const { beforeUpload } = useKnowledgeFileUpload({
   resolveProjectId: () => projectId,
-  onUploaded: async () => {
-    await focusFilesAfterUpload()
+  onUploaded: async (uploadedFile) => {
+    await focusFilesAfterUpload(uploadedFile)
   },
 })
 
@@ -438,8 +580,6 @@ const loadProject = async () => {
 const loadAssets = async () => {
   assetsLoading.value = true
   assetError.value = ''
-  assets.value = []
-  total.value = 0
   try {
     const assetPage = await getKnowledgeAssets({
       type: selectedKnowledgeType.value,
@@ -448,8 +588,9 @@ const loadAssets = async () => {
       pageNum: pageNum.value,
       pageSize,
     })
-    assets.value = assetPage.records
+    assets.value = mergeOptimisticUploadedFiles(assetPage.records)
     total.value = assetPage.total
+    reconcileOptimisticUploadedFiles(assetPage.records)
   } catch (error) {
     assetError.value = resolveErrorMessage(error, '项目资料加载失败，请稍后重试')
   } finally {
@@ -461,11 +602,22 @@ const load = async () => {
   await Promise.all([loadProject(), loadAssets()])
 }
 
-useKnowledgeStatusPolling({
-  records: assets,
-  reload: loadAssets,
+useVisibleFileStatusPolling({
+  rows: assets,
   enabled: computed(() => !assetError.value && (activeAssetTab.value === 'overview' || activeAssetTab.value === 'files')),
-  intervalMs: 5000,
+  intervalMs: 1000,
+  getFileId: (row) => (row.assetType === 'FILE' ? row.assetId : undefined),
+  isFileActive: (row) => row.assetType === 'FILE' && hasActiveFileStatus(row),
+  applyDetail: applyFileDetailToAssetRow,
+  onDetails: (details) => {
+    details.forEach((detail) => {
+      if (hasActiveFileStatus(detail)) {
+        upsertOptimisticUploadedFile(detail)
+        return
+      }
+      removeOptimisticUploadedFile(detail.id)
+    })
+  },
 })
 
 const normalizeAssetTab = (value: unknown): ProjectAssetTab =>
@@ -1016,6 +1168,21 @@ watch(
   padding: 24px;
 }
 
+.project-detail__refreshing {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 14px 24px 0;
+  color: #667085;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.project-detail__refreshing-icon {
+  font-size: 18px;
+  animation: project-detail-spin 1s linear infinite;
+}
+
 .project-assets-table {
   overflow-x: auto;
 }
@@ -1101,9 +1268,6 @@ watch(
   font-size: 15px;
   font-weight: 700;
   color: #181c20;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
 }
 
 .project-assets-table__copy small {
@@ -1220,6 +1384,16 @@ watch(
   color: #667085;
   font-size: 13px;
   font-weight: 600;
+}
+
+@keyframes project-detail-spin {
+  from {
+    transform: rotate(0deg);
+  }
+
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .project-detail__export-dialog {

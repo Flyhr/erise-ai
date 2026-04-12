@@ -14,9 +14,7 @@
     </div>
 
     <div class="workspace-topbar-actions">
-      <button type="button" class="workspace-icon-btn" @click="handleNotify">
-        <span class="material-symbols-outlined">notifications</span>
-      </button>
+      <NotificationCenterDrawer />
       <button type="button" class="workspace-icon-btn" @click="handleSettings">
         <span class="material-symbols-outlined">settings</span>
       </button>
@@ -45,6 +43,7 @@
 import { computed, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import NotificationCenterDrawer from '@/components/common/NotificationCenterDrawer.vue'
 import { useAuthStore } from '@/stores/auth'
 import { resolveErrorMessage } from '@/utils/formatters'
 
@@ -86,8 +85,8 @@ const displayUserAvatar = computed(() => {
   if (props.userAvatar) {
     return props.userAvatar
   }
-  const raw = authStore.user?.displayName || authStore.user?.username || 'U'
-  return raw.trim().slice(0, 1).toUpperCase()
+  const raw = authStore.user?.displayName || authStore.user?.username || '我'
+  return raw.trim().slice(0, 1)
 })
 
 watch(
@@ -102,13 +101,6 @@ const handleSearch = () => {
   router.push({
     path: '/search',
     query: keyword ? { q: keyword } : {},
-  })
-}
-
-const handleNotify = () => {
-  ElMessageBox.alert('通知中心正在建设中，后续会补充更多消息入口。', '提示', {
-    confirmButtonText: '知道了',
-    type: 'info',
   })
 }
 

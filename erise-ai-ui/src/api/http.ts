@@ -20,6 +20,7 @@ let onAuthError: (() => void) | null = null;
 
 interface RouteLoadingRequestConfig extends InternalAxiosRequestConfig {
   __routeLoadingToken?: number | null;
+  skipRouteLoading?: boolean;
 }
 
 export const initHttpRouter = (r: Router, authErrorCallback?: () => void) => {
@@ -31,7 +32,9 @@ export const initHttpRouter = (r: Router, authErrorCallback?: () => void) => {
 
 http.interceptors.request.use((config) => {
   const trackedConfig = config as RouteLoadingRequestConfig;
-  trackedConfig.__routeLoadingToken = beginRouteLoadingRequest();
+  trackedConfig.__routeLoadingToken = trackedConfig.skipRouteLoading
+    ? null
+    : beginRouteLoadingRequest();
   const token = localStorage.getItem("erise-access-token");
   if (token) {
     trackedConfig.headers.Authorization = `Bearer ${token}`;

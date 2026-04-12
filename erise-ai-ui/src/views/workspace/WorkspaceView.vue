@@ -29,7 +29,7 @@
             <span class="material-symbols-outlined">cloud_done</span>
           </div>
           <div class="workspace-storage-value">{{ totalFiles }} 个文档</div>
-          <p>真会偷懒啊！！！</p>
+          <p>不要偷懒啊！！！</p>
           <div class="workspace-progress-track">
             <div class="workspace-progress-fill" :style="{ width: storageProgress }" />
           </div>
@@ -41,8 +41,8 @@
             概览
           </h3>
           <p>
-            当前共有 <strong>{{ totalDocuments }}</strong> 份文件、 文档、<strong>{{ sessions.length }}</strong>
-            个近期 AI 会话，。
+            当前共有 <strong>{{ totalDocuments }}</strong> 份文档资料，最近保留了 <strong>{{ sessions.length }}</strong>
+            个 AI 会话记录。
           </p>
         </article>
       </div>
@@ -65,7 +65,7 @@
 
         <div class="workspace-section-tools">
           <span class="workspace-section-count">共 {{ recentItems.length }} 条{{ recentMode === 'viewed' ? '浏览' : '编辑'
-          }}记录</span>
+            }}记录</span>
         </div>
       </div>
 
@@ -207,7 +207,7 @@ const storageProgress = computed(() => {
 })
 const projectBars = computed(() => {
   const source = projects.value.slice(0, 7)
-  const fallback = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
+  const fallback = ['周一', '周二', '周三', '周四', '周五', '周六', '周日']
   if (!source.length) {
     return fallback.map((label, index) => ({ label, height: `${35 + index * 7}%` }))
   }
