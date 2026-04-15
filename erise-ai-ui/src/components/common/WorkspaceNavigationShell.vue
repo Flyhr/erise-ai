@@ -1,83 +1,68 @@
 <template>
   <div class="workspace-page">
-    <aside class="workspace-side-panel">
-      <div class="workspace-brand-card">
-        <div class="workspace-brand-mark">
-          <span class="material-symbols-outlined">auto_awesome</span>
-        </div>
-        <div>
-          <div class="workspace-brand-title">{{ brandTitle }}</div>
-          <div class="workspace-brand-subtitle">{{ brandSubtitle }}</div>
-        </div>
-      </div>
-      <nav class="workspace-side-nav">
-        <button type="button" :class="['workspace-side-link', { 'is-active': activeNav === 'dashboard' }]"
-          @click="$emit('navigate-dashboard')">
-          <span class="material-symbols-outlined">dashboard</span>
-          <span>工作台</span>
-        </button>
-        <button type="button" :class="['workspace-side-link', { 'is-active': activeNav === 'projects' }]"
-          @click="$emit('navigate-projects')">
-          <span class="material-symbols-outlined">folder_copy</span>
-          <span>项目</span>
-        </button>
-        <button type="button" :class="['workspace-side-link', { 'is-active': activeNav === 'knowledge' }]"
-          @click="$emit('navigate-knowledge')">
-          <span class="material-symbols-outlined">menu_book</span>
-          <span>知识库</span>
-        </button>
-        <button type="button" :class="['workspace-side-link', { 'is-active': activeNav === 'ai' }]"
-          @click="$emit('navigate-ai')">
-          <span class="material-symbols-outlined">smart_toy</span>
-          <span>AI 助理</span>
-        </button>
-      </nav>
-
-      <div class="workspace-side-footer">
-        <div class="workspace-avatar-placeholder">{{ footerAvatar }}</div>
-        <div>
-          <div class="workspace-footer-title">{{ footerTitle }}</div>
-          <div class="workspace-footer-copy">{{ footerCopy }}</div>
-        </div>
-      </div>
+    <aside class="workspace-nav-rail" aria-label="一级导航">
+      <button type="button" class="workspace-nav-rail__brand" title="打开导航" @click="navDrawerVisible = true">
+        <span class="material-symbols-outlined">auto_awesome</span>
+      </button>
+      <button v-for="item in navItems" :key="item.key" type="button"
+        :class="['workspace-nav-rail__item', { 'is-active': activeNav === item.key }]" :title="item.label"
+        @click="handleNavigate(item.event)">
+        <span class="material-symbols-outlined">{{ item.icon }}</span>
+      </button>
+      <button type="button" class="workspace-nav-rail__menu" title="展开导航" @click="navDrawerVisible = true">
+        <span class="material-symbols-outlined">menu</span>
+      </button>
     </aside>
 
     <section class="workspace-main-panel">
-      <!-- <header class="workspace-topbar">
-        <div class="workspace-search-box">
-          <span class="material-symbols-outlined">search</span>
-          <input :value="modelValue" type="text" :placeholder="searchPlaceholder" @input="onInput"
-            @keyup.enter="$emit('search')" />
-        </div>
-
-        <div class="workspace-topbar-actions">
-          <button type="button" class="workspace-icon-btn" @click="$emit('notify')">
-            <span class="material-symbols-outlined">notifications</span>
-          </button>
-          <button type="button" class="workspace-icon-btn" @click="$emit('settings')">
-            <span class="material-symbols-outlined">settings</span>
-          </button>
-          <button type="button" class="workspace-user-btn" @click="$emit('profile')">
-            <div class="workspace-user-meta">
-              <div class="workspace-user-name">{{ userName }}</div>
-              <div class="workspace-user-role">{{ userRole }}</div>
-            </div>
-            <div class="workspace-user-avatar">{{ userAvatar }}</div>
-          </button>
-        </div>
-      </header> -->
-
       <div class="workspace-shell-content">
         <slot />
       </div>
     </section>
+
+    <el-drawer v-model="navDrawerVisible" direction="ltr" size="292px" :with-header="false" append-to-body
+      class="workspace-nav-drawer">
+      <aside class="workspace-side-panel">
+        <div class="workspace-brand-card">
+          <div class="workspace-brand-mark">
+            <span class="material-symbols-outlined">auto_awesome</span>
+          </div>
+          <div>
+            <div class="workspace-brand-title">{{ brandTitle }}</div>
+            <div class="workspace-brand-subtitle">{{ brandSubtitle || 'Knowledge workspace' }}</div>
+          </div>
+        </div>
+
+        <nav class="workspace-side-nav" aria-label="工作区导航">
+          <button v-for="item in navItems" :key="item.key" type="button"
+            :class="['workspace-side-link', { 'is-active': activeNav === item.key }]"
+            @click="handleNavigate(item.event)">
+            <span class="material-symbols-outlined">{{ item.icon }}</span>
+            <span>{{ item.label }}</span>
+          </button>
+        </nav>
+
+        <div class="workspace-side-footer">
+          <div class="workspace-avatar-placeholder">{{ footerAvatar }}</div>
+          <div>
+            <div class="workspace-footer-title">{{ footerTitle }}</div>
+            <div class="workspace-footer-copy">{{ footerCopy }}</div>
+          </div>
+        </div>
+      </aside>
+    </el-drawer>
   </div>
 </template>
 
 <script setup lang="ts">
+import { ref } from 'vue'
+
+type ActiveNav = 'dashboard' | 'projects' | 'knowledge' | 'ai'
+type NavigationEvent = 'navigate-dashboard' | 'navigate-projects' | 'navigate-knowledge' | 'navigate-ai'
+
 interface Props {
   modelValue?: string
-  activeNav?: 'dashboard' | 'projects' | 'knowledge' | 'ai'
+  activeNav?: ActiveNav
   brandTitle?: string
   brandSubtitle?: string
   createText?: string
@@ -97,8 +82,8 @@ withDefaults(defineProps<Props>(), {
   brandSubtitle: '',
   createText: '新建内容',
   footerTitle: 'Erise AI 知识库 V1.0',
-  footerCopy: '企业版账号',
-  footerAvatar: '知库',
+  // footerCopy: '企业版账号',
+  footerAvatar: 'E',
   userName: '个人资料',
   userRole: '账号与偏好设置',
   userAvatar: '我',
@@ -118,59 +103,121 @@ const emit = defineEmits<{
   (e: 'profile'): void
 }>()
 
-const onInput = (event: Event) => {
-  emit('update:modelValue', (event.target as HTMLInputElement).value.trim())
+const navDrawerVisible = ref(false)
+
+const navItems: Array<{ key: ActiveNav; label: string; icon: string; event: NavigationEvent }> = [
+  { key: 'dashboard', label: '工作台', icon: 'dashboard', event: 'navigate-dashboard' },
+  { key: 'projects', label: '项目', icon: 'folder_copy', event: 'navigate-projects' },
+  { key: 'knowledge', label: '知识库', icon: 'menu_book', event: 'navigate-knowledge' },
+  { key: 'ai', label: 'AI 助理', icon: 'smart_toy', event: 'navigate-ai' },
+]
+
+const handleNavigate = (event: NavigationEvent) => {
+  navDrawerVisible.value = false
+  if (event === 'navigate-dashboard') {
+    emit('navigate-dashboard')
+  } else if (event === 'navigate-projects') {
+    emit('navigate-projects')
+  } else if (event === 'navigate-knowledge') {
+    emit('navigate-knowledge')
+  } else {
+    emit('navigate-ai')
+  }
 }
 </script>
 
 <style scoped>
 .workspace-page {
   display: grid;
-  grid-template-columns: 260px minmax(0, 1fr);
-  gap: 24px;
+  grid-template-columns: 72px minmax(0, 1fr);
+  gap: 18px;
   min-height: calc(100vh - 80px);
   padding: 8px 0 24px;
   color: #181c20;
 }
 
-.workspace-main-panel {
-  position: relative;
-  min-width: 0;
-}
-
+.workspace-main-panel,
 .workspace-shell-content {
   min-width: 0;
 }
 
-.workspace-side-panel {
-  border-radius: 24px;
-  background: linear-gradient(180deg, #f3f6fd 0%, #eef2f8 100%);
+.workspace-nav-rail {
+  position: sticky;
+  top: 12px;
+  height: calc(100dvh - 104px);
+  min-height: 420px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  padding: 14px 10px;
+  border-radius: 22px;
   border: 1px solid #d8e0ed;
+  background: linear-gradient(180deg, #f3f6fd 0%, #eef2f8 100%);
+  box-shadow: 0 18px 45px rgba(15, 23, 42, 0.04);
+}
+
+.workspace-nav-rail__brand,
+.workspace-nav-rail__item,
+.workspace-nav-rail__menu {
+  width: 44px;
+  height: 44px;
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: 15px;
+  color: #5d6676;
+  background: transparent;
+  cursor: pointer;
+  transition: background 0.2s ease, color 0.2s ease, transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.workspace-nav-rail__brand {
+  color: #fff;
+  background: linear-gradient(135deg, #409eff 0%, #0060a9 100%);
+  box-shadow: 0 14px 30px rgba(64, 158, 255, 0.22);
+}
+
+.workspace-nav-rail__item:hover,
+.workspace-nav-rail__item.is-active,
+.workspace-nav-rail__menu:hover {
+  background: #ffffff;
+  color: #0060a9;
+  transform: translateY(-1px);
+  box-shadow: 0 10px 24px rgba(15, 23, 42, 0.05);
+}
+
+.workspace-nav-rail__menu {
+  margin-top: auto;
+}
+
+.workspace-nav-drawer :deep(.el-drawer) {
+  background: #f3f6fd;
+}
+
+.workspace-nav-drawer :deep(.el-drawer__body) {
+  padding: 0;
+}
+
+.workspace-side-panel {
+  height: 100%;
+  min-height: 0;
+  background: linear-gradient(180deg, #f3f6fd 0%, #eef2f8 100%);
   padding: 22px 18px;
   display: flex;
   flex-direction: column;
   gap: 18px;
-  box-shadow: 0 18px 45px rgba(15, 23, 42, 0.04);
 }
 
 .workspace-brand-card,
-.workspace-side-footer,
-.workspace-user-btn,
-.workspace-topbar,
-.workspace-topbar-actions {
+.workspace-side-footer {
   display: flex;
   align-items: center;
-}
-
-.workspace-brand-card,
-.workspace-side-footer,
-.workspace-user-btn {
   gap: 12px;
 }
 
 .workspace-brand-mark,
-.workspace-avatar-placeholder,
-.workspace-user-avatar {
+.workspace-avatar-placeholder {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -188,42 +235,14 @@ const onInput = (event: Event) => {
 .workspace-brand-title {
   font-size: 18px;
   font-weight: 800;
-  letter-spacing: -0.03em;
-}
-
-.workspace-brand-subtitle,
-.workspace-footer-copy,
-.workspace-user-role {
-  color: #667085;
 }
 
 .workspace-brand-subtitle,
 .workspace-footer-copy {
+  color: #667085;
   font-size: 11px;
   text-transform: uppercase;
-  letter-spacing: 0.12em;
-}
-
-.workspace-create-btn,
-.workspace-side-link,
-.workspace-icon-btn {
-  border: 0;
-  cursor: pointer;
-  transition: all 0.22s ease;
-}
-
-.workspace-create-btn {
-  width: 100%;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-  padding: 12px 14px;
-  border-radius: 16px;
-  color: #fff;
-  font-weight: 700;
-  background: linear-gradient(135deg, #409eff 0%, #0060a9 100%);
-  box-shadow: 0 16px 30px rgba(0, 96, 169, 0.18);
+  letter-spacing: 0.08em;
 }
 
 .workspace-side-nav {
@@ -238,12 +257,15 @@ const onInput = (event: Event) => {
   align-items: center;
   gap: 12px;
   padding: 12px 14px;
+  border: 0;
   background: transparent;
   border-radius: 16px;
   color: #5d6676;
   font-size: 14px;
   font-weight: 600;
   text-align: left;
+  cursor: pointer;
+  transition: all 0.22s ease;
 }
 
 .workspace-side-link:hover,
@@ -259,117 +281,50 @@ const onInput = (event: Event) => {
   border-top: 1px solid #dbe4f0;
 }
 
-.workspace-avatar-placeholder,
-.workspace-user-avatar {
+.workspace-avatar-placeholder {
   width: 40px;
   height: 40px;
   font-size: 14px;
   font-weight: 800;
 }
 
-.workspace-footer-title,
-.workspace-user-name {
-  font-weight: 800;
-  letter-spacing: -0.02em;
+.workspace-footer-title {
   color: #1f2937;
-}
-
-.workspace-topbar {
-  justify-content: space-between;
-  gap: 16px;
-  padding: 8px 4px 18px;
-}
-
-.workspace-search-box {
-  flex: 1;
-  max-width: 460px;
-  position: relative;
-}
-
-.workspace-search-box .material-symbols-outlined {
-  position: absolute;
-  left: 14px;
-  top: 50%;
-  transform: translateY(-50%);
-  color: #7b8698;
-  font-size: 20px;
-}
-
-.workspace-search-box input {
-  width: 100%;
-  height: 46px;
-  border: 1px solid #d8e0ed;
-  border-radius: 999px;
-  background: rgba(255, 255, 255, 0.9);
-  padding: 0 16px 0 44px;
-  font-size: 14px;
-  outline: none;
-}
-
-.workspace-search-box input:focus {
-  border-color: #409eff;
-  box-shadow: 0 0 0 4px rgba(64, 158, 255, 0.14);
-}
-
-.workspace-topbar-actions {
-  gap: 10px;
-  justify-content: flex-end;
-}
-
-.workspace-icon-btn {
-  width: 42px;
-  height: 42px;
-  border-radius: 999px;
-  background: #fff;
-  color: #667085;
-  border: 1px solid #d8e0ed;
-}
-
-.workspace-icon-btn:hover {
-  background: #edf5ff;
-  color: #0060a9;
-}
-
-.workspace-user-btn {
-  padding: 7px 8px 7px 14px;
-  border-radius: 999px;
-  background: #fff;
-  border: 1px solid #d8e0ed;
-}
-
-.workspace-user-btn:hover,
-.workspace-create-btn:hover {
-  transform: translateY(-1px);
-}
-
-.workspace-user-meta {
-  text-align: right;
+  font-weight: 800;
 }
 
 @media (max-width: 1200px) {
   .workspace-page {
-    grid-template-columns: 1fr;
-  }
-
-  .workspace-side-panel {
-    order: 2;
-  }
-}
-
-@media (max-width: 960px) {
-  .workspace-topbar {
-    flex-direction: column;
-    align-items: stretch;
-  }
-
-  .workspace-topbar-actions {
-    justify-content: flex-start;
+    grid-template-columns: 64px minmax(0, 1fr);
+    gap: 14px;
   }
 }
 
 @media (max-width: 720px) {
-  .workspace-side-panel {
-    border-radius: 18px;
+  .workspace-page {
+    display: block;
+    padding-top: 64px;
+  }
+
+  .workspace-nav-rail {
+    position: fixed;
+    inset: 10px auto auto 12px;
+    z-index: 10;
+    width: auto;
+    height: 48px;
+    min-height: 0;
+    flex-direction: row;
+    padding: 4px;
+    border-radius: 16px;
+  }
+
+  .workspace-nav-rail__brand,
+  .workspace-nav-rail__item {
+    display: none;
+  }
+
+  .workspace-nav-rail__menu {
+    margin-top: 0;
   }
 }
 </style>

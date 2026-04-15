@@ -12,10 +12,12 @@
           <template #prefix>
             <span class="material-symbols-outlined">search</span>
           </template>
+          <template #suffix>
+            <SearchSuffixButton @click="handleSearch" />
+          </template>
         </el-input>
       </div>
 
-      <el-button type="primary" class="admin-users-toolbar__button" @click="handleSearch">搜索</el-button>
     </section>
 
     <section class="admin-users-toolbar admin-users-toolbar--subnav">
@@ -64,6 +66,7 @@ import AppDataTable from '@/components/common/AppDataTable.vue'
 import AppSectionCard from '@/components/common/AppSectionCard.vue'
 import AppStatusTag from '@/components/common/AppStatusTag.vue'
 import ProjectSubnav from '@/components/common/ProjectSubnav.vue'
+import SearchSuffixButton from '@/components/common/SearchSuffixButton.vue'
 import { resolveErrorMessage } from '@/utils/formatters'
 
 type AdminRoleFilter = 'ALL' | 'USER' | 'ADMIN'
@@ -151,14 +154,6 @@ onMounted(load)
 
 .admin-users-toolbar__search :deep(.el-input__prefix-inner) {
   color: #5f6775;
-}
-
-.admin-users-toolbar__button {
-  min-height: 46px;
-  padding: 0 18px;
-  border-radius: 14px;
-  font-weight: 800;
-  box-shadow: 0 12px 24px rgba(0, 96, 169, 0.16);
 }
 
 @media (max-width: 768px) {

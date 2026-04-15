@@ -101,6 +101,11 @@ public class AdminController {
         return ApiResponse.success(adminService.aiModels());
     }
 
+    @PostMapping("/ai/models")
+    public ApiResponse<ModelConfigView> createAiModel(@RequestBody ModelConfigCreateRequest request) {
+        return ApiResponse.success(adminService.createAiModel(request));
+    }
+
     @PutMapping("/ai/models/{id}")
     public ApiResponse<Void> updateAiModel(@PathVariable Long id, @RequestBody ModelConfigUpdateRequest request) {
         adminService.updateAiModel(id, request);
@@ -325,6 +330,61 @@ class AdminService {
                         rs.getObject("priority_no", Integer.class),
                         rs.getString("base_url"),
                         rs.getString("api_key_ref")));
+    }
+
+    ModelConfigView createAiModel(ModelConfigCreateRequest request) {
+        var currentUser = SecurityUtils.currentUser();
+
+        String modelCode = trimToNull(request.modelCode());
+        if (modelCode == null || modelCode.isBlank()) {
+            throw new BizException(ErrorCodes.BAD_REQUEST, "Model code is required", HttpStatus.BAD_REQUEST);
+        }
+        String modelName = trimToNull(request.modelName());
+        if (modelName == null || modelName.isBlank()) {
+            throw new BizException(ErrorCodes.BAD_REQUEST, "Model name is required", HttpStatus.BAD_REQUEST);
+        }
+        String providerCode = normalize(request.providerCode());
+        if (providerCode.isBlank()) {
+            throw new BizException(ErrorCodes.BAD_REQUEST, "Provider code is required", HttpStatus.BAD_REQUEST);
+        }
+
+        Long exists = jdbcTemplate.queryForObject(
+                "select count(*) from ai_model_config where model_code = ?", Long.class, modelCode);
+        if (exists != null && exists > 0) {
+            throw new BizException(ErrorCodes.CONFLICT, "Model code already exists", HttpStatus.CONFLICT);
+        }
+
+        Integer maxContextTokens = request.maxContextTokens();
+        if (maxContextTokens != null && maxContextTokens <= 0) {
+            maxContextTokens = null;
+        }
+        int priorityNo = request.priorityNo() != null ? Math.max(request.priorityNo(), 0) : 1;
+        boolean enabled = request.enabled() == null || request.enabled();
+        boolean supportStream = request.supportStream() == null || request.supportStream();
+        String baseUrl = trimToNull(request.baseUrl());
+        String apiKeyRef = trimToNull(request.apiKeyRef());
+
+        jdbcTemplate.update("""
+                        insert into ai_model_config (model_code, model_name, provider_code, enabled, support_stream,
+                                                     max_context_tokens, priority_no, base_url, api_key_ref, created_at, updated_at)
+                        values (?, ?, ?, ?, ?, ?, ?, ?, ?, current_timestamp(6), current_timestamp(6))
+                        """,
+                modelCode, modelName, providerCode,
+                enabled ? 1 : 0, supportStream ? 1 : 0,
+                maxContextTokens, priorityNo,
+                baseUrl, apiKeyRef);
+
+        Long newId = jdbcTemplate.queryForObject(
+                "select id from ai_model_config where model_code = ? limit 1", Long.class, modelCode);
+
+        Map<String, Object> detail = new LinkedHashMap<>();
+        detail.put("modelCode", modelCode);
+        detail.put("modelName", modelName);
+        detail.put("providerCode", providerCode);
+        auditLogService.log(currentUser, "ADMIN_MODEL_CREATE", "AI_MODEL", newId, detail);
+
+        return mapModelConfigView(newId, modelCode, modelName, providerCode, enabled, supportStream,
+                maxContextTokens, priorityNo, baseUrl, apiKeyRef);
     }
 
     void updateAiModel(Long id, ModelConfigUpdateRequest request) {
@@ -988,6 +1048,19 @@ record AdminAuditLogView(
 }
 
 record ModelConfigUpdateRequest(
+        String modelName,
+        String providerCode,
+        Boolean enabled,
+        Boolean supportStream,
+        Integer maxContextTokens,
+        Integer priorityNo,
+        String baseUrl,
+        String apiKeyRef
+) {
+}
+
+record ModelConfigCreateRequest(
+        String modelCode,
         String modelName,
         String providerCode,
         Boolean enabled,

@@ -8,6 +8,9 @@
         :placeholder="searchPlaceholder"
         @keydown.enter.prevent="handleSearch"
       />
+      <button v-if="searchKeyword" type="button" class="workspace-search-clear" aria-label="清除搜索内容" @click="clearSearch">
+        <span class="material-symbols-outlined">close</span>
+      </button>
       <button type="button" class="workspace-search-submit" @click="handleSearch">
         搜索
       </button>
@@ -104,6 +107,10 @@ const handleSearch = () => {
   })
 }
 
+const clearSearch = () => {
+  searchKeyword.value = ''
+}
+
 const handleSettings = () => {
   router.push('/settings/profile')
 }
@@ -165,23 +172,31 @@ const handleCommand = async (command: string | number | object) => {
   margin-bottom: 18px;
   padding: 14px 18px;
   border-radius: 22px;
-  border: 1px solid rgba(216, 224, 237, 0.85);
-  background: rgba(255, 255, 255, 0.88);
+  border: 0;
+  background: transparent;
   backdrop-filter: blur(18px);
-  box-shadow: 0 14px 32px rgba(15, 23, 42, 0.05);
+  box-shadow: none;
 }
 
 .workspace-search-box {
   min-width: 0;
   flex: 1;
+  max-width: 520px;
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
+  grid-template-columns: auto minmax(0, 1fr) auto auto;
   align-items: center;
   gap: 10px;
-  padding: 0 12px;
-  border-radius: 16px;
-  border: 1px solid #d7deeb;
-  background: #f9fbff;
+  min-height: 46px;
+  padding: 0 8px 0 14px;
+  border-radius: 14px;
+  border: 0;
+  background: #e0e2e9;
+  transition: background 0.18s ease, box-shadow 0.18s ease;
+}
+
+.workspace-search-box:focus-within {
+  background: #ffffff;
+  box-shadow: 0 0 0 2px rgba(0, 96, 169, 0.12);
 }
 
 .workspace-search-box input {
@@ -190,11 +205,12 @@ const handleCommand = async (command: string | number | object) => {
   border: 0;
   outline: 0;
   background: transparent;
-  padding: 14px 0;
+  padding: 12px 0;
   font-size: 14px;
 }
 
 .workspace-search-submit,
+.workspace-search-clear,
 .workspace-icon-btn {
   border: 0;
   border-radius: 12px;
@@ -202,9 +218,28 @@ const handleCommand = async (command: string | number | object) => {
   transition: all 0.22s ease;
 }
 
+.workspace-search-clear {
+  width: 28px;
+  height: 28px;
+  display: inline-grid;
+  place-items: center;
+  padding: 0;
+  background: transparent;
+  color: #7b8698;
+}
+
+.workspace-search-clear .material-symbols-outlined {
+  font-size: 18px;
+}
+
+.workspace-search-clear:hover {
+  background: rgba(255, 255, 255, 0.76);
+  color: #344054;
+}
+
 .workspace-search-submit {
-  padding: 10px 14px;
-  background: #e9f3ff;
+  padding: 8px 12px;
+  background: rgba(255, 255, 255, 0.86);
   color: #005b9f;
   font-weight: 700;
 }

@@ -42,29 +42,29 @@
           </div>
         </AppSectionCard>
 
-        <AppSectionCard title="令牌消耗概览">
+        <AppSectionCard title="Tokens消耗概览">
           <div class="token-summary">
             <div class="token-ring" :style="tokenRingStyle">
               <div class="token-ring__value">{{ compactNumber(normalizedDashboard.tokenUsage.totalTokens24h) }}</div>
-              <div class="token-ring__label">24小时令牌</div>
+              <div class="token-ring__label">24小时Tokens</div>
             </div>
             <div class="token-breakdown">
               <div class="token-breakdown__row">
-                <span>近 7 日输入令牌</span>
+                <span>近 7 日输入Tokens</span>
                 <strong>{{ compactNumber(normalizedDashboard.tokenUsage.promptTokens7d) }}</strong>
               </div>
               <div class="token-breakdown__bar">
                 <div class="is-prompt" :style="{ width: `${tokenPromptRatio}%` }"></div>
               </div>
               <div class="token-breakdown__row">
-                <span>近 7 日输出令牌</span>
+                <span>近 7 日输出Tokens</span>
                 <strong>{{ compactNumber(normalizedDashboard.tokenUsage.completionTokens7d) }}</strong>
               </div>
               <div class="token-breakdown__bar">
                 <div class="is-completion" :style="{ width: `${tokenCompletionRatio}%` }"></div>
               </div>
               <div class="token-breakdown__row token-breakdown__row--total">
-                <span>近 7 日总令牌</span>
+                <span>近 7 日总Tokens</span>
                 <strong>{{ compactNumber(normalizedDashboard.tokenUsage.totalTokens7d) }}</strong>
               </div>
             </div>
@@ -81,29 +81,29 @@
           <div ref="apiChartRef" class="chart-box"></div>
         </AppSectionCard>
 
-        <AppSectionCard title="每日令牌消耗">
+        <AppSectionCard title="每日Tokens消耗">
           <div ref="tokenChartRef" class="chart-box"></div>
         </AppSectionCard>
       </section>
 
       <section class="admin-dashboard__tables">
-      <AppSectionCard title="最近失败登录" :unpadded="true">
-        <AppDataTable :data="normalizedDashboard.securityLogs" stripe :max-height="520">
-          <el-table-column prop="username" label="账号" min-width="140" />
-          <el-table-column prop="loginIp" label="IP 地址" min-width="140" />
-          <el-table-column prop="userAgent" label="设备信息" min-width="220" show-overflow-tooltip />
-          <el-table-column prop="createdAt" label="时间" min-width="180" />
-        </AppDataTable>
-      </AppSectionCard>
+        <AppSectionCard title="最近失败登录" :unpadded="true">
+          <AppDataTable :data="normalizedDashboard.securityLogs" stripe :max-height="520">
+            <el-table-column prop="username" label="账号" min-width="140" />
+            <el-table-column prop="loginIp" label="IP 地址" min-width="140" />
+            <el-table-column prop="userAgent" label="设备信息" min-width="220" show-overflow-tooltip />
+            <el-table-column prop="createdAt" label="时间" min-width="180" />
+          </AppDataTable>
+        </AppSectionCard>
 
-      <AppSectionCard title="高频动作" description="近 7 日最常触发的关键动作。" :unpadded="true">
-        <AppDataTable :data="normalizedDashboard.topActions" stripe :max-height="520">
-          <el-table-column label="动作类型" min-width="220">
-            <template #default="{ row }">{{ actionLabel(row.actionCode) }}</template>
-          </el-table-column>
-          <el-table-column prop="total" label="次数" width="120" />
-        </AppDataTable>
-      </AppSectionCard>
+        <AppSectionCard title="高频动作" description="近 7 日最常触发的关键动作。" :unpadded="true">
+          <AppDataTable :data="normalizedDashboard.topActions" stripe :max-height="520">
+            <el-table-column label="动作类型" min-width="220">
+              <template #default="{ row }">{{ actionLabel(row.actionCode) }}</template>
+            </el-table-column>
+            <el-table-column prop="total" label="次数" width="120" />
+          </AppDataTable>
+        </AppSectionCard>
       </section>
     </template>
   </div>
@@ -200,9 +200,9 @@ const headlineCards = computed(() => {
       icon: 'api',
     },
     {
-      label: '24小时令牌消耗',
+      label: '24小时Tokens消耗',
       value: compactNumber(normalizedDashboard.value.tokenUsage.totalTokens24h),
-      hint: '输入与输出令牌总和',
+      hint: '输入与输出Tokens总和',
       icon: 'neurology',
     },
     {
@@ -218,9 +218,9 @@ const resourceMetrics = computed(() => {
   if (!normalizedDashboard.value) return []
   return [
     { label: '用户总数', value: normalizedDashboard.value.overview.userCount, hint: '平台注册账号' },
-    { label: '项目总数', value: normalizedDashboard.value.overview.projectCount, hint: '知识空间总量' },
-    { label: '文件总数', value: normalizedDashboard.value.overview.fileCount, hint: '已上传文件' },
-    { label: '文档总数', value: normalizedDashboard.value.overview.documentCount, hint: '在线文档' },
+    { label: '项目总数', value: normalizedDashboard.value.overview.projectCount, hint: '用户总项目数' },
+    { label: '文件总数', value: normalizedDashboard.value.overview.fileCount, hint: '用户总文件' },
+    { label: '文档总数', value: normalizedDashboard.value.overview.documentCount, hint: '用户总文档' },
     { label: '智能会话总数', value: normalizedDashboard.value.metrics.aiSessionCount, hint: '累计会话' },
     { label: '搜索次数', value: normalizedDashboard.value.metrics.searchCount, hint: '站内检索动作' },
   ]
@@ -404,7 +404,7 @@ const renderCharts = async () => {
     const tokenSeries = buildSeries(normalizedDashboard.value.tokenSeries, 'bar', () => ({ stack: 'tokens' }))
     const hasTokenData = tokenSeries.some((item) => item.data.some((value: number) => value > 0))
     if (!hasTokenData) {
-      currentTokenChart.setOption(buildEmptyChartOption('暂无令牌消耗数据'), true)
+      currentTokenChart.setOption(buildEmptyChartOption('暂无Tokens消耗数据'), true)
       return
     }
     currentTokenChart.setOption({

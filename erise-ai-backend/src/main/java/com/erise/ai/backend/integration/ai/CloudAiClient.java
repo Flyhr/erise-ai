@@ -10,9 +10,9 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.List;
-import lombok.RequiredArgsConstructor;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.core.io.ByteArrayResource;
 import org.springframework.core.ParameterizedTypeReference;
 import org.springframework.http.HttpEntity;
@@ -21,7 +21,6 @@ import org.springframework.http.HttpMethod;
 import org.springframework.http.MediaType;
 import org.springframework.http.client.reactive.ReactorClientHttpConnector;
 import org.springframework.http.codec.ServerSentEvent;
-import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Component;
 import org.springframework.util.LinkedMultiValueMap;
 import org.springframework.util.MultiValueMap;
@@ -34,7 +33,6 @@ import reactor.core.publisher.Flux;
 import reactor.netty.http.client.HttpClient;
 
 @Component
-@RequiredArgsConstructor
 public class CloudAiClient {
 
     private static final Logger log = LoggerFactory.getLogger(CloudAiClient.class);
@@ -44,6 +42,14 @@ public class CloudAiClient {
     private final ObjectMapper objectMapper;
     private final WebClient.Builder webClientBuilder = WebClient.builder();
     private final EriseProperties properties;
+
+    public CloudAiClient(@Qualifier("aiRestTemplate") RestTemplate restTemplate,
+                         ObjectMapper objectMapper,
+                         EriseProperties properties) {
+        this.restTemplate = restTemplate;
+        this.objectMapper = objectMapper;
+        this.properties = properties;
+    }
 
     public ChatResponse chat(CurrentUser user, ChatCompletionRequest request, String requestId) {
         return post(user, "/internal/ai/chat/completions", request, requestId, ChatResponse.class);

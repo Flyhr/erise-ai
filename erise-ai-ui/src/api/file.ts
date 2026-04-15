@@ -1,5 +1,5 @@
 import type { AxiosRequestConfig } from 'axios'
-import http, { resolveApiUrl } from './http'
+import http, { FILE_UPLOAD_TIMEOUT_MS, resolveApiUrl } from './http'
 import type { EditableOfficeFileView, FileView, PageResponse } from '@/types/models'
 
 export interface InitUploadResponse {
@@ -28,6 +28,7 @@ export const uploadFileBinary = async (fileId: number, file: File) => {
   formData.append('file', file)
   return http.post<never, FileView>('/v1/files/upload', formData, {
     headers: { 'Content-Type': 'multipart/form-data' },
+    timeout: FILE_UPLOAD_TIMEOUT_MS,
   })
 }
 

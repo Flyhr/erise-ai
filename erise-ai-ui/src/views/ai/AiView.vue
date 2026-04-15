@@ -133,9 +133,9 @@
                     :class="message.roleCode === 'USER' ? 'is-user' : 'is-assistant'">
                     <div class="transcript-item__avatar-wrap"
                       :class="{ 'transcript-item__avatar-wrap--assistant': message.roleCode === 'ASSISTANT' }">
-                      <span v-if="assistantThinkingLabel(message)"
+                      <span v-if="assistantStatusLabel(message)"
                         class="transcript-item__metric transcript-item__metric--aside">
-                        {{ assistantThinkingLabel(message) }}
+                        {{ assistantStatusLabel(message) }}
                       </span>
                       <div class="transcript-item__avatar"
                         :class="{ 'transcript-item__avatar--assistant': message.roleCode === 'ASSISTANT' }">
@@ -489,6 +489,7 @@ interface UiMessage {
   roleCode: 'USER' | 'ASSISTANT'
   content: string
   createdAt: string
+  streamStartedAt?: number
   refusedReason?: string
   status: MessageStatus
   pendingQuestion?: string
@@ -928,19 +929,37 @@ const assistantCopyText = (message: UiMessage) => assistantContentOf(message).tr
 const assistantActionVisible = (message: UiMessage) =>
   message.roleCode === 'ASSISTANT' && Boolean(assistantCopyText(message) || message.errorMessage)
 
+const formatThinkingDuration = (latencyMs: number) =>
+  latencyMs >= 1000
+    ? `思考耗时 ${(latencyMs / 1000).toFixed(latencyMs >= 10000 ? 0 : 1)}s`
+    : `思考耗时 ${latencyMs}ms`
+
 const assistantThinkingLabel = (message: UiMessage) => {
   if (message.roleCode !== 'ASSISTANT') {
     return ''
   }
   if (message.status === 'streaming') {
-    return '思考中'
+    return message.latencyMs && message.latencyMs > 0 ? formatThinkingDuration(message.latencyMs) : '思考中'
   }
   if (!message.latencyMs || message.latencyMs <= 0) {
     return ''
   }
-  return message.latencyMs >= 1000
-    ? `思考耗时 ${(message.latencyMs / 1000).toFixed(message.latencyMs >= 10000 ? 0 : 1)}s`
-    : `思考耗时 ${message.latencyMs}ms`
+  return formatThinkingDuration(message.latencyMs)
+}
+
+const assistantStatusLabel = (message: UiMessage) => {
+  if (message.roleCode !== 'ASSISTANT') {
+    return ''
+  }
+  if (message.status === 'streaming') {
+    const startedAt = message.streamStartedAt || sendStartedAt.value
+    if (!startedAt) {
+      return assistantThinkingLabel(message)
+    }
+    const seconds = Math.max(1, Math.floor((clockNow.value - startedAt) / 1000))
+    return `思考中 ${seconds}s`
+  }
+  return assistantThinkingLabel(message)
 }
 
 const assetTypeBadge = (asset: ComposerAssetSnapshot) => {
@@ -1915,8 +1934,10 @@ const send = async (presetQuestion?: string) => {
   messages.value.push(userMessage, assistantMessage)
   await scrollToBottom()
 
+  const streamStartedAt = Date.now()
+  assistantMessage.streamStartedAt = streamStartedAt
   sending.value = true
-  sendStartedAt.value = Date.now()
+  sendStartedAt.value = streamStartedAt
   startClock()
   currentRequestId.value = ''
   persistMessageAssetRecord(activeSessionId.value, messageAssetRecord)
@@ -1958,6 +1979,12 @@ const send = async (presetQuestion?: string) => {
       },
       onChunk: (chunk) => {
         opened = true
+        if (!chunkReceived) {
+          assistantMessage.latencyMs = Math.max(1, Date.now() - streamStartedAt)
+          assistantMessage.streamStartedAt = undefined
+          sendStartedAt.value = undefined
+          stopClock()
+        }
         chunkReceived = true
         userMessage.status = 'sent'
         assistantMessage.content += chunk
@@ -1965,14 +1992,22 @@ const send = async (presetQuestion?: string) => {
       onDone: async (donePayload) => {
         userMessage.status = 'sent'
         assistantMessage.status = 'sent'
+        assistantMessage.streamStartedAt = undefined
         assistantMessage.serverId = donePayload.messageId
-        assistantMessage.latencyMs = donePayload.latencyMs
+        assistantMessage.latencyMs = assistantMessage.latencyMs || donePayload.latencyMs
         currentRequestId.value = ''
         persistMessageAssetRecord(donePayload.sessionId, messageAssetRecord)
         await syncSessionRoute(donePayload.sessionId)
         if (donePayload.sessionId) {
+          const thinkingLatency = assistantMessage.latencyMs
           const detail = await getSession(donePayload.sessionId)
           messages.value = attachStoredAssets(donePayload.sessionId, detail.messages.map(toUiMessage))
+          if (thinkingLatency && donePayload.messageId) {
+            const storedAssistantMessage = messages.value.find((item) => item.serverId === donePayload.messageId)
+            if (storedAssistantMessage) {
+              storedAssistantMessage.latencyMs = thinkingLatency
+            }
+          }
           restoreAttachmentState(detail.id, detail.projectId)
           await refreshTempFiles(donePayload.sessionId)
         }
@@ -1984,6 +2019,7 @@ const send = async (presetQuestion?: string) => {
     if (/cancel|取消|停止/i.test(message)) {
       userMessage.status = 'sent'
       assistantMessage.status = 'failed'
+      assistantMessage.streamStartedAt = undefined
       assistantMessage.errorMessage = '已停止生成。'
       if (!assistantMessage.content) {
         assistantMessage.content = '已停止生成。'

@@ -308,7 +308,7 @@ const { beforeUpload } = useKnowledgeFileUpload({
 
 useVisibleFileStatusPolling({
   rows: files,
-  intervalMs: 1000,
+  intervalMs: 3000,
   getFileId: (row) => row.id,
   isFileActive: (row) => hasActiveFileStatus(row),
   applyDetail: applyFileDetail,
@@ -320,6 +320,9 @@ useVisibleFileStatusPolling({
       }
       removeOptimisticUploadedFile(detail.id)
     })
+  },
+  onTimeout: () => {
+    ElMessage.warning('文件解析仍在处理中，已暂停自动刷新，请稍后手动刷新查看结果')
   },
 })
 

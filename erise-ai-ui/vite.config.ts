@@ -1,12 +1,15 @@
 import { fileURLToPath, URL } from 'node:url'
-import { defineConfig } from 'vite'
+import { defineConfig, loadEnv } from 'vite'
 import vue from '@vitejs/plugin-vue'
 
 export default defineConfig(({ mode }) => {
   const isDev = mode === 'development' || mode === 'dev'
+  const envDir = isDev ? fileURLToPath(new URL('..', import.meta.url)) : process.cwd()
+  const env = loadEnv(mode, envDir, '')
 
   return {
     plugins: [vue()],
+    envDir,
     resolve: {
       alias: {
         '@': fileURLToPath(new URL('./src', import.meta.url)),
@@ -64,11 +67,11 @@ export default defineConfig(({ mode }) => {
       proxy: isDev
         ? {
             '/api': {
-              target: process.env.VITE_DEV_PROXY_TARGET || 'http://localhost:8088',
+              target: env.VITE_DEV_PROXY_TARGET || 'http://localhost:8088',
               changeOrigin: true,
             },
             '/actuator': {
-              target: process.env.VITE_DEV_PROXY_TARGET || 'http://localhost:8088',
+              target: env.VITE_DEV_PROXY_TARGET || 'http://localhost:8088',
               changeOrigin: true,
             },
           }

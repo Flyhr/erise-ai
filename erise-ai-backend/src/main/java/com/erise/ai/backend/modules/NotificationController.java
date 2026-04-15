@@ -2,6 +2,10 @@ package com.erise.ai.backend.modules;
 
 import com.erise.ai.backend.common.api.ApiResponse;
 import com.erise.ai.backend.common.api.PageResponse;
+import com.erise.ai.backend.common.exception.BizException;
+import com.erise.ai.backend.common.exception.ErrorCodes;
+import com.erise.ai.backend.common.util.SecurityUtils;
+import jakarta.validation.Valid;
 import jakarta.validation.constraints.Size;
 import java.sql.Timestamp;
 import java.time.LocalDateTime;
@@ -15,15 +19,14 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
-import com.erise.ai.backend.common.exception.BizException;
-import com.erise.ai.backend.common.exception.ErrorCodes;
-import com.erise.ai.backend.common.util.SecurityUtils;
 
 @RestController
 @RequestMapping("/api/v1/notifications")
@@ -53,6 +56,18 @@ public class NotificationController {
     @PostMapping("/read-all")
     public ApiResponse<Void> markAllRead() {
         notificationService.markAllRead();
+        return ApiResponse.success("success", null);
+    }
+
+    @DeleteMapping("/{id}")
+    public ApiResponse<Void> deleteNotification(@PathVariable Long id) {
+        notificationService.deleteNotifications(List.of(id));
+        return ApiResponse.success("success", null);
+    }
+
+    @DeleteMapping
+    public ApiResponse<Void> deleteNotifications(@Valid @RequestBody DeleteNotificationsRequest request) {
+        notificationService.deleteNotifications(request.ids());
         return ApiResponse.success("success", null);
     }
 }
@@ -163,6 +178,32 @@ class NotificationService {
                 currentUser.userId());
     }
 
+    void deleteNotifications(List<Long> notificationIds) {
+        var currentUser = SecurityUtils.currentUser();
+        LinkedHashSet<Long> targetIds = new LinkedHashSet<>(
+                notificationIds == null ? List.of() : notificationIds.stream().filter(Objects::nonNull).toList());
+        if (targetIds.isEmpty()) {
+            throw new BizException(ErrorCodes.BAD_REQUEST, "Notification ids are required", HttpStatus.BAD_REQUEST);
+        }
+
+        List<Object> params = new ArrayList<>();
+        params.add(currentUser.userId());
+        params.add(currentUser.userId());
+        params.addAll(targetIds);
+        String placeholders = String.join(", ", targetIds.stream().map(id -> "?").toList());
+        String sql = "update ea_user_notification "
+                + "set deleted = 1, "
+                + "updated_by = ?, "
+                + "updated_at = current_timestamp "
+                + "where deleted = 0 "
+                + "and user_id = ? "
+                + "and id in (" + placeholders + ")";
+        int updated = jdbcTemplate.update(sql, params.toArray());
+        if (updated < targetIds.size()) {
+            throw new BizException(ErrorCodes.NOT_FOUND, "Notification not found", HttpStatus.NOT_FOUND);
+        }
+    }
+
     void sendAdminNotification(AdminNotificationSendRequest request) {
         var currentUser = SecurityUtils.currentUser();
         if (!currentUser.isAdmin()) {
@@ -231,11 +272,13 @@ class NotificationService {
 
         List<Object> params = new ArrayList<>(requestedIds);
         String placeholders = String.join(", ", requestedIds.stream().map(id -> "?").toList());
-        List<Long> existingIds = jdbcTemplate.query("""
-                        select id
-                        from ea_user
-                        where deleted = 0
-                          and id in (""" + placeholders + ") order by id asc",
+        String sql = "select id "
+                + "from ea_user "
+                + "where deleted = 0 "
+                + "and id in (" + placeholders + ") "
+                + "order by id asc";
+        List<Long> existingIds = jdbcTemplate.query(
+                sql,
                 (rs, rowNum) -> rs.getLong("id"),
                 params.toArray());
 
@@ -275,6 +318,9 @@ record UserNotificationView(
 }
 
 record NotificationUnreadCountView(long unreadCount) {
+}
+
+record DeleteNotificationsRequest(@Size(min = 1) List<Long> ids) {
 }
 
 record AdminNotificationSendRequest(

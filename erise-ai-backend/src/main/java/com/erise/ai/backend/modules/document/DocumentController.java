@@ -15,6 +15,8 @@ import com.erise.ai.backend.common.util.SecurityUtils;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
+import java.util.ArrayList;
+import java.util.List;
 import lombok.Data;
 import lombok.RequiredArgsConstructor;
 import org.slf4j.Logger;
@@ -31,6 +33,7 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.util.HtmlUtils;
 
 @RestController
 @RequestMapping("/api/v1/documents")
@@ -105,6 +108,8 @@ class DocumentService {
     private final DocumentMapper documentMapper;
     private final DocumentContentMapper documentContentMapper;
     private final DocumentVersionMapper documentVersionMapper;
+    private final TagMapper tagMapper;
+    private final DocumentTagRelMapper documentTagRelMapper;
     private final ProjectService projectService;
     private final TextChunkingSupport textChunkingSupport;
     private final RagKnowledgeService ragKnowledgeService;
@@ -173,13 +178,91 @@ class DocumentService {
         return toInternalContext(document, content);
     }
 
-    InternalDocumentContextView internalUpdateTitle(Long id, String title) {
-        DocumentEntity document = requireExistingDocument(id);
+    InternalDocumentContextView internalUpdateTitle(Long id, Long actorUserId, String title) {
+        DocumentEntity document = requireAccessibleDocument(id, actorUserId);
         DocumentContentEntity content = contentByDocumentId(document.getId());
         document.setTitle(title);
-        document.setUpdatedBy(document.getOwnerUserId());
+        document.setUpdatedBy(actorUserId);
         documentMapper.updateById(document);
         syncRagKnowledge(document, content.getPlainText(), false);
+        auditLogService.log(actorUserId, "DOCUMENT_TITLE_UPDATE_BY_AI", "DOCUMENT", id, java.util.Map.of("title", title));
+        return toInternalContext(document, content);
+    }
+
+    InternalDocumentContextView internalUpdateSummary(Long id, Long actorUserId, String summary) {
+        DocumentEntity document = requireAccessibleDocument(id, actorUserId);
+        DocumentContentEntity content = contentByDocumentId(document.getId());
+        document.setSummary(summary);
+        document.setUpdatedBy(actorUserId);
+        documentMapper.updateById(document);
+        auditLogService.log(actorUserId, "DOCUMENT_SUMMARY_UPDATE_BY_AI", "DOCUMENT", id, java.util.Map.of("summary", summary));
+        return toInternalContext(document, content);
+    }
+
+    List<TagView> internalUpdateTags(Long id, Long actorUserId, List<String> tags) {
+        requireAccessibleDocument(id, actorUserId);
+        documentTagRelMapper.delete(new LambdaQueryWrapper<DocumentTagRelEntity>().eq(DocumentTagRelEntity::getDocumentId, id));
+        List<TagView> result = new ArrayList<>();
+        for (String rawName : tags) {
+            String name = rawName == null ? "" : rawName.trim();
+            if (name.isBlank()) {
+                continue;
+            }
+            TagEntity tag = tagMapper.selectOne(new LambdaQueryWrapper<TagEntity>()
+                    .eq(TagEntity::getOwnerUserId, actorUserId)
+                    .eq(TagEntity::getName, name)
+                    .last("limit 1"));
+            if (tag == null) {
+                tag = new TagEntity();
+                tag.setOwnerUserId(actorUserId);
+                tag.setName(name);
+                tag.setCreatedBy(actorUserId);
+                tag.setUpdatedBy(actorUserId);
+                tagMapper.insert(tag);
+            }
+            DocumentTagRelEntity rel = new DocumentTagRelEntity();
+            rel.setDocumentId(id);
+            rel.setTagId(tag.getId());
+            rel.setCreatedBy(actorUserId);
+            rel.setUpdatedBy(actorUserId);
+            documentTagRelMapper.insert(rel);
+            result.add(new TagView(tag.getId(), tag.getName(), tag.getColor()));
+        }
+        auditLogService.log(actorUserId, "DOCUMENT_TAG_BIND_BY_AI", "DOCUMENT", id, tags);
+        return result;
+    }
+
+    @Transactional
+    InternalDocumentContextView internalCreateProjectWeeklyReportDraft(Long projectId, Long actorUserId, String title, String summary, String plainText) {
+        ProjectEntity project = projectService.requireAccessibleProject(projectId, actorUserId);
+        DocumentEntity document = new DocumentEntity();
+        document.setOwnerUserId(actorUserId);
+        document.setProjectId(projectId);
+        document.setTitle(title);
+        document.setSummary(summary);
+        document.setDocStatus("DRAFT");
+        document.setLatestVersionNo(0);
+        document.setEditorType("TIPTAP");
+        document.setCreatedBy(actorUserId);
+        document.setUpdatedBy(actorUserId);
+        documentMapper.insert(document);
+
+        DocumentContentEntity content = new DocumentContentEntity();
+        content.setDocumentId(document.getId());
+        content.setContentJson("{}");
+        content.setContentHtmlSnapshot(toHtmlSnapshot(plainText));
+        content.setPlainText(plainText == null ? "" : plainText);
+        content.setCreatedBy(actorUserId);
+        content.setUpdatedBy(actorUserId);
+        documentContentMapper.insert(content);
+
+        auditLogService.log(
+                actorUserId,
+                "PROJECT_WEEKLY_REPORT_DRAFT_CREATE_BY_AI",
+                "DOCUMENT",
+                document.getId(),
+                java.util.Map.of("projectId", project.getId(), "title", title)
+        );
         return toInternalContext(document, content);
     }
 
@@ -346,6 +429,12 @@ class DocumentService {
         return document;
     }
 
+    DocumentEntity requireAccessibleDocument(Long id, Long actorUserId) {
+        DocumentEntity document = requireExistingDocument(id);
+        projectService.requireAccessibleProject(document.getProjectId(), actorUserId);
+        return document;
+    }
+
     private DocumentContentEntity contentByDocumentId(Long documentId) {
         DocumentContentEntity content = documentContentMapper.selectOne(new LambdaQueryWrapper<DocumentContentEntity>()
                 .eq(DocumentContentEntity::getDocumentId, documentId)
@@ -397,6 +486,23 @@ class DocumentService {
         return new DocumentVersionView(entity.getVersionNo(), entity.getTitle(), entity.getContentJson(),
                 entity.getContentHtmlSnapshot(), entity.getPlainText(), entity.getCreatedAt());
     }
+
+    private String toHtmlSnapshot(String plainText) {
+        if (plainText == null || plainText.isBlank()) {
+            return "<p></p>";
+        }
+        StringBuilder builder = new StringBuilder();
+        for (String paragraph : plainText.replace("\r\n", "\n").split("\\n\\s*\\n")) {
+            String normalized = paragraph.trim();
+            if (normalized.isBlank()) {
+                continue;
+            }
+            builder.append("<p>")
+                    .append(HtmlUtils.htmlEscape(normalized).replace("\n", "<br />"))
+                    .append("</p>");
+        }
+        return builder.length() == 0 ? "<p></p>" : builder.toString();
+    }
 }
 
 interface DocumentMapper extends BaseMapper<DocumentEntity> {
@@ -406,6 +512,9 @@ interface DocumentContentMapper extends BaseMapper<DocumentContentEntity> {
 }
 
 interface DocumentVersionMapper extends BaseMapper<DocumentVersionEntity> {
+}
+
+interface DocumentTagRelMapper extends BaseMapper<DocumentTagRelEntity> {
 }
 
 @Data
@@ -448,6 +557,16 @@ class DocumentVersionEntity extends AuditableEntity {
     private String contentHtmlSnapshot;
     private String plainText;
     private Long publishedBy;
+}
+
+@Data
+@TableName("ea_document_tag_rel")
+class DocumentTagRelEntity extends AuditableEntity {
+
+    @TableId(type = IdType.AUTO)
+    private Long id;
+    private Long documentId;
+    private Long tagId;
 }
 
 record DocumentCreateRequest(@NotNull Long projectId, @NotBlank String title, String summary) {

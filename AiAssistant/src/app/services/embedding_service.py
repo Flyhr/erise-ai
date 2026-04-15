@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import logging
 import math
@@ -49,23 +50,81 @@ class EmbeddingService:
         logger.warning('Embedding provider unavailable, using local deterministic fallback: %s', reason)
         return [self._local_embedding(text) for text in texts]
 
+    def _allow_fallback(self) -> bool:
+        return self.settings.embedding_local_fallback_enabled and self.settings.app_env.lower() != 'prod'
+
+    def _is_quota_error(self, message: str) -> bool:
+        normalized = (message or '').lower()
+        return (
+            'insufficient_quota' in normalized
+            or 'quota' in normalized and 'exceed' in normalized
+            or 'billing' in normalized and 'inactive' in normalized
+            or 'account_balance' in normalized
+        )
+
+    def _is_retryable_error(self, message: str) -> bool:
+        normalized = (message or '').lower()
+        return (
+            'timeout' in normalized
+            or 'timed out' in normalized
+            or 'connection refused' in normalized
+            or 'connection reset' in normalized
+            or 'connection aborted' in normalized
+            or 'network is unreachable' in normalized
+            or 'temporarily unavailable' in normalized
+            or 'service unavailable' in normalized
+            or 'bad gateway' in normalized
+            or 'gateway timeout' in normalized
+            or 'too many requests' in normalized
+            or 'rate limit' in normalized
+        )
+
     async def embed(self, texts: list[str]) -> list[list[float]]:
         if not texts:
             return []
         if not self.settings.resolved_embedding_api_key:
-            if self.settings.app_env.lower() == 'prod':
+            if not self._allow_fallback():
                 raise AiServiceError('AI_EMBEDDING_NOT_CONFIGURED', 'Embedding api key is not configured', status_code=503)
             return self._fallback_embeddings(texts, 'embedding api key is not configured')
-        try:
-            response = await self.client.embeddings.create(
-                model=self.settings.embedding_model,
-                input=texts,
-            )
-            return [item.embedding for item in response.data]
-        except Exception as exc:
-            if self.settings.app_env.lower() == 'prod':
-                raise AiServiceError('AI_EMBEDDING_ERROR', f'Embedding request failed: {exc}', status_code=502) from exc
-            return self._fallback_embeddings(texts, str(exc))
+        vectors: list[list[float]] = []
+        batch_size = max(1, self.settings.embedding_batch_size)
+        for start in range(0, len(texts), batch_size):
+            vectors.extend(await self._embed_batch(texts[start:start + batch_size]))
+        return vectors
+
+    async def _embed_batch(self, texts: list[str]) -> list[list[float]]:
+        attempts = max(1, self.settings.embedding_max_retries + 1)
+        for attempt in range(1, attempts + 1):
+            try:
+                response = await self.client.embeddings.create(
+                    model=self.settings.embedding_model,
+                    input=texts,
+                )
+                return [item.embedding for item in response.data]
+            except Exception as exc:
+                message = str(exc)
+                if self._is_quota_error(message):
+                    raise AiServiceError(
+                        'AI_EMBEDDING_QUOTA_EXCEEDED',
+                        'Embedding provider quota exceeded or billing is unavailable. '
+                        'Please configure a valid EMBEDDING_BASE_URL/EMBEDDING_API_KEY provider.',
+                        status_code=502,
+                    ) from exc
+                is_last_attempt = attempt >= attempts
+                if self._is_retryable_error(message) and not is_last_attempt:
+                    wait_seconds = self.settings.retry_backoff_seconds * attempt
+                    logger.warning(
+                        'Embedding request failed on attempt %s/%s, retrying in %.1fs: %s',
+                        attempt,
+                        attempts,
+                        wait_seconds,
+                        message,
+                    )
+                    await asyncio.sleep(wait_seconds)
+                    continue
+                if self._allow_fallback():
+                    return self._fallback_embeddings(texts, message)
+                raise AiServiceError('AI_EMBEDDING_ERROR', f'Embedding request failed: {message}', status_code=502) from exc
 
 
 embedding_service = EmbeddingService()

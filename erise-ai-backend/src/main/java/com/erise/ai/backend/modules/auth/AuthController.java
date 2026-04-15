@@ -20,12 +20,14 @@ import jakarta.validation.constraints.NotBlank;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.Base64;
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import lombok.Data;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.http.HttpStatus;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Component;
 import org.springframework.stereotype.Service;
@@ -116,6 +118,7 @@ class AuthService {
     private final StringRedisTemplate redisTemplate; // Redis缓存操作
     private final AuditLogService auditLogService; // 审计日志服务
     private final EriseProperties properties; // 系统配置（如JWT过期时间）
+    private final JdbcTemplate jdbcTemplate; // 数据库操作（用于补发历史系统通知）
 
     // 生成图形验证码：生成随机验证码 → 存储到Redis（5分钟过期） → 生成SVG图像 → Base64编码 → 返回验证码ID和图像数据
     /**
@@ -163,6 +166,9 @@ class AuthService {
         profile.setCreatedBy(entity.getId());
         profile.setUpdatedBy(entity.getId());
         userProfileMapper.insert(profile);
+
+        // 将历史的全量系统通知（ADMIN_NOTICE 类型）补发给新注册用户
+        copyHistoricalAdminNotificationsTo(entity.getId());
 
         CurrentUser currentUser = new CurrentUser(entity.getId(), entity.getUsername(), entity.getRoleCode());
         auditLogService.log(currentUser, "AUTH_REGISTER", "USER", entity.getId(),
@@ -287,6 +293,35 @@ class AuthService {
         entity.setCreatedBy(userId == null ? 0L : userId);
         entity.setUpdatedBy(userId == null ? 0L : userId);
         userLoginLogMapper.insert(entity);
+    }
+
+    private void copyHistoricalAdminNotificationsTo(Long newUserId) {
+        // 查询所有 sendToAll=true 类型的历史 ADMIN_NOTICE 通知（以 created_by=0 的另一用户身份发送的均算全员通知）
+        // 实际做法：找 ea_user_notification 中最早的 ADMIN_NOTICE 记录（去重标题+内容），为新用户补插
+        List<long[]> templates = jdbcTemplate.query("""
+                select n.id, n.created_by
+                from ea_user_notification n
+                where n.deleted = 0
+                  and n.notification_type = 'ADMIN_NOTICE'
+                  and n.user_id != ?
+                group by n.title, n.content
+                order by min(n.id) asc
+                """,
+                (rs, rowNum) -> new long[] { rs.getLong("id"), rs.getLong("created_by") },
+                newUserId);
+
+        for (long[] row : templates) {
+            long templateId = row[0];
+            long createdBy = row[1];
+            jdbcTemplate.update(
+                    """
+                            insert into ea_user_notification (user_id, notification_type, title, content, read_flag, created_by, updated_by)
+                            select ?, notification_type, title, content, 0, created_by, created_by
+                            from ea_user_notification
+                            where id = ? and deleted = 0
+                            """,
+                    newUserId, templateId);
+        }
     }
 }
 

@@ -8,6 +8,8 @@ import com.baomidou.mybatisplus.core.mapper.BaseMapper;
 import com.erise.ai.backend.common.entity.AuditableEntity;
 import com.huaban.analysis.jieba.JiebaSegmenter;
 import com.huaban.analysis.jieba.SegToken;
+import java.sql.PreparedStatement;
+import java.sql.SQLException;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -20,6 +22,7 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import lombok.Data;
 import lombok.RequiredArgsConstructor;
+import org.springframework.jdbc.core.BatchPreparedStatementSetter;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 
@@ -36,6 +39,9 @@ class SparseKnowledgeSupport {
     private static final int TITLE_WEIGHT = 6;
     private static final int SECTION_WEIGHT = 3;
     private static final int BODY_WEIGHT = 1;
+    private static final int BODY_SPARSE_MAX_CHUNKS = 800;
+    private static final int BODY_SPARSE_MAX_TERMS = 64;
+    private static final int SPARSE_INSERT_BATCH_SIZE = 1000;
 
     private final RagSparseTermMapper ragSparseTermMapper;
     private final JdbcTemplate jdbcTemplate;
@@ -50,14 +56,21 @@ class SparseKnowledgeSupport {
             return;
         }
         Long resolvedOperatorUserId = operatorUserId == null ? source.getOwnerUserId() : operatorUserId;
+        List<SparseTermRow> pendingRows = new ArrayList<>(SPARSE_INSERT_BATCH_SIZE);
+        int bodyChunksIndexed = 0;
         for (RagChunkEntity chunk : chunks) {
             if (chunk == null || chunk.getId() == null) {
                 continue;
             }
-            insertTermRows(source, chunk, FIELD_TITLE, source.getSourceTitle(), resolvedOperatorUserId, 48);
-            insertTermRows(source, chunk, FIELD_SECTION, chunk.getSectionPath(), resolvedOperatorUserId, 48);
-            insertTermRows(source, chunk, FIELD_BODY, chunk.getChunkText(), resolvedOperatorUserId, 256);
+            appendTermRows(pendingRows, source, chunk, FIELD_TITLE, source.getSourceTitle(), resolvedOperatorUserId, 24);
+            appendTermRows(pendingRows, source, chunk, FIELD_SECTION, chunk.getSectionPath(), resolvedOperatorUserId, 24);
+            if (bodyChunksIndexed < BODY_SPARSE_MAX_CHUNKS) {
+                appendTermRows(pendingRows, source, chunk, FIELD_BODY, chunk.getChunkText(), resolvedOperatorUserId, BODY_SPARSE_MAX_TERMS);
+                bodyChunksIndexed += 1;
+            }
+            flushTermRowsIfNeeded(pendingRows);
         }
+        flushTermRows(pendingRows);
     }
 
     void deleteSourceIndex(Long ragSourceId) {
@@ -192,7 +205,8 @@ class SparseKnowledgeSupport {
         ), params.toArray());
     }
 
-    private void insertTermRows(RagSourceEntity source,
+    private void appendTermRows(List<SparseTermRow> pendingRows,
+                                RagSourceEntity source,
                                 RagChunkEntity chunk,
                                 String fieldCode,
                                 String text,
@@ -204,23 +218,83 @@ class SparseKnowledgeSupport {
         }
         int docLen = termFrequencies.values().stream().mapToInt(Integer::intValue).sum();
         for (Map.Entry<String, Integer> entry : termFrequencies.entrySet()) {
-            RagSparseTermEntity entity = new RagSparseTermEntity();
-            entity.setRagSourceId(source.getId());
-            entity.setRagChunkId(chunk.getId());
-            entity.setOwnerUserId(source.getOwnerUserId());
-            entity.setProjectId(source.getProjectId());
-            entity.setSessionId(source.getSessionId() == null ? 0L : source.getSessionId());
-            entity.setScopeType(source.getScopeType());
-            entity.setSourceType(source.getSourceType());
-            entity.setSourceId(source.getSourceId());
-            entity.setTerm(entry.getKey());
-            entity.setFieldCode(fieldCode);
-            entity.setTermFreq(entry.getValue());
-            entity.setDocLen(docLen);
-            entity.setCreatedBy(operatorUserId);
-            entity.setUpdatedBy(operatorUserId);
-            ragSparseTermMapper.insert(entity);
+            pendingRows.add(new SparseTermRow(
+                    source.getId(),
+                    chunk.getId(),
+                    source.getOwnerUserId(),
+                    source.getProjectId(),
+                    source.getSessionId() == null ? 0L : source.getSessionId(),
+                    source.getScopeType(),
+                    source.getSourceType(),
+                    source.getSourceId(),
+                    entry.getKey(),
+                    fieldCode,
+                    entry.getValue(),
+                    docLen,
+                    operatorUserId,
+                    operatorUserId
+            ));
         }
+    }
+
+    private void flushTermRowsIfNeeded(List<SparseTermRow> rows) {
+        if (rows.size() >= SPARSE_INSERT_BATCH_SIZE) {
+            flushTermRows(rows);
+        }
+    }
+
+    private void flushTermRows(List<SparseTermRow> rows) {
+        if (rows.isEmpty()) {
+            return;
+        }
+        List<SparseTermRow> batch = new ArrayList<>(rows);
+        rows.clear();
+        jdbcTemplate.batchUpdate(
+                """
+                insert into ea_rag_sparse_term (
+                  rag_source_id, rag_chunk_id, owner_user_id, project_id, session_id,
+                  scope_type, source_type, source_id, term, field_code, term_freq,
+                  doc_len, created_by, updated_by
+                ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                new BatchPreparedStatementSetter() {
+                    @Override
+                    public void setValues(PreparedStatement ps, int i) throws SQLException {
+                        SparseTermRow row = batch.get(i);
+                        ps.setLong(1, row.ragSourceId());
+                        ps.setLong(2, row.ragChunkId());
+                        ps.setLong(3, row.ownerUserId());
+                        if (row.projectId() == null) {
+                            ps.setObject(4, null);
+                        } else {
+                            ps.setLong(4, row.projectId());
+                        }
+                        ps.setLong(5, row.sessionId());
+                        ps.setString(6, row.scopeType());
+                        ps.setString(7, row.sourceType());
+                        ps.setLong(8, row.sourceId());
+                        ps.setString(9, row.term());
+                        ps.setString(10, row.fieldCode());
+                        ps.setInt(11, row.termFreq());
+                        ps.setInt(12, row.docLen());
+                        if (row.createdBy() == null) {
+                            ps.setObject(13, null);
+                        } else {
+                            ps.setLong(13, row.createdBy());
+                        }
+                        if (row.updatedBy() == null) {
+                            ps.setObject(14, null);
+                        } else {
+                            ps.setLong(14, row.updatedBy());
+                        }
+                    }
+
+                    @Override
+                    public int getBatchSize() {
+                        return batch.size();
+                    }
+                }
+        );
     }
 
     private void appendPlaceholders(StringBuilder builder, int size) {
@@ -365,6 +439,24 @@ class KnowledgeTokenizerSupport {
 }
 
 interface RagSparseTermMapper extends BaseMapper<RagSparseTermEntity> {
+}
+
+record SparseTermRow(
+        Long ragSourceId,
+        Long ragChunkId,
+        Long ownerUserId,
+        Long projectId,
+        Long sessionId,
+        String scopeType,
+        String sourceType,
+        Long sourceId,
+        String term,
+        String fieldCode,
+        Integer termFreq,
+        Integer docLen,
+        Long createdBy,
+        Long updatedBy
+) {
 }
 
 @Data

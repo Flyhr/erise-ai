@@ -6,6 +6,9 @@
           <template #prefix>
             <span class="material-symbols-outlined">search</span>
           </template>
+          <template #suffix>
+            <SearchSuffixButton @click="runSearch" />
+          </template>
         </el-input>
       </div>
     </section>
@@ -153,6 +156,7 @@ import { deleteFile, downloadFileContent, retryFileParse } from '@/api/file'
 import { getKnowledgeAssets } from '@/api/knowledge'
 import CompactPager from '@/components/common/CompactPager.vue'
 import ProjectSubnav from '@/components/common/ProjectSubnav.vue'
+import SearchSuffixButton from '@/components/common/SearchSuffixButton.vue'
 import { useFilePreview } from '@/composables/useFilePreview'
 import { useProjectDirectory } from '@/composables/useProjectDirectory'
 import { useVisibleFileStatusPolling } from '@/composables/useVisibleFileStatusPolling'
@@ -371,10 +375,13 @@ const switchAssetTab = async (value: string) => {
 useVisibleFileStatusPolling({
   rows: assets,
   enabled: computed(() => !assetError.value && (activeAssetTab.value === 'overview' || activeAssetTab.value === 'files')),
-  intervalMs: 1000,
+  intervalMs: 3000,
   getFileId: (row) => (row.assetType === 'FILE' ? row.assetId : undefined),
   isFileActive: (row) => row.assetType === 'FILE' && hasActiveFileStatus(row),
   applyDetail: applyFileDetailToAssetRow,
+  onTimeout: () => {
+    ElMessage.warning('文件解析仍在处理中，已暂停自动刷新，请稍后手动刷新查看结果')
+  },
 })
 
 const openAsset = (row: KnowledgeAssetView) => {

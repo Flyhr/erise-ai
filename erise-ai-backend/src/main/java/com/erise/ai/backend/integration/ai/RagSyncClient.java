@@ -6,7 +6,7 @@ import com.erise.ai.backend.common.exception.ErrorCodes;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.UUID;
-import lombok.RequiredArgsConstructor;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpMethod;
@@ -16,11 +16,17 @@ import org.springframework.web.client.RestClientException;
 import org.springframework.web.client.RestTemplate;
 
 @Component
-@RequiredArgsConstructor
 public class RagSyncClient {
 
+    @Qualifier("aiRestTemplate")
     private final RestTemplate restTemplate;
     private final EriseProperties properties;
+
+    public RagSyncClient(@Qualifier("aiRestTemplate") RestTemplate restTemplate,
+                         EriseProperties properties) {
+        this.restTemplate = restTemplate;
+        this.properties = properties;
+    }
 
     public void upsert(RagUpsertRequest request) {
         post("/internal/ai/rag/index/upsert", request, request.userId());

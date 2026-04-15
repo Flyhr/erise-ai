@@ -3,7 +3,8 @@
 Erise-AI是一个面向个人的轻量项目知识库系统，核心能力覆盖项目文件与文档管理、编辑、统一检索，支持docx、pdf、md、txt文件上传。包括AI/RAG检索能力。
 
 - Ai回答明确区分“指定范围模式”和“通用模式”。指定范围模式禁止越界检索；通用模式必须严格执行“私有知识库→联网搜索（开启状态）→通用知识”三段式降级。
-  -RAG体系：MySQL业务元数据+MinIO原始文件+Qdrant向量检索
+- RAG体系：MySQL业务元数据+MinIO原始文件+Qdrant向量检索
+- 采用ofox.ai
 
 ## 运行链路
 
@@ -19,6 +20,10 @@ Erise-AI是一个面向个人的轻量项目知识库系统，核心能力覆盖
 FastAPI
 管聊天、RAG查询、embedding、Qdrant、OCR、文件提取
 对外暴露/internal/ai/chat/...这类内部接口给Java调用。
+
+## ai回答决策树
+
+![ai回答流程决策树](./artifacts/ai回答决策流程图.png)
 
 ## 推荐开发方式
 
@@ -65,6 +70,7 @@ docker compose --env-file .env.dev -f docker-compose.dev.yml down
   </tr>
   <tr>
     <td><img src="./artifacts/AiChat-page.png" alt="AI聊天界面" width="300px" /></td>
+        <td><img src="./artifacts/admin-page.png" alt="管理员仪表盘界面" width="300px" /></td>
 
   </tr>
 </table>
@@ -82,6 +88,10 @@ docker compose --env-file .env.dev -f docker-compose.dev.yml down
 2.  OCR处理复杂版式文档仍可能不稳
 
 3.  附件上下文有预算上限，长文档容易被截断
+
+4.  解析pdf大型文件（25MB）时速度极慢（3min）(4.16)
+
+- 实测 5MBtxt文件ai引用回答需要140s，25MBpdf文件会超时（300s​）
 
 #### 部分pdf解析失败（已解决26.4.9）
 

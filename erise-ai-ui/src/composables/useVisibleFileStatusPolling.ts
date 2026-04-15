@@ -6,15 +6,18 @@ interface UseVisibleFileStatusPollingOptions<T> {
   rows: Ref<T[]>
   enabled?: MaybeRefOrGetter<boolean>
   intervalMs?: number
+  maxDurationMs?: number
   getFileId: (row: T) => number | undefined
   isFileActive: (row: T) => boolean
   applyDetail: (row: T, detail: FileView) => void
   onDetails?: (details: FileView[]) => void
+  onTimeout?: (fileIds: number[]) => void
 }
 
 export const useVisibleFileStatusPolling = <T>(options: UseVisibleFileStatusPollingOptions<T>) => {
   const enabled = computed(() => unref(options.enabled ?? true))
-  const intervalMs = options.intervalMs ?? 1000
+  const intervalMs = options.intervalMs ?? 3000
+  const maxDurationMs = options.maxDurationMs ?? 120000
   const activeFileIds = computed(() =>
     [...new Set(
       options.rows.value
@@ -26,22 +29,39 @@ export const useVisibleFileStatusPolling = <T>(options: UseVisibleFileStatusPoll
 
   let pollTimer: number | undefined
   let polling = false
+  let pollStartedAt: number | undefined
 
-  const stop = () => {
+  const clearTimer = () => {
     if (pollTimer) {
       window.clearTimeout(pollTimer)
       pollTimer = undefined
     }
   }
 
+  const stop = () => {
+    clearTimer()
+    pollStartedAt = undefined
+  }
+
   const canPoll = () => enabled.value && activeFileIds.value.length > 0
+
+  const isTimedOut = () =>
+    Boolean(pollStartedAt && Date.now() - pollStartedAt >= maxDurationMs)
 
   const schedule = () => {
     if (!canPoll()) {
       stop()
       return
     }
-    stop()
+    if (!pollStartedAt) {
+      pollStartedAt = Date.now()
+    }
+    if (isTimedOut()) {
+      options.onTimeout?.([...activeFileIds.value])
+      stop()
+      return
+    }
+    clearTimer()
     pollTimer = window.setTimeout(() => {
       void refreshNow()
     }, intervalMs)
@@ -49,6 +69,14 @@ export const useVisibleFileStatusPolling = <T>(options: UseVisibleFileStatusPoll
 
   const refreshNow = async () => {
     if (polling || !canPoll()) {
+      stop()
+      return
+    }
+    if (!pollStartedAt) {
+      pollStartedAt = Date.now()
+    }
+    if (isTimedOut()) {
+      options.onTimeout?.([...activeFileIds.value])
       stop()
       return
     }
@@ -106,6 +134,7 @@ export const useVisibleFileStatusPolling = <T>(options: UseVisibleFileStatusPoll
         return
       }
       if (!pollTimer && !polling) {
+        pollStartedAt = pollStartedAt || Date.now()
         void refreshNow()
       }
     },

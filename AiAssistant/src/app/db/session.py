@@ -6,6 +6,7 @@ from sqlalchemy import create_engine, inspect
 from sqlalchemy.orm import Session, sessionmaker
 
 from src.app import models  # noqa: F401
+from src.app.models.base import Base
 from src.app.core.config import get_settings
 settings = get_settings()
 engine_kwargs: dict[str, object] = {'pool_pre_ping': True}
@@ -16,6 +17,7 @@ engine = create_engine(settings.mysql_dsn, **engine_kwargs)
 SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False, expire_on_commit=False, class_=Session)
 
 REQUIRED_TABLES = {
+    'ai_action_log',
     'ai_chat_session',
     'ai_chat_message',
     'ai_request_log',
@@ -31,6 +33,15 @@ REQUIRED_COLUMNS = {
         'citations_json',
         'used_tools_json',
         'answer_source',
+    },
+    'ai_request_log': {
+        'user_id',
+        'org_id',
+        'project_id',
+        'answer_source',
+        'message_status',
+        'total_token_count',
+        'latency_ms',
     },
     'ai_message_citation': {
         'section_path',
@@ -50,6 +61,11 @@ def init_database() -> None:
     inspector = inspect(engine)
     existing_tables = set(inspector.get_table_names())
     missing_tables = sorted(REQUIRED_TABLES - existing_tables)
+    if missing_tables and settings.mysql_dsn.startswith('sqlite') and settings.auto_init_sqlite_schema:
+        Base.metadata.create_all(bind=engine)
+        inspector = inspect(engine)
+        existing_tables = set(inspector.get_table_names())
+        missing_tables = sorted(REQUIRED_TABLES - existing_tables)
     if missing_tables:
         raise RuntimeError(
             'Missing required AI chat tables: '

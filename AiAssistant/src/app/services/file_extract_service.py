@@ -27,9 +27,9 @@ class FileExtractResult:
 
 
 class FileExtractService:
-    TARGET_CHUNK_SIZE = 420
-    MAX_CHUNK_SIZE = 500
-    OVERLAP_SIZE = 60
+    TARGET_CHUNK_SIZE = 900
+    MAX_CHUNK_SIZE = 1200
+    OVERLAP_SIZE = 120
 
     PARAGRAPH_SPLITTER = re.compile(r'\n\s*\n+')
     LINE_SPLITTER = re.compile(r'\n+')

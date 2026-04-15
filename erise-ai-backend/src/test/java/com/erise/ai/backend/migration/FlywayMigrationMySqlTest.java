@@ -20,7 +20,7 @@ import org.testcontainers.utility.DockerImageName;
 class FlywayMigrationMySqlTest {
 
     @Test
-    void migratesFreshSchemaThroughV10AndPreservesExpectedColumns() throws SQLException {
+    void migratesFreshSchemaThroughV13AndPreservesExpectedColumns() throws SQLException {
         Assumptions.assumeTrue(
                 DockerClientFactory.instance().isDockerAvailable(),
                 "Docker is required to run the MySQL Flyway migration regression test"
@@ -38,7 +38,7 @@ class FlywayMigrationMySqlTest {
             flyway.migrate();
 
             assertThat(flyway.info().current()).isNotNull();
-            assertThat(flyway.info().current().getVersion().getVersion()).isEqualTo("10");
+            assertThat(flyway.info().current().getVersion().getVersion()).isEqualTo("13");
 
             try (Connection connection = DriverManager.getConnection(
                     mysql.getJdbcUrl(),
@@ -47,6 +47,9 @@ class FlywayMigrationMySqlTest {
             )) {
                 assertThat(columnDefaultsFor(connection, "ai_chat_message"))
                         .containsKeys("confidence", "refused_reason", "citations_json", "used_tools_json", "answer_source");
+
+                assertThat(columnDefaultsFor(connection, "ai_request_log"))
+                        .containsKeys("user_id", "org_id", "project_id", "answer_source", "message_status", "total_token_count", "latency_ms");
 
                 assertThat(columnDefaultsFor(connection, "ai_message_citation"))
                         .containsKey("section_path");
@@ -64,7 +67,7 @@ class FlywayMigrationMySqlTest {
     }
 
     @Test
-    void migratesLegacyAiSchemaThroughV10AndBackfillsMissingColumns() throws SQLException {
+    void migratesLegacyAiSchemaThroughV13AndBackfillsMissingColumns() throws SQLException {
         Assumptions.assumeTrue(
                 DockerClientFactory.instance().isDockerAvailable(),
                 "Docker is required to run the MySQL Flyway migration regression test"
@@ -155,7 +158,7 @@ class FlywayMigrationMySqlTest {
             flyway.migrate();
 
             assertThat(flyway.info().current()).isNotNull();
-            assertThat(flyway.info().current().getVersion().getVersion()).isEqualTo("10");
+            assertThat(flyway.info().current().getVersion().getVersion()).isEqualTo("13");
 
             try (Connection connection = DriverManager.getConnection(
                     mysql.getJdbcUrl(),
@@ -164,6 +167,9 @@ class FlywayMigrationMySqlTest {
             )) {
                 assertThat(columnDefaultsFor(connection, "ai_chat_message"))
                         .containsKeys("confidence", "refused_reason", "citations_json", "used_tools_json", "answer_source");
+
+                assertThat(columnDefaultsFor(connection, "ai_request_log"))
+                        .containsKeys("user_id", "org_id", "project_id", "answer_source", "message_status", "total_token_count", "latency_ms");
 
                 assertThat(columnDefaultsFor(connection, "ai_message_citation"))
                         .containsKey("section_path");

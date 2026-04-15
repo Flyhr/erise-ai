@@ -54,6 +54,9 @@
             <template #prefix>
               <span class="material-symbols-outlined">search</span>
             </template>
+            <template #suffix>
+              <SearchSuffixButton @click="runSearch" />
+            </template>
           </el-input>
         </div>
         <span class="project-detail__meta-chip">
@@ -244,6 +247,7 @@ import { getKnowledgeAssets } from '@/api/knowledge'
 import { getProject, updateProject } from '@/api/project'
 import CompactPager from '@/components/common/CompactPager.vue'
 import ProjectSubnav from '@/components/common/ProjectSubnav.vue'
+import SearchSuffixButton from '@/components/common/SearchSuffixButton.vue'
 import { useFilePreview } from '@/composables/useFilePreview'
 import { knowledgeFileAccept, useKnowledgeFileUpload } from '@/composables/useKnowledgeFileUpload'
 import { useVisibleFileStatusPolling } from '@/composables/useVisibleFileStatusPolling'
@@ -605,7 +609,7 @@ const load = async () => {
 useVisibleFileStatusPolling({
   rows: assets,
   enabled: computed(() => !assetError.value && (activeAssetTab.value === 'overview' || activeAssetTab.value === 'files')),
-  intervalMs: 1000,
+  intervalMs: 3000,
   getFileId: (row) => (row.assetType === 'FILE' ? row.assetId : undefined),
   isFileActive: (row) => row.assetType === 'FILE' && hasActiveFileStatus(row),
   applyDetail: applyFileDetailToAssetRow,
@@ -617,6 +621,9 @@ useVisibleFileStatusPolling({
       }
       removeOptimisticUploadedFile(detail.id)
     })
+  },
+  onTimeout: () => {
+    ElMessage.warning('文件解析仍在处理中，已暂停自动刷新，请稍后手动刷新查看结果')
   },
 })
 

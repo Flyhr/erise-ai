@@ -43,6 +43,7 @@ class RagQueryRequest(CamelModel):
     project_scope_ids: list[int] = Field(default_factory=list)
     attachments: list[AttachmentContext] = Field(default_factory=list)
     limit: int = 6
+    query_rewrite_enabled: bool | None = None
 
 
 class RagQueryHit(CamelModel):
@@ -62,6 +63,8 @@ class RagQueryResponse(CamelModel):
     confidence: float | None = None
     answer_source: str | None = None
     used_tools: list[str] = Field(default_factory=list)
+    rewritten_queries: list[str] = Field(default_factory=list)
+    rewrite_hints: list[str] = Field(default_factory=list)
 
 
 def build_debug_chat_context(project_scope_ids: list[int], attachments: list[AttachmentContext]) -> ChatContext:

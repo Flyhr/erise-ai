@@ -12,6 +12,8 @@ from redis.asyncio import Redis
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from src.app.actions.protocol import ActionExecutionResult
+from src.app.actions.service import action_service
 from src.app.adapters.llm.base import AdapterUsage
 from src.app.api.deps import RequestContext
 from src.app.core.config import get_settings
@@ -29,21 +31,21 @@ from src.app.core.constants import (
 from src.app.core.exceptions import AiServiceError
 from src.app.models.ai_message import AiChatMessage
 from src.app.models.ai_message_citation import AiMessageCitation
-from src.app.models.ai_request_log import AiRequestLog
 from src.app.models.ai_session import AiChatSession
 from src.app.schemas.chat import CancelResponse, ChatCompletionRequest, ChatCompletionView, UsageView
 from src.app.schemas.common import PageData
 from src.app.schemas.message import CitationView, MessageView
 from src.app.schemas.session import SessionCreateRequest, SessionDetailView, SessionSummaryView
 from src.app.services.context_service import LoadedAttachmentContext, build_prompt_messages, load_attachment_contexts
-from src.app.services.document_action_service import apply_document_title_action
+from src.app.services.citation_guard_service import citation_guard_service
 from src.app.services.model_registry import get_model_adapter, get_model_config
 from src.app.services.rag_service import RetrievalDecision, rag_service
+from src.app.services.request_log_service import AiRequestLogRecord, request_log_service
 from src.app.utils.sse import sse_event
 
 SYSTEM_PROVIDER_CODE = 'SYSTEM'
-DOCUMENT_TITLE_ACTION_MODEL = 'document-title-update'
 ATTACHMENT_CONTEXT_GUARD_MODEL = 'attachment-context-guard'
+STRICT_CITATION_GUARD_MODEL = 'strict-citation-guard'
 
 
 class CancellationStore:
@@ -115,10 +117,6 @@ class ChatService:
 
     def _touch_session(self, session: AiChatSession) -> None:
         session.last_message_at = datetime.utcnow()
-
-    def _build_document_title_action_reply(self, detail: dict[str, object] | None) -> str:
-        title = str((detail or {}).get('title') or '未命名文档')
-        return f'已将文档标题更新为《{title}》。如果你愿意，我还可以继续帮你总结这份文档，或根据这份文档继续修改内容。'
 
     def create_session(self, db: Session, context: RequestContext, request: SessionCreateRequest) -> SessionSummaryView:
         session = AiChatSession(
@@ -239,45 +237,51 @@ class ChatService:
     def _save_request_log(
         self,
         db: Session,
+        context: RequestContext,
+        session: AiChatSession,
         request_id: str,
-        session_id: int,
         user_message_id: int,
         assistant_message_id: int,
         provider_code: str,
         model_code: str,
-        scene: str,
         temperature: float | None,
         max_tokens: int | None,
         stream: bool,
         request_payload: dict[str, object],
         response_payload: dict[str, object],
         usage: AdapterUsage,
-        duration_ms: int,
+        duration_ms: int | None,
         success_flag: bool,
+        answer_source: str | None = None,
+        message_status: str | None = None,
         error_code: str | None = None,
         error_message: str | None = None,
     ) -> None:
-        db.add(
-            AiRequestLog(
+        request_log_service.save(
+            db,
+            context,
+            session,
+            AiRequestLogRecord(
                 request_id=request_id,
-                session_id=session_id,
+                session_id=session.id,
                 user_message_id=user_message_id,
                 assistant_message_id=assistant_message_id,
                 provider_code=provider_code,
                 model_code=model_code,
-                scene=scene,
+                scene=session.scene,
                 temperature=temperature,
                 max_tokens=max_tokens,
                 stream=stream,
-                request_payload_json=json.dumps(request_payload, ensure_ascii=False),
-                response_payload_json=json.dumps(response_payload, ensure_ascii=False),
-                input_token_count=usage.prompt_tokens,
-                output_token_count=usage.completion_tokens,
-                duration_ms=duration_ms,
+                request_payload=request_payload,
+                response_payload=response_payload,
+                answer_source=answer_source,
+                message_status=message_status,
+                usage=usage,
+                latency_ms=duration_ms,
                 success_flag=success_flag,
                 error_code=error_code,
                 error_message=error_message,
-            )
+            ),
         )
 
     def _serialize_json(self, value: object | None) -> str | None:
@@ -387,6 +391,11 @@ class ChatService:
         lines.append('建议等资料解析完成后再继续追问“这个文档写了什么”之类的问题，我会优先基于这些资料回答。')
         return '\n'.join(lines)
 
+    def _strict_citation_enabled(self, request: ChatCompletionRequest) -> bool:
+        if request.strict_citation_enabled is not None:
+            return request.strict_citation_enabled
+        return self.settings.rag_strict_citation_enabled
+
     def _apply_answer_metadata(
         self,
         message: AiChatMessage,
@@ -441,6 +450,10 @@ class ChatService:
         answer_source: str | None,
         confidence: float | None,
         raw_payload: dict[str, object] | None = None,
+        evidence_guard: dict[str, object] | None = None,
+        consistency_check: dict[str, object] | None = None,
+        rewritten_queries: list[str] | None = None,
+        rewrite_hints: list[str] | None = None,
     ) -> dict[str, object]:
         payload = dict(raw_payload or {})
         payload.update({
@@ -450,6 +463,14 @@ class ChatService:
             'answerSource': answer_source,
             'confidence': confidence,
         })
+        if evidence_guard is not None:
+            payload['evidenceGuard'] = evidence_guard
+        if consistency_check is not None:
+            payload['consistencyCheck'] = consistency_check
+        if rewritten_queries:
+            payload['rewrittenQueries'] = rewritten_queries
+        if rewrite_hints:
+            payload['rewriteHints'] = rewrite_hints
         return payload
 
     def _build_completion_view(
@@ -490,6 +511,78 @@ class ChatService:
             latency_ms=latency_ms,
         )
 
+    def _persist_action_response(
+        self,
+        db: Session,
+        context: RequestContext,
+        session: AiChatSession,
+        user_message: AiChatMessage,
+        request: ChatCompletionRequest,
+        request_id: str,
+        action_result: ActionExecutionResult,
+        stream: bool,
+    ) -> tuple[AiChatMessage, int]:
+        latency_ms = action_result.latency_ms or 1
+        assistant_message = self._create_message(
+            db,
+            session.id,
+            context.user_id,
+            ROLE_ASSISTANT,
+            action_result.answer,
+            STATUS_SUCCESS,
+            request_id=request_id,
+            model_code=action_result.model_code,
+            provider_code=action_result.provider_code,
+        )
+        assistant_message.prompt_tokens = action_result.usage.prompt_tokens
+        assistant_message.completion_tokens = action_result.usage.completion_tokens
+        assistant_message.total_tokens = action_result.usage.total_tokens
+        assistant_message.latency_ms = latency_ms
+        self._apply_answer_metadata(
+            assistant_message,
+            action_result.citations,
+            action_result.used_tools,
+            None,
+            None,
+            action_result.answer_source,
+        )
+        self._replace_citations(db, assistant_message, action_result.citations)
+        session.message_count = (session.message_count or 0) + 2
+        self._touch_session(session)
+        self._save_request_log(
+            db,
+            context,
+            session,
+            request_id=request_id,
+            user_message_id=user_message.id,
+            assistant_message_id=assistant_message.id,
+            provider_code=action_result.provider_code,
+            model_code=action_result.model_code,
+            temperature=request.temperature,
+            max_tokens=request.max_tokens,
+            stream=stream,
+            request_payload=request.model_dump(by_alias=True),
+            response_payload=self._compose_response_payload(
+                answer=action_result.answer,
+                citations=action_result.citations,
+                used_tools=action_result.used_tools,
+                answer_source=action_result.answer_source,
+                confidence=None,
+                raw_payload=action_result.raw_payload,
+            ),
+            usage=action_result.usage,
+            duration_ms=latency_ms,
+            success_flag=action_result.success_flag,
+            answer_source=action_result.answer_source,
+            message_status=STATUS_SUCCESS,
+            error_code=action_result.error_code,
+            error_message=action_result.error_message,
+        )
+        db.commit()
+        db.refresh(session)
+        db.refresh(assistant_message)
+        return assistant_message, latency_ms
+
     async def complete(self, db: Session, context: RequestContext, request: ChatCompletionRequest) -> ChatCompletionView:
         self._validate_message(request.message)
         session = self._ensure_session(db, context, request)
@@ -497,70 +590,30 @@ class ChatService:
         user_message = self._create_message(db, session.id, context.user_id, ROLE_USER, request.message, STATUS_SUCCESS)
 
         action_started_at = perf_counter()
-        action_result = await apply_document_title_action(request, request_id)
+        action_result = await action_service.execute(db, context, request, request_id, session.id)
         if action_result:
-            latency_ms = max(1, int((perf_counter() - action_started_at) * 1000))
-            answer = self._build_document_title_action_reply(action_result)
-            usage = AdapterUsage()
-            citations: list[CitationView] = []
-            used_tools = ['document_title_action']
-            answer_source = 'SYSTEM_ACTION'
-            assistant_message = self._create_message(
+            assistant_message, latency_ms = self._persist_action_response(
                 db,
-                session.id,
-                context.user_id,
-                ROLE_ASSISTANT,
-                answer,
-                STATUS_SUCCESS,
-                request_id=request_id,
-                model_code=DOCUMENT_TITLE_ACTION_MODEL,
-                provider_code=SYSTEM_PROVIDER_CODE,
-            )
-            assistant_message.latency_ms = latency_ms
-            self._apply_answer_metadata(assistant_message, citations, used_tools, None, None, answer_source)
-            self._replace_citations(db, assistant_message, citations)
-            session.message_count = (session.message_count or 0) + 2
-            self._touch_session(session)
-            self._save_request_log(
-                db,
-                request_id=request_id,
-                session_id=session.id,
-                user_message_id=user_message.id,
-                assistant_message_id=assistant_message.id,
-                provider_code=SYSTEM_PROVIDER_CODE,
-                model_code=DOCUMENT_TITLE_ACTION_MODEL,
-                scene=session.scene,
-                temperature=request.temperature,
-                max_tokens=request.max_tokens,
+                context,
+                session,
+                user_message,
+                request,
+                request_id,
+                action_result,
                 stream=False,
-                request_payload=request.model_dump(by_alias=True),
-                response_payload=self._compose_response_payload(
-                    answer=answer,
-                    citations=citations,
-                    used_tools=used_tools,
-                    answer_source=answer_source,
-                    confidence=None,
-                    raw_payload={'document': action_result},
-                ),
-                usage=usage,
-                duration_ms=latency_ms,
-                success_flag=True,
             )
-            db.commit()
-            db.refresh(session)
-            db.refresh(assistant_message)
             return self._build_completion_view(
                 request_id,
                 session,
                 user_message,
                 assistant_message,
-                answer,
-                DOCUMENT_TITLE_ACTION_MODEL,
-                SYSTEM_PROVIDER_CODE,
-                usage,
+                action_result.answer,
+                action_result.model_code,
+                action_result.provider_code,
+                action_result.usage,
                 latency_ms,
-                citations,
-                used_tools,
+                action_result.citations,
+                action_result.used_tools,
                 None,
                 None,
             )
@@ -592,13 +645,13 @@ class ChatService:
             self._touch_session(session)
             self._save_request_log(
                 db,
+                context,
+                session,
                 request_id=request_id,
-                session_id=session.id,
                 user_message_id=user_message.id,
                 assistant_message_id=assistant_message.id,
                 provider_code=SYSTEM_PROVIDER_CODE,
                 model_code=ATTACHMENT_CONTEXT_GUARD_MODEL,
-                scene=session.scene,
                 temperature=request.temperature,
                 max_tokens=request.max_tokens,
                 stream=False,
@@ -613,6 +666,8 @@ class ChatService:
                 usage=usage,
                 duration_ms=latency_ms,
                 success_flag=True,
+                answer_source=answer_source,
+                message_status=STATUS_SUCCESS,
             )
             db.commit()
             db.refresh(session)
@@ -636,6 +691,89 @@ class ChatService:
         retrieval_decision = await rag_service.query(request, context)
         effective_citations = retrieval_decision.citations
         effective_used_tools = self._merge_used_tools(retrieval_decision.used_tools, ready_attachment_contexts)
+        strict_citation_enabled = self._strict_citation_enabled(request)
+        evidence_assessment = citation_guard_service.assess_evidence(
+            effective_citations,
+            retrieval_decision.confidence,
+            retrieval_decision.answer_source,
+            strict_citation_enabled,
+        )
+        if evidence_assessment.downgrade_required:
+            latency_ms = max(1, int((perf_counter() - action_started_at) * 1000))
+            answer = citation_guard_service.build_downgraded_answer(effective_citations, evidence_assessment.reason)
+            usage = AdapterUsage()
+            used_tools = effective_used_tools + ['strict_citation_guard']
+            downgraded_answer_source = 'WEAK_EVIDENCE_DOWNGRADED'
+            assistant_message = self._create_message(
+                db,
+                session.id,
+                context.user_id,
+                ROLE_ASSISTANT,
+                answer,
+                STATUS_SUCCESS,
+                request_id=request_id,
+                model_code=STRICT_CITATION_GUARD_MODEL,
+                provider_code=SYSTEM_PROVIDER_CODE,
+            )
+            assistant_message.latency_ms = latency_ms
+            self._apply_answer_metadata(
+                assistant_message,
+                effective_citations,
+                used_tools,
+                retrieval_decision.confidence,
+                evidence_assessment.reason,
+                downgraded_answer_source,
+            )
+            self._replace_citations(db, assistant_message, effective_citations)
+            session.message_count = (session.message_count or 0) + 2
+            self._touch_session(session)
+            self._save_request_log(
+                db,
+                context,
+                session,
+                request_id=request_id,
+                user_message_id=user_message.id,
+                assistant_message_id=assistant_message.id,
+                provider_code=SYSTEM_PROVIDER_CODE,
+                model_code=STRICT_CITATION_GUARD_MODEL,
+                temperature=request.temperature,
+                max_tokens=request.max_tokens,
+                stream=False,
+                request_payload=request.model_dump(by_alias=True),
+                response_payload=self._compose_response_payload(
+                    answer=answer,
+                    citations=effective_citations,
+                    used_tools=used_tools,
+                    answer_source=downgraded_answer_source,
+                    confidence=retrieval_decision.confidence,
+                    evidence_guard=evidence_assessment.as_dict(),
+                    rewritten_queries=retrieval_decision.rewritten_queries,
+                    rewrite_hints=retrieval_decision.rewrite_hints,
+                ),
+                usage=usage,
+                duration_ms=latency_ms,
+                success_flag=True,
+                answer_source=downgraded_answer_source,
+                message_status=STATUS_SUCCESS,
+            )
+            db.commit()
+            db.refresh(session)
+            db.refresh(assistant_message)
+            return self._build_completion_view(
+                request_id,
+                session,
+                user_message,
+                assistant_message,
+                answer,
+                STRICT_CITATION_GUARD_MODEL,
+                SYSTEM_PROVIDER_CODE,
+                usage,
+                latency_ms,
+                effective_citations,
+                used_tools,
+                retrieval_decision.confidence,
+                evidence_assessment.reason,
+            )
 
         model = get_model_config(db, request.model_code)
         adapter = get_model_adapter(model)
@@ -651,6 +789,11 @@ class ChatService:
         started_at = perf_counter()
         result = await adapter.chat(model.model_code, prompt_messages, request.temperature, request.max_tokens)
         latency_ms = max(1, int((perf_counter() - started_at) * 1000))
+        consistency_assessment = citation_guard_service.assess_answer_consistency(
+            result.text,
+            effective_citations,
+            retrieval_decision.answer_source,
+        )
         assistant_message = self._create_message(
             db,
             session.id,
@@ -669,7 +812,7 @@ class ChatService:
         self._apply_answer_metadata(
             assistant_message,
             effective_citations,
-            effective_used_tools,
+            effective_used_tools + ['answer_citation_consistency_check'],
             retrieval_decision.confidence,
             None,
             retrieval_decision.answer_source,
@@ -679,13 +822,13 @@ class ChatService:
         self._touch_session(session)
         self._save_request_log(
             db,
+            context,
+            session,
             request_id=request_id,
-            session_id=session.id,
             user_message_id=user_message.id,
             assistant_message_id=assistant_message.id,
             provider_code=result.provider_code,
             model_code=result.model_code,
-            scene=session.scene,
             temperature=request.temperature,
             max_tokens=request.max_tokens,
             stream=False,
@@ -693,14 +836,20 @@ class ChatService:
             response_payload=self._compose_response_payload(
                 answer=result.text,
                 citations=effective_citations,
-                used_tools=effective_used_tools,
+                used_tools=effective_used_tools + ['answer_citation_consistency_check'],
                 answer_source=retrieval_decision.answer_source,
                 confidence=retrieval_decision.confidence,
                 raw_payload=result.raw_response,
+                evidence_guard=evidence_assessment.as_dict(),
+                consistency_check=consistency_assessment.as_dict(),
+                rewritten_queries=retrieval_decision.rewritten_queries,
+                rewrite_hints=retrieval_decision.rewrite_hints,
             ),
             usage=result.usage,
             duration_ms=latency_ms,
             success_flag=True,
+            answer_source=retrieval_decision.answer_source,
+            message_status=STATUS_SUCCESS,
         )
         db.commit()
         db.refresh(session)
@@ -716,7 +865,7 @@ class ChatService:
             result.usage,
             latency_ms,
             effective_citations,
-            effective_used_tools,
+            effective_used_tools + ['answer_citation_consistency_check'],
             retrieval_decision.confidence,
             None,
         )
@@ -728,56 +877,18 @@ class ChatService:
         user_message = self._create_message(db, session.id, context.user_id, ROLE_USER, request.message, STATUS_SUCCESS)
 
         action_started_at = perf_counter()
-        action_result = await apply_document_title_action(request, request_id)
+        action_result = await action_service.execute(db, context, request, request_id, session.id)
         if action_result:
-            answer = self._build_document_title_action_reply(action_result)
-            latency_ms = max(1, int((perf_counter() - action_started_at) * 1000))
-            usage = AdapterUsage()
-            citations: list[CitationView] = []
-            used_tools = ['document_title_action']
-            answer_source = 'SYSTEM_ACTION'
-            assistant_message = self._create_message(
+            assistant_message, latency_ms = self._persist_action_response(
                 db,
-                session.id,
-                context.user_id,
-                ROLE_ASSISTANT,
-                answer,
-                STATUS_SUCCESS,
-                request_id=request_id,
-                model_code=DOCUMENT_TITLE_ACTION_MODEL,
-                provider_code=SYSTEM_PROVIDER_CODE,
-            )
-            assistant_message.latency_ms = latency_ms
-            self._apply_answer_metadata(assistant_message, citations, used_tools, None, None, answer_source)
-            self._replace_citations(db, assistant_message, citations)
-            session.message_count = (session.message_count or 0) + 2
-            self._touch_session(session)
-            self._save_request_log(
-                db,
-                request_id=request_id,
-                session_id=session.id,
-                user_message_id=user_message.id,
-                assistant_message_id=assistant_message.id,
-                provider_code=SYSTEM_PROVIDER_CODE,
-                model_code=DOCUMENT_TITLE_ACTION_MODEL,
-                scene=session.scene,
-                temperature=request.temperature,
-                max_tokens=request.max_tokens,
+                context,
+                session,
+                user_message,
+                request,
+                request_id,
+                action_result,
                 stream=True,
-                request_payload=request.model_dump(by_alias=True),
-                response_payload=self._compose_response_payload(
-                    answer=answer,
-                    citations=citations,
-                    used_tools=used_tools,
-                    answer_source=answer_source,
-                    confidence=None,
-                    raw_payload={'document': action_result},
-                ),
-                usage=usage,
-                duration_ms=latency_ms,
-                success_flag=True,
             )
-            db.commit()
 
             async def action_stream() -> AsyncGenerator[str, None]:
                 try:
@@ -832,13 +943,13 @@ class ChatService:
             self._touch_session(session)
             self._save_request_log(
                 db,
+                context,
+                session,
                 request_id=request_id,
-                session_id=session.id,
                 user_message_id=user_message.id,
                 assistant_message_id=assistant_message.id,
                 provider_code=SYSTEM_PROVIDER_CODE,
                 model_code=ATTACHMENT_CONTEXT_GUARD_MODEL,
-                scene=session.scene,
                 temperature=request.temperature,
                 max_tokens=request.max_tokens,
                 stream=True,
@@ -853,10 +964,112 @@ class ChatService:
                 usage=usage,
                 duration_ms=latency_ms,
                 success_flag=True,
+                answer_source=answer_source,
+                message_status=STATUS_SUCCESS,
             )
             db.commit()
 
             async def attachment_guard_stream() -> AsyncGenerator[str, None]:
+                try:
+                    yield sse_event(
+                        'stream.start',
+                        {
+                            'requestId': request_id,
+                            'sessionId': session.id,
+                            'assistantMessageId': assistant_message.id,
+                        },
+                    )
+                    yield sse_event('stream.delta', {'requestId': request_id, 'delta': action_result.answer})
+                    yield sse_event(
+                        'stream.end',
+                        {
+                            'requestId': request_id,
+                            'sessionId': session.id,
+                            'assistantMessageId': assistant_message.id,
+                            'usage': UsageView(
+                                prompt_tokens=action_result.usage.prompt_tokens,
+                                completion_tokens=action_result.usage.completion_tokens,
+                                total_tokens=action_result.usage.total_tokens,
+                            ).model_dump(by_alias=True),
+                            'latencyMs': latency_ms,
+                        },
+                    )
+                finally:
+                    await self.cancellation_store.clear(request_id)
+
+            return attachment_guard_stream()
+
+        retrieval_decision = await rag_service.query(request, context)
+        effective_citations = retrieval_decision.citations
+        effective_used_tools = self._merge_used_tools(retrieval_decision.used_tools, ready_attachment_contexts)
+        strict_citation_enabled = self._strict_citation_enabled(request)
+        evidence_assessment = citation_guard_service.assess_evidence(
+            effective_citations,
+            retrieval_decision.confidence,
+            retrieval_decision.answer_source,
+            strict_citation_enabled,
+        )
+        if evidence_assessment.downgrade_required:
+            answer = citation_guard_service.build_downgraded_answer(effective_citations, evidence_assessment.reason)
+            latency_ms = max(1, int((perf_counter() - action_started_at) * 1000))
+            usage = AdapterUsage()
+            used_tools = effective_used_tools + ['strict_citation_guard']
+            downgraded_answer_source = 'WEAK_EVIDENCE_DOWNGRADED'
+            assistant_message = self._create_message(
+                db,
+                session.id,
+                context.user_id,
+                ROLE_ASSISTANT,
+                answer,
+                STATUS_SUCCESS,
+                request_id=request_id,
+                model_code=STRICT_CITATION_GUARD_MODEL,
+                provider_code=SYSTEM_PROVIDER_CODE,
+            )
+            assistant_message.latency_ms = latency_ms
+            self._apply_answer_metadata(
+                assistant_message,
+                effective_citations,
+                used_tools,
+                retrieval_decision.confidence,
+                evidence_assessment.reason,
+                downgraded_answer_source,
+            )
+            self._replace_citations(db, assistant_message, effective_citations)
+            session.message_count = (session.message_count or 0) + 2
+            self._touch_session(session)
+            self._save_request_log(
+                db,
+                context,
+                session,
+                request_id=request_id,
+                user_message_id=user_message.id,
+                assistant_message_id=assistant_message.id,
+                provider_code=SYSTEM_PROVIDER_CODE,
+                model_code=STRICT_CITATION_GUARD_MODEL,
+                temperature=request.temperature,
+                max_tokens=request.max_tokens,
+                stream=True,
+                request_payload=request.model_dump(by_alias=True),
+                response_payload=self._compose_response_payload(
+                    answer=answer,
+                    citations=effective_citations,
+                    used_tools=used_tools,
+                    answer_source=downgraded_answer_source,
+                    confidence=retrieval_decision.confidence,
+                    evidence_guard=evidence_assessment.as_dict(),
+                    rewritten_queries=retrieval_decision.rewritten_queries,
+                    rewrite_hints=retrieval_decision.rewrite_hints,
+                ),
+                usage=usage,
+                duration_ms=latency_ms,
+                success_flag=True,
+                answer_source=downgraded_answer_source,
+                message_status=STATUS_SUCCESS,
+            )
+            db.commit()
+
+            async def strict_citation_guard_stream() -> AsyncGenerator[str, None]:
                 try:
                     yield sse_event(
                         'stream.start',
@@ -880,11 +1093,7 @@ class ChatService:
                 finally:
                     await self.cancellation_store.clear(request_id)
 
-            return attachment_guard_stream()
-
-        retrieval_decision = await rag_service.query(request, context)
-        effective_citations = retrieval_decision.citations
-        effective_used_tools = self._merge_used_tools(retrieval_decision.used_tools, ready_attachment_contexts)
+            return strict_citation_guard_stream()
 
         model = get_model_config(db, request.model_code)
         adapter = get_model_adapter(model)
@@ -935,6 +1144,11 @@ class ChatService:
                 latency_ms = max(1, int((perf_counter() - started_at) * 1000))
                 stored_message = db.execute(select(AiChatMessage).where(AiChatMessage.id == assistant_message.id)).scalar_one()
                 stored_session = db.execute(select(AiChatSession).where(AiChatSession.id == session.id)).scalar_one()
+                consistency_assessment = citation_guard_service.assess_answer_consistency(
+                    aggregated,
+                    effective_citations,
+                    retrieval_decision.answer_source,
+                )
                 stored_message.content = aggregated
                 stored_message.message_status = STATUS_SUCCESS
                 stored_message.prompt_tokens = usage.prompt_tokens
@@ -944,7 +1158,7 @@ class ChatService:
                 self._apply_answer_metadata(
                     stored_message,
                     effective_citations,
-                    effective_used_tools,
+                    effective_used_tools + ['answer_citation_consistency_check'],
                     retrieval_decision.confidence,
                     None,
                     retrieval_decision.answer_source,
@@ -954,13 +1168,13 @@ class ChatService:
                 self._touch_session(stored_session)
                 self._save_request_log(
                     db,
+                    context,
+                    stored_session,
                     request_id=request_id,
-                    session_id=stored_session.id,
                     user_message_id=user_message.id,
                     assistant_message_id=stored_message.id,
                     provider_code=model.provider_code,
                     model_code=model.model_code,
-                    scene=stored_session.scene,
                     temperature=request.temperature,
                     max_tokens=request.max_tokens,
                     stream=True,
@@ -968,13 +1182,19 @@ class ChatService:
                     response_payload=self._compose_response_payload(
                         answer=aggregated,
                         citations=effective_citations,
-                        used_tools=effective_used_tools,
+                        used_tools=effective_used_tools + ['answer_citation_consistency_check'],
                         answer_source=retrieval_decision.answer_source,
                         confidence=retrieval_decision.confidence,
+                        evidence_guard=evidence_assessment.as_dict(),
+                        consistency_check=consistency_assessment.as_dict(),
+                        rewritten_queries=retrieval_decision.rewritten_queries,
+                        rewrite_hints=retrieval_decision.rewrite_hints,
                     ),
                     usage=usage,
                     duration_ms=latency_ms,
                     success_flag=True,
+                    answer_source=retrieval_decision.answer_source,
+                    message_status=STATUS_SUCCESS,
                 )
                 db.commit()
                 yield sse_event(
@@ -1004,13 +1224,13 @@ class ChatService:
                     stored_message.total_tokens = usage.total_tokens
                 self._save_request_log(
                     db,
+                    context,
+                    session,
                     request_id=request_id,
-                    session_id=session.id,
                     user_message_id=user_message.id,
                     assistant_message_id=assistant_message.id,
                     provider_code=model.provider_code,
                     model_code=model.model_code,
-                    scene=session.scene,
                     temperature=request.temperature,
                     max_tokens=request.max_tokens,
                     stream=True,
@@ -1019,6 +1239,8 @@ class ChatService:
                     usage=usage,
                     duration_ms=max(1, int((perf_counter() - started_at) * 1000)),
                     success_flag=False,
+                    answer_source=retrieval_decision.answer_source,
+                    message_status=final_status,
                     error_code=exc.error_code,
                     error_message=exc.message,
                 )
@@ -1041,13 +1263,13 @@ class ChatService:
                 stored_message.error_message = str(exc)
                 self._save_request_log(
                     db,
+                    context,
+                    session,
                     request_id=request_id,
-                    session_id=session.id,
                     user_message_id=user_message.id,
                     assistant_message_id=assistant_message.id,
                     provider_code=model.provider_code,
                     model_code=model.model_code,
-                    scene=session.scene,
                     temperature=request.temperature,
                     max_tokens=request.max_tokens,
                     stream=True,
@@ -1056,6 +1278,8 @@ class ChatService:
                     usage=usage,
                     duration_ms=max(1, int((perf_counter() - started_at) * 1000)),
                     success_flag=False,
+                    answer_source=retrieval_decision.answer_source,
+                    message_status=STATUS_FAILED,
                     error_code='AI_PROVIDER_ERROR',
                     error_message=str(exc),
                 )

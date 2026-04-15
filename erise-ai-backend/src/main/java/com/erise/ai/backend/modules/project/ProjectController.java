@@ -167,6 +167,14 @@ class ProjectService {
         return entity;
     }
 
+    ProjectEntity requireAccessibleProject(Long projectId, Long actorUserId) {
+        ProjectEntity entity = projectMapper.selectById(projectId);
+        if (entity == null || actorUserId == null || !actorUserId.equals(entity.getOwnerUserId())) {
+            throw new BizException(ErrorCodes.FORBIDDEN, "No permission", HttpStatus.FORBIDDEN);
+        }
+        return entity;
+    }
+
     ProjectDetailView toView(ProjectEntity entity) {
         Long fileCount = jdbcTemplate.queryForObject(
                 "select count(*) from ea_file where project_id = ? and deleted = 0",

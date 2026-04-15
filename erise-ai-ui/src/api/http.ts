@@ -10,9 +10,12 @@ const normalizedApiBase = apiBase.endsWith("/")
   ? apiBase.slice(0, -1)
   : apiBase;
 
+export const DEFAULT_REQUEST_TIMEOUT_MS = 30_000;
+export const FILE_UPLOAD_TIMEOUT_MS = 10 * 60 * 1000;
+
 const http = axios.create({
   baseURL: normalizedApiBase,
-  timeout: 30000,
+  timeout: DEFAULT_REQUEST_TIMEOUT_MS,
 });
 
 let router: Router | null = null;

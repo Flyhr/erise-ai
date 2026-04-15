@@ -1,4 +1,4 @@
-import http from './http'
+import http, { FILE_UPLOAD_TIMEOUT_MS } from './http'
 import type {
   AiAttachmentPayload,
   AiChatResponse,
@@ -57,6 +57,7 @@ export const uploadTempFile = (payload: FormData) =>
     headers: {
       'Content-Type': 'multipart/form-data',
     },
+    timeout: FILE_UPLOAD_TIMEOUT_MS,
   })
 
 export const getTempFiles = (sessionId: number) =>

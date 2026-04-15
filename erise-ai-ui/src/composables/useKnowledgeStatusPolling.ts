@@ -33,23 +33,32 @@ export const useKnowledgeStatusPolling = <T extends KnowledgeStatusRecord>(optio
   refreshTracked?: (records: T[]) => Promise<void>
   enabled?: MaybeRefOrGetter<boolean>
   intervalMs?: number
+  maxDurationMs?: number
   trackedKeys?: MaybeRefOrGetter<Array<string | number>>
   includeUntrackedActive?: MaybeRefOrGetter<boolean>
   getRecordKey?: (record: T) => string | number | undefined
+  onTimeout?: (records: T[]) => void
 }) => {
   const intervalMs = options.intervalMs ?? 5000
+  const maxDurationMs = options.maxDurationMs ?? 120000
   const enabled = computed(() => unref(options.enabled ?? true))
   const trackedKeySource = options.trackedKeys ?? trackedKnowledgeRecordKeys
   const trackedKeys = computed(() => (toValue(trackedKeySource) || []).map(normalizeRecordKey))
   const includeUntrackedActive = computed(() => unref(options.includeUntrackedActive ?? false))
   let pollHandle: number | undefined
   let loading = false
+  let pollStartedAt: number | undefined
 
-  const stop = () => {
+  const clearTimer = () => {
     if (pollHandle) {
       window.clearTimeout(pollHandle)
       pollHandle = undefined
     }
+  }
+
+  const stop = () => {
+    clearTimer()
+    pollStartedAt = undefined
   }
 
   const hasTrackedRecords = () => trackedKeys.value.length > 0
@@ -90,12 +99,23 @@ export const useKnowledgeStatusPolling = <T extends KnowledgeStatusRecord>(optio
 
   const shouldPoll = () => enabled.value && hasActiveRecords()
 
+  const isTimedOut = () =>
+    Boolean(pollStartedAt && Date.now() - pollStartedAt >= maxDurationMs)
+
   const scheduleNext = () => {
     if (!shouldPoll()) {
       stop()
       return
     }
-    stop()
+    if (!pollStartedAt) {
+      pollStartedAt = Date.now()
+    }
+    if (isTimedOut()) {
+      options.onTimeout?.(activeTrackedRecords())
+      stop()
+      return
+    }
+    clearTimer()
     pollHandle = window.setTimeout(() => {
       void tick()
     }, intervalMs)
@@ -103,6 +123,14 @@ export const useKnowledgeStatusPolling = <T extends KnowledgeStatusRecord>(optio
 
   const tick = async () => {
     if (loading || !shouldPoll()) {
+      stop()
+      return
+    }
+    if (!pollStartedAt) {
+      pollStartedAt = Date.now()
+    }
+    if (isTimedOut()) {
+      options.onTimeout?.(activeTrackedRecords())
       stop()
       return
     }
@@ -127,6 +155,7 @@ export const useKnowledgeStatusPolling = <T extends KnowledgeStatusRecord>(optio
       return
     }
     if (!pollHandle && !loading) {
+      pollStartedAt = pollStartedAt || Date.now()
       void tick()
     }
   }

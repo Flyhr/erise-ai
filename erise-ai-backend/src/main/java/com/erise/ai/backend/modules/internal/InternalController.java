@@ -47,12 +47,42 @@ public class InternalController {
     @PostMapping("/documents/{id}/title")
     public ApiResponse<InternalDocumentContextView> updateDocumentTitle(@PathVariable Long id,
                                                                         @Valid @RequestBody InternalDocumentTitleUpdateRequest request) {
-        return ApiResponse.success(documentService.internalUpdateTitle(id, request.title()));
+        return ApiResponse.success(documentService.internalUpdateTitle(id, request.actorUserId(), request.title()));
+    }
+
+    @PostMapping("/documents/{id}/summary")
+    public ApiResponse<InternalDocumentContextView> updateDocumentSummary(@PathVariable Long id,
+                                                                          @Valid @RequestBody InternalDocumentSummaryUpdateRequest request) {
+        return ApiResponse.success(documentService.internalUpdateSummary(id, request.actorUserId(), request.summary()));
+    }
+
+    @PostMapping("/documents/{id}/tags")
+    public ApiResponse<java.util.List<TagView>> updateDocumentTags(@PathVariable Long id,
+                                                                   @Valid @RequestBody InternalDocumentTagsUpdateRequest request) {
+        return ApiResponse.success(documentService.internalUpdateTags(id, request.actorUserId(), request.tags()));
     }
 
     @GetMapping("/files/{id}/context")
     public ApiResponse<InternalFileContextView> fileContext(@PathVariable Long id) {
         return ApiResponse.success(fileService.internalContext(id));
+    }
+
+    @PostMapping("/files/{id}/archive")
+    public ApiResponse<InternalFileContextView> archiveFile(@PathVariable Long id,
+                                                            @Valid @RequestBody InternalFileArchiveRequest request) {
+        return ApiResponse.success(fileService.internalArchive(id, request.actorUserId()));
+    }
+
+    @PostMapping("/projects/{id}/weekly-report-draft")
+    public ApiResponse<InternalDocumentContextView> createWeeklyReportDraft(@PathVariable Long id,
+                                                                            @Valid @RequestBody InternalProjectWeeklyReportDraftRequest request) {
+        return ApiResponse.success(documentService.internalCreateProjectWeeklyReportDraft(
+                id,
+                request.actorUserId(),
+                request.title(),
+                request.summary(),
+                request.plainText()
+        ));
     }
 
     @GetMapping("/ai/temp-files/{id}/context")
@@ -71,5 +101,22 @@ record InternalKnowledgeRequest(@NotNull Long userId,
 record InternalKnowledgeAttachment(@NotBlank String attachmentType, @NotNull Long sourceId, Long sessionId) {
 }
 
-record InternalDocumentTitleUpdateRequest(@NotBlank String title) {
+record InternalDocumentTitleUpdateRequest(@NotNull Long actorUserId, @NotBlank String title) {
+}
+
+record InternalDocumentSummaryUpdateRequest(@NotNull Long actorUserId, @NotBlank String summary) {
+}
+
+record InternalDocumentTagsUpdateRequest(@NotNull Long actorUserId, @NotNull java.util.List<String> tags) {
+}
+
+record InternalFileArchiveRequest(@NotNull Long actorUserId) {
+}
+
+record InternalProjectWeeklyReportDraftRequest(
+        @NotNull Long actorUserId,
+        @NotBlank String title,
+        String summary,
+        @NotBlank String plainText
+) {
 }

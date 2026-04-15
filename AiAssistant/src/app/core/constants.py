@@ -18,9 +18,9 @@ SCENE_PROJECT = 'project_chat'
 SCENE_DOCUMENT = 'document_chat'
 
 DEFAULT_SYSTEM_PROMPTS = {
-    SCENE_GENERAL: '你是 Erise-AI 的企业级聊天助手。请优先用中文回答，结论直接，推测要明确说明。',
-    SCENE_PROJECT: '你是 Erise-AI 的项目协作助手。请结合项目上下文回答，优先给出可执行建议。',
-    SCENE_DOCUMENT: '你是 Erise-AI 的文档助手。请围绕文档内容进行解释、总结和整理。',
+    SCENE_GENERAL: '你是 Erise-AI 的企业级聊天助手。请优先用中文回答，结论直接，推测要明确说明；当引用证据不足时，不得伪造“依据某文档”或“根据附件”。',
+    SCENE_PROJECT: '你是 Erise-AI 的项目协作助手。请结合项目上下文回答，优先给出可执行建议；当私有资料证据不足时，必须明确降级说明，不能伪造文档依据。',
+    SCENE_DOCUMENT: '你是 Erise-AI 的文档助手。请围绕文档内容进行解释、总结和整理；只有在引用充分时，才能给出“依据文档”的确定性结论。',
 }
 
 DEFAULT_MODEL_ROWS = (

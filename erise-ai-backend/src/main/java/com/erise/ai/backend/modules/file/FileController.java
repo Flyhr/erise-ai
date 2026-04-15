@@ -187,6 +187,7 @@ class FileService {
         entity.setPreviewStatus("PENDING");
         entity.setReviewStatus("APPROVED");
         entity.setIndexStatus("PENDING");
+        entity.setArchived(0);
         entity.setCreatedBy(currentUser.userId());
         entity.setUpdatedBy(currentUser.userId());
         fileMapper.insert(entity);
@@ -269,8 +270,22 @@ class FileService {
                 entity.getParseStatus(),
                 entity.getIndexStatus(),
                 latestParseError(entity.getId(), entity.getParseStatus(), entity.getIndexStatus()),
+                entity.getArchived(),
                 entity.getUpdatedAt()
         );
+    }
+
+    InternalFileContextView internalArchive(Long fileId, Long actorUserId) {
+        FileEntity entity = requireAccessibleFile(fileId, actorUserId);
+        entity.setArchived(1);
+        entity.setUpdatedBy(actorUserId);
+        fileMapper.updateById(entity);
+        try {
+            ragKnowledgeService.deleteKbSource(entity.getOwnerUserId(), entity.getProjectId(), "FILE", fileId);
+        } catch (RuntimeException ignored) {
+        }
+        auditLogService.log(actorUserId, "FILE_ARCHIVE_BY_AI", "FILE", fileId, null);
+        return internalContext(fileId);
     }
 
     ResponseEntity<InputStreamResource> stream(Long fileId, boolean inline) {
@@ -363,6 +378,15 @@ class FileService {
         return entity;
     }
 
+    FileEntity requireAccessibleFile(Long fileId, Long actorUserId) {
+        FileEntity entity = requireExistingFile(fileId);
+        projectService.requireAccessibleProject(entity.getProjectId(), actorUserId);
+        if (actorUserId == null || !actorUserId.equals(entity.getOwnerUserId())) {
+            throw new BizException(ErrorCodes.FORBIDDEN, "No permission");
+        }
+        return entity;
+    }
+
     FileView toView(FileEntity entity) {
         String parseErrorMessage = latestParseError(entity.getId(), entity.getParseStatus(), entity.getIndexStatus());
         return new FileView(
@@ -378,6 +402,7 @@ class FileService {
                 entity.getIndexStatus(),
                 parseErrorMessage,
                 entity.getReviewComment(),
+                entity.getArchived(),
                 entity.getCreatedAt(),
                 entity.getUpdatedAt()
         );
@@ -470,8 +495,8 @@ class FileService {
     }
 
     private void markFileRetryPending(FileEntity file) {
-        file.setParseStatus("PROCESSING");
-        file.setIndexStatus("PROCESSING");
+        file.setParseStatus("PENDING");
+        file.setIndexStatus("PENDING");
         file.setUpdatedBy(file.getOwnerUserId());
         fileMapper.updateById(file);
     }
@@ -506,7 +531,12 @@ class FileService {
                 || normalized.contains("connection reset")
                 || normalized.contains("connection aborted")
                 || normalized.contains("i/o error")
-                || normalized.contains("network is unreachable");
+                || normalized.contains("network is unreachable")
+                || normalized.contains("rate limit")
+                || normalized.contains("too many requests")
+                || normalized.contains("gateway timeout")
+                || normalized.contains("bad gateway")
+                || normalized.contains("temporarily overloaded");
     }
 
     private boolean indexable(FileEntity entity) {
@@ -846,8 +876,34 @@ class FileParseWorker {
         List<FileParseTaskEntity> tasks = fileParseTaskMapper.selectList(new LambdaQueryWrapper<FileParseTaskEntity>()
                 .eq(FileParseTaskEntity::getTaskStatus, "PENDING")
                 .orderByAsc(FileParseTaskEntity::getCreatedAt)
-                .last("limit 5"));
-        tasks.forEach(fileService::handleParseTask);
+                .last("limit 20"));
+        tasks.stream()
+                .filter(this::retryReady)
+                .limit(5)
+                .forEach(fileService::handleParseTask);
+    }
+
+    private boolean retryReady(FileParseTaskEntity task) {
+        if (task == null) {
+            return false;
+        }
+        int retryCount = task.getRetryCount() == null ? 0 : task.getRetryCount();
+        if (retryCount <= 0) {
+            return true;
+        }
+        LocalDateTime updatedAt = task.getUpdatedAt();
+        if (updatedAt == null) {
+            return true;
+        }
+        return !updatedAt.plusSeconds(retryDelaySeconds(retryCount)).isAfter(LocalDateTime.now());
+    }
+
+    private long retryDelaySeconds(int retryCount) {
+        return switch (Math.max(retryCount, 0)) {
+            case 0, 1 -> 30L;
+            case 2 -> 90L;
+            default -> 180L;
+        };
     }
 
     private void cleanupStaleUploads() {
@@ -929,6 +985,7 @@ class FileEntity extends AuditableEntity {
     private Long reviewedByUserId;
     private java.time.LocalDateTime reviewedAt;
     private String indexStatus;
+    private Integer archived;
 }
 
 @Data
@@ -993,6 +1050,7 @@ record FileView(
         String indexStatus,
         String parseErrorMessage,
         String reviewComment,
+        Integer archived,
         java.time.LocalDateTime createdAt,
         java.time.LocalDateTime updatedAt
 ) {
@@ -1014,6 +1072,7 @@ record InternalFileContextView(
         String parseStatus,
         String indexStatus,
         String parseErrorMessage,
+        Integer archived,
         java.time.LocalDateTime updatedAt
 ) {
 }

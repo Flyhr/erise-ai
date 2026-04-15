@@ -155,7 +155,22 @@ export const retryAdminTask = (taskOrigin: string, id: number) =>
 export const getAdminAuditLogs = (params: AdminAuditLogQuery) =>
   http.get<never, PageResponse<AdminAuditLogView>>('/v1/admin/audit-logs', { params })
 
+export interface ModelConfigCreatePayload {
+  modelCode: string
+  modelName: string
+  providerCode: string
+  enabled?: boolean
+  supportStream?: boolean
+  maxContextTokens?: number | null
+  priorityNo?: number | null
+  baseUrl?: string
+  apiKeyRef?: string
+}
+
 export const getAiModels = () => http.get<never, ModelConfigView[]>('/v1/admin/ai/models')
+
+export const createAiModel = (payload: ModelConfigCreatePayload) =>
+  http.post<never, ModelConfigView>('/v1/admin/ai/models', payload)
 
 export const updateAiModel = (id: number, payload: ModelConfigUpdatePayload) =>
   http.put(`/v1/admin/ai/models/${id}`, payload)

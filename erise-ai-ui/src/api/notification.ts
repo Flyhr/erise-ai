@@ -14,6 +14,10 @@ export interface AdminNotificationPayload {
   userIds?: number[]
 }
 
+export interface DeleteNotificationsPayload {
+  ids: number[]
+}
+
 export const getMyNotifications = (params: NotificationQuery) =>
   http.get<never, PageResponse<UserNotificationView>>('/v1/notifications', { params })
 
@@ -26,3 +30,8 @@ export const markAllNotificationsRead = () => http.post('/v1/notifications/read-
 
 export const sendAdminNotification = (payload: AdminNotificationPayload) =>
   http.post('/v1/admin/notifications', payload)
+
+export const deleteNotification = (id: number) => http.delete(`/v1/notifications/${id}`)
+
+export const deleteNotifications = (payload: DeleteNotificationsPayload) =>
+  http.delete('/v1/notifications', { data: payload })

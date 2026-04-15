@@ -32,6 +32,7 @@ class RagKnowledgeService {
     private static final String STATUS_NEEDS_REPAIR = "NEEDS_REPAIR";
     private static final String TASK_TYPE_INDEX = "INDEX";
     private static final String TASK_TYPE_DELETE = "DELETE";
+    private static final int MAX_CHUNKS_PER_SOURCE = 5000;
 
     private final RagSourceMapper ragSourceMapper;
     private final RagChunkMapper ragChunkMapper;
@@ -102,6 +103,9 @@ class RagKnowledgeService {
         for (ChunkInput chunk : chunks) {
             if (chunk == null || chunk.chunkText() == null || chunk.chunkText().isBlank()) {
                 continue;
+            }
+            if (normalized.size() >= MAX_CHUNKS_PER_SOURCE) {
+                break;
             }
             normalized.add(new ChunkInput(nextChunkIndex++, chunk.chunkText().trim(), chunk.pageNo(), chunk.sectionPath()));
         }

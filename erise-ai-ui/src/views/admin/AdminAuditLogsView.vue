@@ -6,10 +6,12 @@
           <template #prefix>
             <span class="material-symbols-outlined">search</span>
           </template>
+          <template #suffix>
+            <SearchSuffixButton @click="handleSearch" />
+          </template>
         </el-input>
       </div>
 
-      <el-button type="primary" class="admin-logs__search-button" @click="handleSearch">搜索</el-button>
       <el-button class="admin-logs__reset-button" @click="resetFilters">重置</el-button>
     </section>
 
@@ -93,6 +95,7 @@ import { onMounted, ref } from 'vue'
 import { getAdminAuditLogs, type AdminAuditLogView } from '@/api/admin'
 import AppDataTable from '@/components/common/AppDataTable.vue'
 import CompactPager from '@/components/common/CompactPager.vue'
+import SearchSuffixButton from '@/components/common/SearchSuffixButton.vue'
 import { formatDateTime, resolveErrorMessage } from '@/utils/formatters'
 
 const logs = ref<AdminAuditLogView[]>([])
@@ -251,16 +254,11 @@ onMounted(loadLogs)
   color: #5f6775;
 }
 
-.admin-logs__search-button,
 .admin-logs__reset-button {
   min-height: 46px;
   padding: 0 18px;
   border-radius: 14px;
   font-weight: 800;
-}
-
-.admin-logs__search-button {
-  box-shadow: 0 12px 24px rgba(0, 96, 169, 0.16);
 }
 
 .admin-logs__table-shell {
@@ -317,15 +315,15 @@ onMounted(loadLogs)
 }
 
 .admin-logs__table-wrapper :deep(.el-table td.el-table__cell) {
-  padding-top: 18px;
-  padding-bottom: 18px;
+  padding-top: 14px;
+  padding-bottom: 14px;
 }
 
 .admin-logs__operator,
 .admin-logs__action {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 2px;
 }
 
 .admin-logs__operator strong,

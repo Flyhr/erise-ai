@@ -1090,9 +1090,9 @@
 
 .composer-staged-assets {
   display: flex;
-  gap: 12px;
+  gap: 8px;
   overflow-x: auto;
-  padding: 18px 18px 0;
+  padding: 10px 14px 0;
   scrollbar-width: none;
 }
 
@@ -1102,14 +1102,14 @@
 
 .composer-asset {
   flex-shrink: 0;
-  min-width: 220px;
-  max-width: min(280px, 100%);
+  min-width: 188px;
+  max-width: min(240px, 100%);
   display: grid;
-  grid-template-columns: 38px minmax(0, 1fr) auto;
+  grid-template-columns: 30px minmax(0, 1fr) auto;
   align-items: center;
-  gap: 10px;
-  padding: 10px 12px;
-  border-radius: 18px;
+  gap: 8px;
+  padding: 7px 9px;
+  border-radius: 14px;
   border: 1px solid rgba(192, 199, 212, 0.3);
   background: rgba(255, 255, 255, 0.88);
   box-shadow: 0 10px 24px rgba(15, 23, 42, 0.05);
@@ -1146,11 +1146,11 @@
 }
 
 .composer-asset__icon {
-  width: 38px;
-  height: 38px;
+  width: 30px;
+  height: 30px;
   display: grid;
   place-items: center;
-  border-radius: 14px;
+  border-radius: 11px;
   background: rgba(255, 255, 255, 0.9);
   color: #0060a9;
 }
@@ -1159,13 +1159,13 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  min-width: 28px;
-  padding: 0 6px;
-  height: 22px;
+  min-width: 24px;
+  padding: 0 5px;
+  height: 18px;
   border-radius: 999px;
   background: rgba(0, 96, 169, 0.12);
   color: #005c9e;
-  font-size: 11px;
+  font-size: 10px;
   font-weight: 800;
   letter-spacing: 0.04em;
 }
@@ -1174,7 +1174,7 @@
   min-width: 0;
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 2px;
 }
 
 .composer-asset__copy strong {
@@ -1187,12 +1187,12 @@
 
 .composer-asset__copy small {
   color: #677180;
-  font-size: 11px;
+  font-size: 10px;
 }
 
 .composer-asset__remove {
-  width: 30px;
-  height: 30px;
+  width: 24px;
+  height: 24px;
   display: inline-grid;
   place-items: center;
   border: 0;

@@ -1,0 +1,66 @@
+{
+  "documents": [
+    {
+      "sourceType": "DOCUMENT",
+      "sourceId": 101,
+      "sourceTitle": "员工请假制度",
+      "sectionPath": "请假流程",
+      "pageNo": 2,
+      "snippet": "员工申请年假需至少提前三个工作日提交，审批通过后方可休假。"
+    },
+    {
+      "sourceType": "DOCUMENT",
+      "sourceId": 102,
+      "sourceTitle": "报销规范",
+      "sectionPath": "审批要求",
+      "pageNo": 4,
+      "snippet": "差旅报销需附发票与行程单，金额超过 5000 元时需要部门负责人追加审批。"
+    },
+    {
+      "sourceType": "FILE",
+      "sourceId": 201,
+      "sourceTitle": "项目周报模板",
+      "sectionPath": "固定字段",
+      "pageNo": 1,
+      "snippet": "项目周报需要包含：本周进展、风险问题、下周计划、需协同事项。"
+    },
+    {
+      "sourceType": "DOCUMENT",
+      "sourceId": 103,
+      "sourceTitle": "OCR 处理说明",
+      "sectionPath": "图片转文字",
+      "pageNo": 3,
+      "snippet": "扫描件会先做 PDF 原生抽取，若文本不足再进入 OCR 流程，最终输出按页保留文本。"
+    }
+  ],
+  "cases": [
+    {
+      "id": "leave_summary",
+      "query": "请总结请假流程",
+      "expectedSourceIds": [101],
+      "topK": 3,
+      "referenceAnswer": "员工申请年假需至少提前三个工作日提交，审批通过后方可休假。"
+    },
+    {
+      "id": "expense_approval",
+      "query": "报销审批要求是什么",
+      "expectedSourceIds": [102],
+      "topK": 3,
+      "referenceAnswer": "差旅报销需附发票与行程单，金额超过 5000 元时需要部门负责人追加审批。"
+    },
+    {
+      "id": "weekly_report_template",
+      "query": "项目周报模板里通常包含哪些内容",
+      "expectedSourceIds": [201],
+      "topK": 3,
+      "referenceAnswer": "项目周报需要包含本周进展、风险问题、下周计划和需协同事项。"
+    },
+    {
+      "id": "pdf_ocr_pipeline",
+      "query": "PDF OCR 是怎么处理的",
+      "expectedSourceIds": [103],
+      "topK": 3,
+      "referenceAnswer": "扫描件会先做 PDF 原生抽取，文本不足时再进入 OCR 流程，并按页保留文本。"
+    }
+  ]
+}

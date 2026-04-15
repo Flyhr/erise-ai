@@ -129,7 +129,7 @@ const loadCaptcha = async () => {
     console.error('验证码加载失败', error)
   }
 }
-
+//
 const submit = async () => {
   if (!captcha.captchaId) {
     ElMessage.warning('请稍后，验证码加载中')
@@ -141,6 +141,7 @@ const submit = async () => {
 
   try {
     if (mode.value === 'login') {
+      // 1. 登录逻辑：调用Pinia仓库的登录方法
       await authStore.login({
         username: form.username,
         password: form.password,

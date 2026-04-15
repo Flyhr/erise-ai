@@ -5,6 +5,9 @@
         <template #prefix>
           <span class="material-symbols-outlined">search</span>
         </template>
+        <template #suffix>
+          <SearchSuffixButton @click="runSearch" />
+        </template>
       </el-input>
 
       <div class="projects-total">共 {{ total }} 个项目</div>
@@ -77,6 +80,7 @@ import AppEmptyState from '@/components/common/AppEmptyState.vue'
 import AppFilterBar from '@/components/common/AppFilterBar.vue'
 import AppSectionCard from '@/components/common/AppSectionCard.vue'
 import CompactPager from '@/components/common/CompactPager.vue'
+import SearchSuffixButton from '@/components/common/SearchSuffixButton.vue'
 import type { ProjectDetailView } from '@/types/models'
 import { resolveErrorMessage } from '@/utils/formatters'
 
