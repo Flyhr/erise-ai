@@ -203,7 +203,7 @@ class AiService {
     List<AiModelView> models() {
         CurrentUser currentUser = SecurityUtils.currentUser();
         return cloudAiClient.models(currentUser, requestId()).stream()
-                .map(item -> new AiModelView(item.providerCode(), item.modelCode(), item.modelName(), item.supportStream(), item.maxContextTokens()))
+                .map(item -> new AiModelView(item.providerCode(), item.modelCode(), item.modelName(), item.isDefault(), item.supportStream(), item.maxContextTokens()))
                 .toList();
     }
 
@@ -492,7 +492,7 @@ record AiMessageView(
 record AiSessionDetailView(Long id, Long projectId, String title, List<AiMessageView> messages) {
 }
 
-record AiModelView(String providerCode, String modelCode, String modelName, boolean supportStream, Integer maxContextTokens) {
+record AiModelView(String providerCode, String modelCode, String modelName, boolean isDefault, boolean supportStream, Integer maxContextTokens) {
 }
 
 record ResolvedChatContext(Long projectId, List<CloudAiClient.AttachmentRef> attachments) {

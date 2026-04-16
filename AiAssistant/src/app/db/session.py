@@ -46,6 +46,12 @@ REQUIRED_COLUMNS = {
     'ai_message_citation': {
         'section_path',
     },
+    'ai_model_config': {
+        'is_default',
+        'input_price_per_million',
+        'output_price_per_million',
+        'currency_code',
+    },
 }
 
 

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from sqlalchemy import Boolean, Integer, String
+from sqlalchemy import Boolean, Float, Integer, String
 from sqlalchemy.orm import Mapped, mapped_column
 
 from src.app.models.base import Base, IdType, TimestampMixin
@@ -16,7 +16,11 @@ class AiModelConfig(Base, TimestampMixin):
     base_url: Mapped[str | None] = mapped_column(String(255), nullable=True)
     api_key_ref: Mapped[str | None] = mapped_column(String(64), nullable=True)
     enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    is_default: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     support_stream: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     support_system_prompt: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     max_context_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    input_price_per_million: Mapped[float | None] = mapped_column(Float, nullable=True)
+    output_price_per_million: Mapped[float | None] = mapped_column(Float, nullable=True)
+    currency_code: Mapped[str] = mapped_column(String(16), nullable=False, default='USD')
     priority_no: Mapped[int] = mapped_column(Integer, nullable=False, default=1)

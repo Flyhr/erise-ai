@@ -22,6 +22,7 @@ PREFERRED_PROVIDER_ORDER = {
 
 def _model_sort_key(model: AiModelConfig) -> tuple[int, int, str]:
     return (
+        0 if model.is_default else 1,
         PREFERRED_PROVIDER_ORDER.get((model.provider_code or '').upper(), 9),
         int(model.priority_no or 999),
         model.model_code,
@@ -76,6 +77,7 @@ def list_enabled_models(db: Session) -> list[ModelView]:
             provider_code=item.provider_code,
             model_code=item.model_code,
             model_name=item.model_name,
+            is_default=item.is_default,
             support_stream=item.support_stream,
             max_context_tokens=item.max_context_tokens,
         )
@@ -90,8 +92,16 @@ def get_model_config(db: Session, requested_model_code: str | None) -> AiModelCo
         if model is not None and model.enabled:
             return model
         raise AiServiceError('AI_MODEL_NOT_FOUND', f'Model `{requested_model_code}` is not available', status_code=404)
+    default_model = db.execute(
+        select(AiModelConfig).where(
+            AiModelConfig.is_default.is_(True),
+            AiModelConfig.enabled.is_(True),
+        )
+    ).scalar_one_or_none()
+    if default_model is not None:
+        return default_model
     default_model = db.execute(select(AiModelConfig).where(AiModelConfig.model_code == settings.default_model_code)).scalar_one_or_none()
-    if default_model is not None and default_model.enabled and (default_model.provider_code or '').upper() == 'DEEPSEEK':
+    if default_model is not None and default_model.enabled:
         return default_model
     deepseek_models = db.execute(
         select(AiModelConfig).where(

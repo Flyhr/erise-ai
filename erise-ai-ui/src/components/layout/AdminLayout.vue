@@ -7,7 +7,8 @@
         </div>
 
         <div>
-          <div class="app-brand-title">管理员控制台</div>
+          <div class="app-brand-title">AI 管理后台</div>
+          <div class="app-brand-copy">运维、配置与审计</div>
         </div>
       </div>
 
@@ -49,7 +50,12 @@
     <el-drawer v-model="sidebarVisible" direction="ltr" size="280px" title="后台导航">
       <AppDrawerPanel>
         <el-menu :default-active="activeNavIndex" router class="shell-menu">
-          <el-menu-item v-for="item in navItems" :key="item.index" :index="item.index" @click="sidebarVisible = false">
+          <el-menu-item
+            v-for="item in navItems"
+            :key="item.index"
+            :index="item.index"
+            @click="sidebarVisible = false"
+          >
             <el-icon>
               <component :is="item.icon" />
             </el-icon>
@@ -61,7 +67,7 @@
 
     <el-drawer v-model="themeDrawerVisible" title="主题" size="420px">
       <AppDrawerPanel>
-        <ThemePanel description="后台与主工作台共用同一套主题变量和视觉规则。" />
+        <ThemePanel description="后台与工作台共用同一套主题变量与视觉规则。" />
       </AppDrawerPanel>
     </el-drawer>
   </div>
@@ -70,7 +76,18 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { Cpu, DataAnalysis, DocumentCopy, Files, Menu, User } from '@element-plus/icons-vue'
+import {
+  ChatDotRound,
+  CollectionTag,
+  Cpu,
+  DataAnalysis,
+  Document,
+  DocumentCopy,
+  Files,
+  Histogram,
+  Menu,
+  User,
+} from '@element-plus/icons-vue'
 import { useAuthStore } from '@/stores/auth'
 import AppDrawerPanel from '@/components/common/AppDrawerPanel.vue'
 import NotificationCenterDrawer from '@/components/common/NotificationCenterDrawer.vue'
@@ -85,9 +102,13 @@ const themeDrawerVisible = ref(false)
 const navItems = [
   { index: '/admin', label: '仪表盘', icon: DataAnalysis },
   { index: '/admin/users', label: '用户管理', icon: User },
-  { index: '/admin/project-files', label: '项目文件管理', icon: Files },
-  { index: '/admin/models', label: '模型管理', icon: Cpu },
-  { index: '/admin/logs', label: '日志管理', icon: DocumentCopy },
+  { index: '/admin/project-files', label: '项目文件', icon: Files },
+  { index: '/admin/ai/models', label: '模型配置', icon: Cpu },
+  { index: '/admin/ai/prompts', label: 'Prompt 模板', icon: CollectionTag },
+  { index: '/admin/ai/request-logs', label: '请求日志', icon: Histogram },
+  { index: '/admin/ai/feedback', label: '用户反馈', icon: ChatDotRound },
+  { index: '/admin/ai/index-tasks', label: '索引任务', icon: Document },
+  { index: '/admin/logs', label: '审计日志', icon: DocumentCopy },
 ]
 
 const activeNavIndex = computed(() => {
@@ -97,13 +118,21 @@ const activeNavIndex = computed(() => {
     route.path.startsWith('/admin/files') ||
     route.path.startsWith('/admin/documents') ||
     route.path.startsWith('/admin/contents')
-  ) return '/admin/project-files'
-  if (route.path.startsWith('/admin/models') || route.path.startsWith('/admin/ai-models')) return '/admin/models'
+  ) {
+    return '/admin/project-files'
+  }
+  if (route.path.startsWith('/admin/ai/models') || route.path === '/admin/models' || route.path === '/admin/ai-models') {
+    return '/admin/ai/models'
+  }
+  if (route.path.startsWith('/admin/ai/prompts')) return '/admin/ai/prompts'
+  if (route.path.startsWith('/admin/ai/request-logs')) return '/admin/ai/request-logs'
+  if (route.path.startsWith('/admin/ai/feedback')) return '/admin/ai/feedback'
+  if (route.path.startsWith('/admin/ai/index-tasks')) return '/admin/ai/index-tasks'
   if (route.path.startsWith('/admin/logs') || route.path.startsWith('/admin/audit-logs')) return '/admin/logs'
   return '/admin'
 })
 
-const pageTitle = computed(() => (route.meta.title as string) || '运营控制台')
+const pageTitle = computed(() => (route.meta.title as string) || 'AI 管理后台')
 const pageDescription = computed(() => (route.meta.description as string) || '')
 
 const handleLogout = async () => {
@@ -113,6 +142,12 @@ const handleLogout = async () => {
 </script>
 
 <style scoped>
+.app-brand-copy {
+  margin-top: 4px;
+  color: rgba(245, 247, 250, 0.72);
+  font-size: 12px;
+}
+
 .admin-brand-mark {
   width: 42px;
   height: 42px;

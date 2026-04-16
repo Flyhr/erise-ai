@@ -519,6 +519,6 @@ public class CloudAiClient {
     public record CancelResponse(String requestId, Boolean cancelled) {
     }
 
-    public record ModelResponse(String providerCode, String modelCode, String modelName, boolean supportStream, Integer maxContextTokens) {
+    public record ModelResponse(String providerCode, String modelCode, String modelName, boolean isDefault, boolean supportStream, Integer maxContextTokens) {
     }
 }

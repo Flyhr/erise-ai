@@ -249,6 +249,7 @@ export interface AiModelView {
   providerCode: string;
   modelCode: string;
   modelName: string;
+  isDefault?: boolean;
   supportStream: boolean;
   maxContextTokens?: number;
 }

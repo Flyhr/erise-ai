@@ -149,6 +149,10 @@ const AI_PROVIDER_ORDER: Record<string, number> = {
 
 export const sortAiModelsByPreference = <T extends AiModelView>(models: T[]) =>
   [...models].sort((left, right) => {
+    const defaultDiff = Number(Boolean(right.isDefault)) - Number(Boolean(left.isDefault))
+    if (defaultDiff !== 0) {
+      return defaultDiff
+    }
     const providerDiff =
       (AI_PROVIDER_ORDER[(left.providerCode || '').toUpperCase()] ?? 9) -
       (AI_PROVIDER_ORDER[(right.providerCode || '').toUpperCase()] ?? 9)
@@ -157,6 +161,14 @@ export const sortAiModelsByPreference = <T extends AiModelView>(models: T[]) =>
     }
     return (left.modelName || left.modelCode).localeCompare(right.modelName || right.modelCode)
   })
+
+export const pickPreferredAiModel = <T extends AiModelView>(models: T[], selectedModelCode?: string | null) => {
+  const sorted = sortAiModelsByPreference(models)
+  if (!sorted.length) {
+    return undefined
+  }
+  return sorted.find((item) => item.modelCode === selectedModelCode) || sorted[0]
+}
 
 export const isOfficeEditableFile = (ext?: string) => ['doc', 'docx', 'txt'].includes((ext || '').toLowerCase())
 

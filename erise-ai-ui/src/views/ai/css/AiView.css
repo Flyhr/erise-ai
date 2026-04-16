@@ -989,6 +989,12 @@
   color: #005ea6;
 }
 
+.assistant-actions__button.is-active {
+  border-color: rgba(64, 158, 255, 0.5);
+  background: rgba(64, 158, 255, 0.14);
+  color: #005ea6;
+}
+
 .assistant-actions__button:disabled {
   opacity: 0.52;
   cursor: not-allowed;

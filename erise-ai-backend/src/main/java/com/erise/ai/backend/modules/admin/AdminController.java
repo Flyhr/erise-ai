@@ -15,7 +15,10 @@ import com.erise.ai.backend.common.exception.ErrorCodes;
 import com.erise.ai.backend.common.util.SecurityUtils;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.validation.Valid;
+import jakarta.validation.constraints.DecimalMin;
+import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.Size;
 import java.sql.Timestamp;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
@@ -102,13 +105,19 @@ public class AdminController {
     }
 
     @PostMapping("/ai/models")
-    public ApiResponse<ModelConfigView> createAiModel(@RequestBody ModelConfigCreateRequest request) {
+    public ApiResponse<ModelConfigView> createAiModel(@Valid @RequestBody ModelConfigCreateRequest request) {
         return ApiResponse.success(adminService.createAiModel(request));
     }
 
     @PutMapping("/ai/models/{id}")
-    public ApiResponse<Void> updateAiModel(@PathVariable Long id, @RequestBody ModelConfigUpdateRequest request) {
+    public ApiResponse<Void> updateAiModel(@PathVariable Long id, @Valid @RequestBody ModelConfigUpdateRequest request) {
         adminService.updateAiModel(id, request);
+        return ApiResponse.success("success", null);
+    }
+
+    @PostMapping("/ai/models/{id}/default")
+    public ApiResponse<Void> switchDefaultAiModel(@PathVariable Long id) {
+        adminService.switchDefaultAiModel(id);
         return ApiResponse.success("success", null);
     }
 }
@@ -315,18 +324,23 @@ class AdminService {
 
     List<ModelConfigView> aiModels() {
         return jdbcTemplate.query("""
-                        select id, model_code, model_name, provider_code, enabled, support_stream,
-                               max_context_tokens, priority_no, base_url, api_key_ref
+                        select id, model_code, model_name, provider_code, enabled, is_default, support_stream,
+                               max_context_tokens, input_price_per_million, output_price_per_million,
+                               currency_code, priority_no, base_url, api_key_ref
                         from ai_model_config
-                        order by priority_no asc, id asc
+                        order by is_default desc, priority_no asc, id asc
                         """,
                 (rs, rowNum) -> mapModelConfigView(rs.getLong("id"),
                         rs.getString("model_code"),
                         rs.getString("model_name"),
                         rs.getString("provider_code"),
                         rs.getBoolean("enabled"),
+                        rs.getBoolean("is_default"),
                         rs.getBoolean("support_stream"),
                         rs.getObject("max_context_tokens", Integer.class),
+                        rs.getObject("input_price_per_million", Double.class),
+                        rs.getObject("output_price_per_million", Double.class),
+                        rs.getString("currency_code"),
                         rs.getObject("priority_no", Integer.class),
                         rs.getString("base_url"),
                         rs.getString("api_key_ref")));
@@ -360,18 +374,27 @@ class AdminService {
         }
         int priorityNo = request.priorityNo() != null ? Math.max(request.priorityNo(), 0) : 1;
         boolean enabled = request.enabled() == null || request.enabled();
+        boolean isDefault = request.isDefault() != null && request.isDefault();
         boolean supportStream = request.supportStream() == null || request.supportStream();
         String baseUrl = trimToNull(request.baseUrl());
         String apiKeyRef = trimToNull(request.apiKeyRef());
+        Double inputPricePerMillion = normalizePrice(request.inputPricePerMillion());
+        Double outputPricePerMillion = normalizePrice(request.outputPricePerMillion());
+        String currencyCode = normalizeCurrencyCode(request.currencyCode());
+
+        if (isDefault) {
+            jdbcTemplate.update("update ai_model_config set is_default = 0 where is_default = 1");
+        }
 
         jdbcTemplate.update("""
-                        insert into ai_model_config (model_code, model_name, provider_code, enabled, support_stream,
-                                                     max_context_tokens, priority_no, base_url, api_key_ref, created_at, updated_at)
-                        values (?, ?, ?, ?, ?, ?, ?, ?, ?, current_timestamp(6), current_timestamp(6))
+                        insert into ai_model_config (model_code, model_name, provider_code, enabled, is_default, support_stream,
+                                                     max_context_tokens, input_price_per_million, output_price_per_million,
+                                                     currency_code, priority_no, base_url, api_key_ref, created_at, updated_at)
+                        values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, current_timestamp(6), current_timestamp(6))
                         """,
                 modelCode, modelName, providerCode,
-                enabled ? 1 : 0, supportStream ? 1 : 0,
-                maxContextTokens, priorityNo,
+                enabled ? 1 : 0, isDefault ? 1 : 0, supportStream ? 1 : 0,
+                maxContextTokens, inputPricePerMillion, outputPricePerMillion, currencyCode, priorityNo,
                 baseUrl, apiKeyRef);
 
         Long newId = jdbcTemplate.queryForObject(
@@ -381,10 +404,15 @@ class AdminService {
         detail.put("modelCode", modelCode);
         detail.put("modelName", modelName);
         detail.put("providerCode", providerCode);
+        detail.put("isDefault", isDefault);
         auditLogService.log(currentUser, "ADMIN_MODEL_CREATE", "AI_MODEL", newId, detail);
 
-        return mapModelConfigView(newId, modelCode, modelName, providerCode, enabled, supportStream,
-                maxContextTokens, priorityNo, baseUrl, apiKeyRef);
+        if (!isDefault) {
+            ensureOneDefaultModel();
+        }
+
+        return mapModelConfigView(newId, modelCode, modelName, providerCode, enabled, isDefault, supportStream,
+                maxContextTokens, inputPricePerMillion, outputPricePerMillion, currencyCode, priorityNo, baseUrl, apiKeyRef);
     }
 
     void updateAiModel(Long id, ModelConfigUpdateRequest request) {
@@ -414,6 +442,15 @@ class AdminService {
         Boolean enabled = request.enabled() == null ? current.enabled() : request.enabled();
         Boolean supportStream = request.supportStream() == null ? current.supportStream() : request.supportStream();
         Integer maxContextTokens = request.maxContextTokens() == null ? current.maxContextTokens() : request.maxContextTokens();
+        Double inputPricePerMillion = request.inputPricePerMillion() == null
+                ? current.inputPricePerMillion()
+                : normalizePrice(request.inputPricePerMillion());
+        Double outputPricePerMillion = request.outputPricePerMillion() == null
+                ? current.outputPricePerMillion()
+                : normalizePrice(request.outputPricePerMillion());
+        String currencyCode = request.currencyCode() == null
+                ? current.currencyCode()
+                : normalizeCurrencyCode(request.currencyCode());
         Integer priorityNo = request.priorityNo() == null ? current.priorityNo() : request.priorityNo();
         if (priorityNo == null) {
             priorityNo = 1;
@@ -435,6 +472,9 @@ class AdminService {
                             enabled = ?,
                             support_stream = ?,
                             max_context_tokens = ?,
+                            input_price_per_million = ?,
+                            output_price_per_million = ?,
+                            currency_code = ?,
                             priority_no = ?,
                             base_url = ?,
                             api_key_ref = ?,
@@ -446,6 +486,9 @@ class AdminService {
                 Boolean.TRUE.equals(enabled) ? 1 : 0,
                 Boolean.TRUE.equals(supportStream) ? 1 : 0,
                 maxContextTokens,
+                inputPricePerMillion,
+                outputPricePerMillion,
+                currencyCode,
                 priorityNo,
                 baseUrl,
                 apiKeyRef,
@@ -461,8 +504,31 @@ class AdminService {
         detail.put("enabled", Boolean.TRUE.equals(enabled));
         detail.put("supportStream", Boolean.TRUE.equals(supportStream));
         detail.put("maxContextTokens", maxContextTokens);
+        detail.put("inputPricePerMillion", inputPricePerMillion);
+        detail.put("outputPricePerMillion", outputPricePerMillion);
+        detail.put("currencyCode", currencyCode);
         detail.put("priorityNo", priorityNo);
         auditLogService.log(currentUser, "ADMIN_MODEL_UPDATE", "AI_MODEL", id, detail);
+
+        if (Boolean.TRUE.equals(request.isDefault())) {
+            switchDefaultAiModel(id);
+            return;
+        }
+        ensureOneDefaultModel();
+    }
+
+    void switchDefaultAiModel(Long id) {
+        var currentUser = SecurityUtils.currentUser();
+        ModelConfigView current = aiModel(id);
+        if (current == null) {
+            throw new BizException(ErrorCodes.NOT_FOUND, "Model not found", HttpStatus.NOT_FOUND);
+        }
+        if (!Boolean.TRUE.equals(current.enabled())) {
+            throw new BizException(ErrorCodes.BAD_REQUEST, "Only enabled models can be set as default", HttpStatus.BAD_REQUEST);
+        }
+        jdbcTemplate.update("update ai_model_config set is_default = 0 where is_default = 1");
+        jdbcTemplate.update("update ai_model_config set is_default = 1, updated_at = current_timestamp(6) where id = ?", id);
+        auditLogService.log(currentUser, "ADMIN_MODEL_SWITCH_DEFAULT", "AI_MODEL", id, Map.of("modelCode", current.modelCode()));
     }
 
     private void retryFileParseTask(Long taskId) {
@@ -866,8 +932,9 @@ class AdminService {
 
     private ModelConfigView aiModel(Long id) {
         List<ModelConfigView> records = jdbcTemplate.query("""
-                        select id, model_code, model_name, provider_code, enabled, support_stream,
-                               max_context_tokens, priority_no, base_url, api_key_ref
+                        select id, model_code, model_name, provider_code, enabled, is_default, support_stream,
+                               max_context_tokens, input_price_per_million, output_price_per_million,
+                               currency_code, priority_no, base_url, api_key_ref
                         from ai_model_config
                         where id = ?
                         limit 1
@@ -877,8 +944,12 @@ class AdminService {
                         rs.getString("model_name"),
                         rs.getString("provider_code"),
                         rs.getBoolean("enabled"),
+                        rs.getBoolean("is_default"),
                         rs.getBoolean("support_stream"),
                         rs.getObject("max_context_tokens", Integer.class),
+                        rs.getObject("input_price_per_million", Double.class),
+                        rs.getObject("output_price_per_million", Double.class),
+                        rs.getString("currency_code"),
                         rs.getObject("priority_no", Integer.class),
                         rs.getString("base_url"),
                         rs.getString("api_key_ref")),
@@ -891,8 +962,12 @@ class AdminService {
                                                String modelName,
                                                String providerCode,
                                                boolean enabled,
+                                               boolean isDefault,
                                                boolean supportStream,
                                                Integer maxContextTokens,
+                                               Double inputPricePerMillion,
+                                               Double outputPricePerMillion,
+                                               String currencyCode,
                                                Integer priorityNo,
                                                String baseUrl,
                                                String apiKeyRef) {
@@ -902,13 +977,38 @@ class AdminService {
                 modelName,
                 providerCode,
                 enabled,
-                eriseProperties.getCloud().getDefaultModelCode().equals(modelCode),
+                isDefault,
                 supportStream,
                 maxContextTokens,
+                inputPricePerMillion,
+                outputPricePerMillion,
+                currencyCode == null || currencyCode.isBlank() ? "USD" : currencyCode,
                 priorityNo,
                 baseUrl,
                 apiKeyRef
         );
+    }
+
+    private void ensureOneDefaultModel() {
+        Long defaultCount = jdbcTemplate.queryForObject(
+                "select count(*) from ai_model_config where is_default = 1",
+                Long.class
+        );
+        if (defaultCount != null && defaultCount > 0) {
+            return;
+        }
+        jdbcTemplate.update("""
+                update ai_model_config candidate
+                join (
+                    select id
+                    from ai_model_config
+                    where enabled = 1
+                    order by priority_no asc, id asc
+                    limit 1
+                ) picked on picked.id = candidate.id
+                set candidate.is_default = 1,
+                    candidate.updated_at = current_timestamp(6)
+                """);
     }
 
     private LocalDateTime dashboardTrendStart(int days) {
@@ -933,6 +1033,18 @@ class AdminService {
         }
         String normalized = value.trim();
         return normalized.isEmpty() ? null : normalized;
+    }
+
+    private Double normalizePrice(Double value) {
+        if (value == null || value <= 0) {
+            return null;
+        }
+        return value;
+    }
+
+    private String normalizeCurrencyCode(String value) {
+        String normalized = trimToNull(value);
+        return normalized == null ? "USD" : normalized.toUpperCase(Locale.ROOT);
     }
 }
 
@@ -1048,27 +1160,35 @@ record AdminAuditLogView(
 }
 
 record ModelConfigUpdateRequest(
-        String modelName,
-        String providerCode,
+        @Size(max = 120) String modelName,
+        @Size(max = 64) String providerCode,
         Boolean enabled,
+        Boolean isDefault,
         Boolean supportStream,
-        Integer maxContextTokens,
-        Integer priorityNo,
-        String baseUrl,
-        String apiKeyRef
+        @Min(1) Integer maxContextTokens,
+        @Min(0) Integer priorityNo,
+        @Size(max = 255) String baseUrl,
+        @Size(max = 128) String apiKeyRef,
+        @DecimalMin(value = "0.0001", inclusive = true) Double inputPricePerMillion,
+        @DecimalMin(value = "0.0001", inclusive = true) Double outputPricePerMillion,
+        @Size(max = 16) String currencyCode
 ) {
 }
 
 record ModelConfigCreateRequest(
-        String modelCode,
-        String modelName,
-        String providerCode,
+        @NotBlank @Size(max = 128) String modelCode,
+        @NotBlank @Size(max = 120) String modelName,
+        @NotBlank @Size(max = 64) String providerCode,
         Boolean enabled,
+        Boolean isDefault,
         Boolean supportStream,
-        Integer maxContextTokens,
-        Integer priorityNo,
-        String baseUrl,
-        String apiKeyRef
+        @Min(1) Integer maxContextTokens,
+        @Min(0) Integer priorityNo,
+        @Size(max = 255) String baseUrl,
+        @Size(max = 128) String apiKeyRef,
+        @DecimalMin(value = "0.0001", inclusive = true) Double inputPricePerMillion,
+        @DecimalMin(value = "0.0001", inclusive = true) Double outputPricePerMillion,
+        @Size(max = 16) String currencyCode
 ) {
 }
 
@@ -1081,6 +1201,9 @@ record ModelConfigView(
         Boolean isDefault,
         Boolean supportStream,
         Integer maxContextTokens,
+        Double inputPricePerMillion,
+        Double outputPricePerMillion,
+        String currencyCode,
         Integer priorityNo,
         String baseUrl,
         String apiKeyRef

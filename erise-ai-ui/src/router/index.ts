@@ -30,14 +30,21 @@ const AdminUsersView = () => import("@/views/admin/AdminUsersView.vue");
 const AdminTasksView = () => import("@/views/admin/AdminTasksView.vue");
 const AdminAuditLogsView = () => import("@/views/admin/AdminAuditLogsView.vue");
 const AdminModelsView = () => import("@/views/admin/AdminModelsView.vue");
+const AdminAiPromptsView = () =>
+  import("@/views/admin/AdminAiPromptsView.vue");
+const AdminAiRequestLogsView = () =>
+  import("@/views/admin/AdminAiRequestLogsView.vue");
+const AdminAiFeedbackView = () =>
+  import("@/views/admin/AdminAiFeedbackView.vue");
+const AdminAiIndexTasksView = () =>
+  import("@/views/admin/AdminAiIndexTasksView.vue");
 const NotFoundView = () => import("@/views/admin/NotFoundView.vue");
 const WorkspaceShellLayout = () =>
   import("@/components/common/WorkspaceShellLayout.vue");
 
-const ROUTE_LOADING_TITLE_PREFIX = "\u6b63\u5728\u6253\u5f00 ";
-const ROUTE_LOADING_DEFAULT_TITLE = "\u6b63\u5728\u8fdb\u5165\u9875\u9762";
-const ROUTE_LOADING_DESCRIPTION =
-  "\u754c\u9762\u5185\u5bb9\u6b63\u5728\u51c6\u5907\u4e2d\uff0c\u8bf7\u7a0d\u5019\u3002";
+const ROUTE_LOADING_TITLE_PREFIX = "正在打开 ";
+const ROUTE_LOADING_DEFAULT_TITLE = "正在进入页面";
+const ROUTE_LOADING_DESCRIPTION = "界面内容正在准备中，请稍候。";
 
 const router = createRouter({
   history: createWebHistory(),
@@ -251,7 +258,7 @@ const router = createRouter({
           path: "profile",
           component: ProfileView,
           meta: {
-            title: "涓汉璧勬枡",
+            title: "个人资料",
             admin: true,
           },
         },
@@ -270,10 +277,43 @@ const router = createRouter({
           },
         },
         {
-          path: "models",
+          path: "ai/models",
           component: AdminModelsView,
           meta: {
-            title: "模型管理",
+            title: "AI 模型配置",
+            description: "管理模型启停、默认模型、优先级与计费配置。",
+          },
+        },
+        {
+          path: "ai/prompts",
+          component: AdminAiPromptsView,
+          meta: {
+            title: "Prompt 模板",
+            description: "查看 Prompt 模板版本、启停状态与发布历史。",
+          },
+        },
+        {
+          path: "ai/request-logs",
+          component: AdminAiRequestLogsView,
+          meta: {
+            title: "AI 请求日志",
+            description: "检索最近请求日志、错误记录与成本统计。",
+          },
+        },
+        {
+          path: "ai/feedback",
+          component: AdminAiFeedbackView,
+          meta: {
+            title: "用户反馈",
+            description: "查看用户对 AI 回复的点赞、点踩与备注。",
+          },
+        },
+        {
+          path: "ai/index-tasks",
+          component: AdminAiIndexTasksView,
+          meta: {
+            title: "索引任务",
+            description: "查看索引任务状态、失败原因与重试入口。",
           },
         },
         {
@@ -289,7 +329,7 @@ const router = createRouter({
           component: DocumentEditView,
           props: true,
           meta: {
-            title: "鏂囨。缂栬緫",
+            title: "文档编辑",
             admin: true,
           },
         },
@@ -298,11 +338,12 @@ const router = createRouter({
           component: ContentItemEditView,
           props: true,
           meta: {
-            title: "缁撴瀯鍖栫紪杈?",
+            title: "结构化编辑",
             admin: true,
           },
         },
-        { path: "ai-models", redirect: "/admin/models" },
+        { path: "models", redirect: "/admin/ai/models" },
+        { path: "ai-models", redirect: "/admin/ai/models" },
         { path: "audit-logs", redirect: "/admin/logs" },
       ],
     },

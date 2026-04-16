@@ -214,6 +214,26 @@
 
                         <div v-if="message.roleCode === 'ASSISTANT' && assistantActionVisible(message)"
                           class="assistant-actions">
+                          <button
+                            type="button"
+                            class="assistant-actions__button"
+                            :class="{ 'is-active': message.feedbackType === 'UP' }"
+                            :disabled="!canSubmitFeedback(message)"
+                            @click="submitAssistantFeedback(message, 'UP')"
+                          >
+                            <span class="material-symbols-outlined">thumb_up</span>
+                            <span>{{ message.feedbackType === 'UP' ? '已点赞' : '点赞' }}</span>
+                          </button>
+                          <button
+                            type="button"
+                            class="assistant-actions__button"
+                            :class="{ 'is-active': message.feedbackType === 'DOWN' }"
+                            :disabled="!canSubmitFeedback(message)"
+                            @click="submitAssistantFeedback(message, 'DOWN')"
+                          >
+                            <span class="material-symbols-outlined">thumb_down</span>
+                            <span>{{ message.feedbackType === 'DOWN' ? '已点踩' : '点踩' }}</span>
+                          </button>
                           <button type="button" class="assistant-actions__button"
                             :disabled="!assistantCopyText(message)" @click="copyAssistantReply(message)">
                             <span class="material-symbols-outlined">content_copy</span>
@@ -436,6 +456,7 @@ import {
   getSessions,
   getTempFiles,
   retryTempFile,
+  submitAiMessageFeedback,
   updateRetrievalSettings,
   uploadTempFile,
 } from '@/api/ai'
@@ -459,7 +480,12 @@ import type {
   FileView,
   ProjectDetailView,
 } from '@/types/models'
-import { knowledgeReadinessLabel, resolveKnowledgeReadiness, sortAiModelsByPreference } from '@/utils/formatters'
+import {
+  knowledgeReadinessLabel,
+  pickPreferredAiModel,
+  resolveKnowledgeReadiness,
+  sortAiModelsByPreference,
+} from '@/utils/formatters'
 import { copyToClipboard } from '@/utils/object-operations'
 
 type MessageStatus = 'sent' | 'sending' | 'streaming' | 'failed'
@@ -501,6 +527,8 @@ interface UiMessage {
   providerCode?: string
   latencyMs?: number
   attachments?: ComposerAssetSnapshot[]
+  feedbackType?: 'UP' | 'DOWN'
+  feedbackSubmitting?: boolean
 }
 
 interface StreamDonePayload {
@@ -748,10 +776,7 @@ const activeModel = computed(() => {
   if (!modelChoices.value.length) {
     return undefined
   }
-  return (
-    modelChoices.value.find((model) => model.modelCode === selectedModelCode.value) ||
-    modelChoices.value.find((model) => (model.providerCode || '').toLowerCase() === 'deepseek')
-  )
+  return pickPreferredAiModel(modelChoices.value, selectedModelCode.value)
 })
 const lastAssistantMessage = computed(() =>
   [...messages.value].reverse().find((message) => message.roleCode === 'ASSISTANT'),
@@ -905,6 +930,8 @@ const toUiMessage = (message: AiMessageView): UiMessage => ({
   modelCode: message.modelCode,
   providerCode: message.providerCode,
   latencyMs: message.latencyMs,
+  feedbackType: undefined,
+  feedbackSubmitting: false,
 })
 
 const stripTrailingCitationAppendix = (content: string) => {
@@ -928,6 +955,12 @@ const assistantCopyText = (message: UiMessage) => assistantContentOf(message).tr
 
 const assistantActionVisible = (message: UiMessage) =>
   message.roleCode === 'ASSISTANT' && Boolean(assistantCopyText(message) || message.errorMessage)
+
+const canSubmitFeedback = (message: UiMessage) =>
+  message.roleCode === 'ASSISTANT' &&
+  Boolean(message.serverId) &&
+  !message.feedbackSubmitting &&
+  !sending.value
 
 const formatThinkingDuration = (latencyMs: number) =>
   latencyMs >= 1000
@@ -1574,11 +1607,8 @@ const refreshModels = async () => {
       selectedModelCode.value = ''
       return
     }
-    const deepseekModels = models.filter((model) => (model.providerCode || '').toLowerCase() === 'deepseek')
-    const preferredModel = deepseekModels[0]
-    if (!models.some((model) => model.modelCode === selectedModelCode.value)) {
-      selectedModelCode.value = preferredModel?.modelCode || ''
-    }
+    const preferredModel = pickPreferredAiModel(models, selectedModelCode.value)
+    selectedModelCode.value = preferredModel?.modelCode || ''
   } catch (error) {
     availableModels.value = []
     selectedModelCode.value = ''
@@ -2071,6 +2101,22 @@ const copyAssistantReply = async (message: UiMessage) => {
     return
   }
   await copyToClipboard(content, '回答内容')
+}
+
+const submitAssistantFeedback = async (message: UiMessage, feedbackType: 'UP' | 'DOWN') => {
+  if (!message.serverId || !canSubmitFeedback(message)) {
+    return
+  }
+  message.feedbackSubmitting = true
+  try {
+    await submitAiMessageFeedback(message.serverId, { feedbackType })
+    message.feedbackType = feedbackType
+    ElMessage.success(feedbackType === 'UP' ? '已记录点赞反馈' : '已记录点踩反馈')
+  } catch (error) {
+    ElMessage.error(errorMessageOf(error))
+  } finally {
+    message.feedbackSubmitting = false
+  }
 }
 
 const regenerateAssistantReply = async (message: UiMessage) => {

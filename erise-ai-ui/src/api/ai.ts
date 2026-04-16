@@ -35,6 +35,11 @@ export interface AiUpdateRetrievalSettingsPayload {
   webSearchEnabledDefault: boolean
 }
 
+export interface AiMessageFeedbackPayload {
+  feedbackType: 'UP' | 'DOWN'
+  feedbackNote?: string
+}
+
 export const chat = (payload: AiChatPayload) =>
   http.post<never, AiChatResponse>('/v1/ai/chat', payload)
 
@@ -76,3 +81,6 @@ export const getRetrievalSettings = () =>
 
 export const updateRetrievalSettings = (payload: AiUpdateRetrievalSettingsPayload) =>
   http.put<never, AiRetrievalSettingUpdateView>('/v1/ai/settings/retrieval', payload)
+
+export const submitAiMessageFeedback = (id: number, payload: AiMessageFeedbackPayload) =>
+  http.post<never, void>(`/v1/ai/messages/${id}/feedback`, payload)
