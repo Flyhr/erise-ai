@@ -15,6 +15,7 @@ import com.erise.ai.backend.common.exception.ErrorCodes;
 import com.erise.ai.backend.common.util.SecurityUtils;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.validation.Valid;
+import jakarta.validation.constraints.Email;
 import jakarta.validation.constraints.DecimalMin;
 import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotBlank;
@@ -35,6 +36,7 @@ import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.http.HttpStatus;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -72,6 +74,17 @@ public class AdminController {
     @PostMapping("/users/{id}/status")
     public ApiResponse<Void> changeStatus(@PathVariable Long id, @Valid @RequestBody AdminUserStatusRequest request) {
         adminService.changeUserStatus(id, request.status());
+        return ApiResponse.success("success", null);
+    }
+
+    @PutMapping("/users/{id}")
+    public ApiResponse<AdminUserView> updateUser(@PathVariable Long id, @Valid @RequestBody AdminUserUpdateRequest request) {
+        return ApiResponse.success(adminService.updateUser(id, request));
+    }
+
+    @DeleteMapping("/users/{id}")
+    public ApiResponse<Void> deleteUser(@PathVariable Long id) {
+        adminService.deleteUser(id);
         return ApiResponse.success("success", null);
     }
 
@@ -223,18 +236,85 @@ class AdminService {
 
     void changeUserStatus(Long userId, String status) {
         var currentUser = SecurityUtils.currentUser();
-        UserEntity user = userMapper.selectById(userId);
-        if (user == null) {
-            return;
+        UserEntity user = findUserOrThrow(userId);
+        String normalizedStatus = normalizeUserStatus(status);
+        if (currentUser.userId().equals(userId) && !"ACTIVE".equals(normalizedStatus)) {
+            throw new BizException(ErrorCodes.BAD_REQUEST, "不能禁用当前登录账号", HttpStatus.BAD_REQUEST);
         }
-        if ("ADMIN".equalsIgnoreCase(user.getRoleCode())) {
-            throw new BizException(ErrorCodes.BAD_REQUEST, "Administrator accounts cannot be disabled", HttpStatus.BAD_REQUEST);
+        if ("ADMIN".equalsIgnoreCase(user.getRoleCode()) && !"ACTIVE".equals(normalizedStatus)) {
+            throw new BizException(ErrorCodes.BAD_REQUEST, "管理员账号不支持禁用", HttpStatus.BAD_REQUEST);
         }
-        user.setStatus(status);
-        user.setEnabled("ACTIVE".equalsIgnoreCase(status) ? 1 : 0);
+        user.setStatus(normalizedStatus);
+        user.setEnabled("ACTIVE".equals(normalizedStatus) ? 1 : 0);
         user.setUpdatedBy(currentUser.userId());
         userMapper.updateById(user);
-        auditLogService.log(currentUser, "ADMIN_USER_STATUS", "USER", userId, status);
+        auditLogService.log(currentUser, "ADMIN_USER_STATUS", "USER", userId, normalizedStatus);
+    }
+
+    AdminUserView updateUser(Long userId, AdminUserUpdateRequest request) {
+        var currentUser = SecurityUtils.currentUser();
+        UserEntity user = findUserOrThrow(userId);
+        String username = normalizeManagedUsername(request.username());
+        String displayName = normalizeManagedDisplayName(request.displayName());
+        String email = normalizeManagedEmail(request.email());
+
+        UserEntity duplicatedUsername = userMapper.selectOne(new LambdaQueryWrapper<UserEntity>()
+                .eq(UserEntity::getUsername, username)
+                .ne(UserEntity::getId, userId)
+                .last("limit 1"));
+        if (duplicatedUsername != null) {
+            throw new BizException(ErrorCodes.CONFLICT, "用户名已存在", HttpStatus.CONFLICT);
+        }
+
+        UserEntity duplicatedEmail = userMapper.selectOne(new LambdaQueryWrapper<UserEntity>()
+                .eq(UserEntity::getEmail, email)
+                .ne(UserEntity::getId, userId)
+                .last("limit 1"));
+        if (duplicatedEmail != null) {
+            throw new BizException(ErrorCodes.CONFLICT, "邮箱已被使用", HttpStatus.CONFLICT);
+        }
+
+        user.setUsername(username);
+        user.setEmail(email);
+        user.setUpdatedBy(currentUser.userId());
+        userMapper.updateById(user);
+
+        UserProfileEntity profile = userProfileMapper.selectOne(new LambdaQueryWrapper<UserProfileEntity>()
+                .eq(UserProfileEntity::getUserId, userId)
+                .last("limit 1"));
+        if (profile == null) {
+            profile = new UserProfileEntity();
+            profile.setUserId(userId);
+            profile.setDisplayName(displayName);
+            profile.setCreatedBy(currentUser.userId());
+            profile.setUpdatedBy(currentUser.userId());
+            userProfileMapper.insert(profile);
+        } else {
+            profile.setDisplayName(displayName);
+            profile.setUpdatedBy(currentUser.userId());
+            userProfileMapper.updateById(profile);
+        }
+
+        auditLogService.log(currentUser, "ADMIN_USER_UPDATE", "USER", userId, Map.of(
+                "username", username,
+                "displayName", displayName,
+                "email", email));
+        return mapAdminUserView(userId);
+    }
+
+    void deleteUser(Long userId) {
+        var currentUser = SecurityUtils.currentUser();
+        UserEntity user = findUserOrThrow(userId);
+        if (currentUser.userId().equals(userId)) {
+            throw new BizException(ErrorCodes.BAD_REQUEST, "不能删除当前登录账号", HttpStatus.BAD_REQUEST);
+        }
+        if ("ADMIN".equalsIgnoreCase(user.getRoleCode())) {
+            throw new BizException(ErrorCodes.BAD_REQUEST, "管理员账号不支持删除", HttpStatus.BAD_REQUEST);
+        }
+        userProfileMapper.delete(new LambdaQueryWrapper<UserProfileEntity>()
+                .eq(UserProfileEntity::getUserId, userId));
+        userMapper.deleteById(userId);
+        auditLogService.log(currentUser, "ADMIN_USER_DELETE", "USER", userId, Map.of("username", user.getUsername()));
     }
 
     PageResponse<AdminTaskView> tasks(long pageNum, long pageSize) {
@@ -916,6 +996,91 @@ class AdminService {
         return where.toString();
     }
 
+    private UserEntity findUserOrThrow(Long userId) {
+        UserEntity user = userMapper.selectById(userId);
+        if (user == null) {
+            throw new BizException(ErrorCodes.NOT_FOUND, "用户不存在", HttpStatus.NOT_FOUND);
+        }
+        return user;
+    }
+
+    private String normalizeUserStatus(String value) {
+        String normalized = trimToNull(value);
+        if (normalized == null) {
+            throw new BizException(ErrorCodes.BAD_REQUEST, "用户状态不能为空", HttpStatus.BAD_REQUEST);
+        }
+        String upperCaseStatus = normalized.toUpperCase(Locale.ROOT);
+        if (!"ACTIVE".equals(upperCaseStatus) && !"DISABLED".equals(upperCaseStatus)) {
+            throw new BizException(ErrorCodes.BAD_REQUEST, "仅支持 ACTIVE 或 DISABLED 状态", HttpStatus.BAD_REQUEST);
+        }
+        return upperCaseStatus;
+    }
+
+    private String normalizeManagedUsername(String value) {
+        String normalized = trimToNull(value);
+        if (normalized == null) {
+            throw new BizException(ErrorCodes.BAD_REQUEST, "请输入用户名", HttpStatus.BAD_REQUEST);
+        }
+        if (normalized.length() > 64) {
+            throw new BizException(ErrorCodes.BAD_REQUEST, "用户名不能超过 64 个字符", HttpStatus.BAD_REQUEST);
+        }
+        if (normalized.contains(" ")) {
+            throw new BizException(ErrorCodes.BAD_REQUEST, "用户名不能包含空格", HttpStatus.BAD_REQUEST);
+        }
+        return normalized;
+    }
+
+    private String normalizeManagedDisplayName(String value) {
+        String normalized = trimToNull(value);
+        if (normalized == null) {
+            throw new BizException(ErrorCodes.BAD_REQUEST, "请输入显示名称", HttpStatus.BAD_REQUEST);
+        }
+        if (normalized.length() > 128) {
+            throw new BizException(ErrorCodes.BAD_REQUEST, "显示名称不能超过 128 个字符", HttpStatus.BAD_REQUEST);
+        }
+        return normalized;
+    }
+
+    private String normalizeManagedEmail(String value) {
+        String normalized = trimToNull(value);
+        if (normalized == null || !normalized.matches("^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$")) {
+            throw new BizException(ErrorCodes.BAD_REQUEST, "请输入正确的邮箱地址", HttpStatus.BAD_REQUEST);
+        }
+        if (normalized.length() > 128) {
+            throw new BizException(ErrorCodes.BAD_REQUEST, "邮箱不能超过 128 个字符", HttpStatus.BAD_REQUEST);
+        }
+        return normalized;
+    }
+
+    private AdminUserView mapAdminUserView(Long userId) {
+        return jdbcTemplate.queryForObject("""
+                        select u.id,
+                               u.username,
+                               coalesce(up.display_name, u.username) as display_name,
+                               u.email,
+                               u.role_code,
+                               u.status,
+                               u.enabled,
+                               u.created_at
+                        from ea_user u
+                        left join ea_user_profile up on up.user_id = u.id and up.deleted = 0
+                        where u.deleted = 0
+                          and u.id = ?
+                        limit 1
+                        """,
+                (rs, rowNum) -> new AdminUserView(
+                        rs.getLong("id"),
+                        rs.getString("username"),
+                        rs.getString("display_name"),
+                        rs.getString("email"),
+                        rs.getString("role_code"),
+                        rs.getString("status"),
+                        rs.getInt("enabled"),
+                        toLocalDateTime(rs.getTimestamp("created_at"))
+                ),
+                userId);
+    }
+
     private long count(String table) {
         Long value = jdbcTemplate.queryForObject("select count(*) from " + table + " where deleted = 0", Long.class);
         return value == null ? 0 : value;
@@ -1131,6 +1296,14 @@ record AdminUserView(
 }
 
 record AdminUserStatusRequest(@NotBlank String status) {
+}
+
+record AdminUserUpdateRequest(
+        @NotBlank(message = "请输入用户名") @Size(max = 64, message = "用户名不能超过 64 个字符") String username,
+        @NotBlank(message = "请输入显示名称") @Size(max = 128, message = "显示名称不能超过 128 个字符") String displayName,
+        @NotBlank(message = "请输入邮箱地址") @Email(message = "请输入正确的邮箱地址")
+        @Size(max = 128, message = "邮箱不能超过 128 个字符") String email
+) {
 }
 
 record AdminTaskView(

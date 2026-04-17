@@ -14,13 +14,17 @@ from src.app.adapters.java.attachment_client import (
     archive_file,
     fetch_document_context,
     fetch_file_context,
+    update_document_content,
     update_document_summary,
     update_document_tags,
     update_document_title,
+    update_file_content,
+    update_file_title,
 )
 from src.app.adapters.java.project_client import create_project_weekly_report_draft, fetch_project_context
 from src.app.adapters.llm.base import AdapterUsage
 from src.app.core.exceptions import AiServiceError
+from src.app.models.ai_message_citation import AiMessageCitation
 from src.app.schemas.chat import ChatCompletionRequest
 from src.app.schemas.common import CamelModel
 from src.app.services.model_registry import get_model_adapter, get_model_config
@@ -30,7 +34,7 @@ SYSTEM_ACTION_SOURCE = 'SYSTEM_ACTION'
 ACTION_FALLBACK_SOURCE = 'ACTION_FALLBACK'
 
 TITLE_UPDATE_PATTERNS = (
-    r'(?:把|将)?(?:发送给你(?:的)?|附件里(?:的)?|这份|该)?(?:文档|文件)(?:的)?标题'
+    r'(?:把|将)?(?:发送给你(?:的)?|附件里(?:的)?|这个|这份|该|当前)?(?:文档|文件|附件)(?:的)?标题'
     r'(?:修改为|改为|改成|设置为|变更为)\s*[:：]?\s*[“"\']?(?P<title>[^”"\'\n]{1,120})',
     r'(?:把|将)?(?:文档标题|文件标题|标题)'
     r'(?:修改为|改为|改成|设置为|变更为)\s*[:：]?\s*[“"\']?(?P<title>[^”"\'\n]{1,120})',
@@ -58,6 +62,19 @@ WEEKLY_REPORT_PATTERNS = (
 )
 
 
+CONTENT_UPDATE_PATTERNS = (
+    r'(?:修改|改写|重写|更新|润色|补充|追加|增加|添加|插入|删除|删掉|替换).{0,24}(?:正文|内容|文本|文案)',
+    r'(?:把|将|在).{0,12}(?:这个|这份|当前)?(?:文档|文件).{0,24}(?:修改|改写|重写|更新|润色|补充|追加|增加|添加|插入|删除|删掉|替换)',
+    r'(?:edit|rewrite|update|revise|append|add|insert|delete|replace).{0,20}(?:content|body|text)',
+)
+
+EXPLICIT_APPEND_PATTERNS = (
+    r'(?:增加|添加|补充|追加|插入)\s*[:：]\s*(?P<content>.+)$',
+    r'(?:增加|添加|补充|追加|插入).{0,8}(?:以下|这句|这段|如下)?(?:内容|文本)?\s*[:：]\s*(?P<content>.+)$',
+    r'(?:add|append|insert)\s*[:：]\s*(?P<content>.+)$',
+)
+
+
 class DocumentTitleActionParams(CamelModel):
     title: str
 
@@ -78,6 +95,11 @@ class WeeklyReportDraftActionParams(CamelModel):
     instruction: str
 
 
+class ContentUpdateActionParams(CamelModel):
+    instruction: str
+    append_text: str | None = None
+
+
 def _normalize_message(message: str) -> str:
     return ' '.join(message.strip().split())
 
@@ -96,6 +118,19 @@ def _resolve_file_id(request: ChatCompletionRequest) -> int | None:
     if len(attachments) == 1:
         return attachments[0].source_id
     return None
+
+
+def _has_document_target_context(request: ChatCompletionRequest) -> bool:
+    return bool(request.context.document_id) or any(item.attachment_type == 'DOCUMENT' for item in request.context.attachments)
+
+
+def _has_file_target_context(request: ChatCompletionRequest) -> bool:
+    return any(item.attachment_type == 'FILE' for item in request.context.attachments)
+
+
+def _title_request_mentions_file(message: str) -> bool:
+    normalized = _normalize_message(message)
+    return bool(re.search(r'(?:文件|附件)(?:的)?标题|(?:这个|这份|该|当前)?(?:文件|附件)', normalized, flags=re.IGNORECASE))
 
 
 def _resolve_project_id(request: ChatCompletionRequest) -> int | None:
@@ -125,11 +160,60 @@ def _extract_requested_title(message: str) -> str | None:
     return None
 
 
+def _has_content_update_intent(message: str) -> bool:
+    normalized = _normalize_message(message)
+    return any(re.search(pattern, normalized, flags=re.IGNORECASE) for pattern in CONTENT_UPDATE_PATTERNS)
+
+
+def _extract_append_text(message: str) -> str | None:
+    normalized = _normalize_message(message)
+    for pattern in EXPLICIT_APPEND_PATTERNS:
+        matched = re.search(pattern, normalized, flags=re.IGNORECASE)
+        if not matched:
+            continue
+        content = matched.group('content').strip(' “"\'，。；;')
+        if content:
+            return content[:1000]
+    return None
+
+
+def _content_update_params(request: ChatCompletionRequest) -> ContentUpdateActionParams | None:
+    if not _has_content_update_intent(request.message):
+        return None
+    normalized = _normalize_message(request.message)
+    return ContentUpdateActionParams(instruction=normalized, append_text=_extract_append_text(normalized))
+
+
 def match_document_title_action(request: ChatCompletionRequest) -> DocumentTitleActionParams | None:
+    if not _has_document_target_context(request) and _has_file_target_context(request):
+        return None
     title = _extract_requested_title(request.message)
     if not title:
         return None
     return DocumentTitleActionParams(title=title)
+
+
+def match_file_title_action(request: ChatCompletionRequest) -> DocumentTitleActionParams | None:
+    title = _extract_requested_title(request.message)
+    if not title:
+        return None
+    if _has_document_target_context(request):
+        return None
+    if _has_file_target_context(request) or _title_request_mentions_file(request.message):
+        return DocumentTitleActionParams(title=title)
+    return None
+
+
+def match_document_content_action(request: ChatCompletionRequest) -> ContentUpdateActionParams | None:
+    if not _has_document_target_context(request) or _has_file_target_context(request):
+        return None
+    return _content_update_params(request)
+
+
+def match_file_content_action(request: ChatCompletionRequest) -> ContentUpdateActionParams | None:
+    if _has_document_target_context(request) or not _has_file_target_context(request):
+        return None
+    return _content_update_params(request)
 
 
 def match_document_summary_action(request: ChatCompletionRequest) -> DocumentSummaryActionParams | None:
@@ -207,6 +291,65 @@ async def permission_file_target(runtime: ActionRuntimeContext, params: CamelMod
     return ActionPermissionDecision(allowed=True, target_type='FILE', target_id=file_id, resource=resource)
 
 
+async def permission_file_title_target(runtime: ActionRuntimeContext, params: CamelModel) -> ActionPermissionDecision:
+    del params
+    file_id = _resolve_file_id(runtime.request)
+    if not file_id:
+        return ActionPermissionDecision(
+            allowed=False,
+            fallback_message='我识别到你想修改文件标题，但当前上下文里没有唯一可操作的文件。请先附上单个文件，或明确指定当前文件。',
+        )
+    resource = await fetch_file_context(file_id, runtime.request_id)
+    if not resource:
+        return ActionPermissionDecision(
+            allowed=False,
+            fallback_message='没有找到可操作的文件上下文，请确认文件仍然存在并且你拥有访问权限。',
+        )
+    if int(resource.get('archived') or 0) == 1:
+        return ActionPermissionDecision(
+            allowed=False,
+            target_type='FILE',
+            target_id=file_id,
+            resource=resource,
+            fallback_message='这份文件已经归档，不能继续修改标题。请先恢复文件后再操作。',
+        )
+    return ActionPermissionDecision(allowed=True, target_type='FILE', target_id=file_id, resource=resource)
+
+
+async def permission_file_content_target(runtime: ActionRuntimeContext, params: CamelModel) -> ActionPermissionDecision:
+    del params
+    file_id = _resolve_file_id(runtime.request)
+    if not file_id:
+        return ActionPermissionDecision(
+            allowed=False,
+            fallback_message='我识别到你想修改文件正文，但当前上下文里没有唯一可操作的文件。请先附上单个文件后再试。',
+        )
+    resource = await fetch_file_context(file_id, runtime.request_id)
+    if not resource:
+        return ActionPermissionDecision(
+            allowed=False,
+            fallback_message='没有找到可操作的文件上下文，请确认文件仍然存在并且你拥有访问权限。',
+        )
+    if int(resource.get('archived') or 0) == 1:
+        return ActionPermissionDecision(
+            allowed=False,
+            target_type='FILE',
+            target_id=file_id,
+            resource=resource,
+            fallback_message='这份文件已经归档，不能继续修改正文。请先恢复文件后再操作。',
+        )
+    extension = str(resource.get('fileExt') or '').lower()
+    if extension not in {'doc', 'docx', 'txt'}:
+        return ActionPermissionDecision(
+            allowed=False,
+            target_type='FILE',
+            target_id=file_id,
+            resource=resource,
+            fallback_message='当前仅支持通过 AI 修改 doc、docx、txt 文件的在线正文内容。',
+        )
+    return ActionPermissionDecision(allowed=True, target_type='FILE', target_id=file_id, resource=resource)
+
+
 async def permission_project_target(runtime: ActionRuntimeContext, params: CamelModel) -> ActionPermissionDecision:
     del params
     project_id = _resolve_project_id(runtime.request)
@@ -248,6 +391,49 @@ async def execute_document_title_action(
     )
 
 
+async def execute_file_title_action(
+    runtime: ActionRuntimeContext,
+    params: DocumentTitleActionParams,
+    permission: ActionPermissionDecision,
+) -> ActionExecutionResult:
+    started_at = perf_counter()
+    detail = await update_file_title(permission.target_id, runtime.user_id, params.title, runtime.request_id)
+    latency_ms = max(1, int((perf_counter() - started_at) * 1000))
+    file_name = str((detail or {}).get('fileName') or params.title)
+    compact_detail = None
+    if isinstance(detail, dict):
+        compact_detail = {
+            'id': detail.get('id'),
+            'projectId': detail.get('projectId'),
+            'fileName': detail.get('fileName'),
+            'fileExt': detail.get('fileExt'),
+            'mimeType': detail.get('mimeType'),
+            'archived': detail.get('archived'),
+            'updatedAt': detail.get('updatedAt'),
+        }
+    runtime.db.query(AiMessageCitation).filter(
+        AiMessageCitation.user_id == runtime.user_id,
+        AiMessageCitation.source_type == 'FILE',
+        AiMessageCitation.source_id == permission.target_id,
+    ).update(
+        {AiMessageCitation.source_title: file_name},
+        synchronize_session=False,
+    )
+    answer = f'已将文件标题更新为《{file_name}》。如果你愿意，我还可以继续帮你总结这份文件，或基于它继续整理项目知识。'
+    return ActionExecutionResult(
+        action_code='file.update_title',
+        answer=answer,
+        answer_source=SYSTEM_ACTION_SOURCE,
+        used_tools=['file.update_title'],
+        provider_code=SYSTEM_PROVIDER_CODE,
+        model_code='file-title-update',
+        raw_payload={'file': compact_detail},
+        latency_ms=latency_ms,
+        target_type=permission.target_type,
+        target_id=permission.target_id,
+    )
+
+
 def _trim_text(text: str, limit: int = 6000) -> str:
     normalized = text.strip()
     if len(normalized) <= limit:
@@ -272,6 +458,125 @@ async def _run_model_text(
         runtime.request.max_tokens,
     )
     return result.text.strip(), result.usage, result.provider_code, result.model_code
+
+
+def _append_plain_text(current_text: str, append_text: str) -> str:
+    base = current_text.strip()
+    addition = append_text.strip()
+    if not base:
+        return addition
+    if not addition:
+        return base
+    return f'{base}\n\n{addition}'
+
+
+async def _build_revised_plain_text(
+    runtime: ActionRuntimeContext,
+    params: ContentUpdateActionParams,
+    resource_title: str,
+    current_plain_text: str,
+    target_label: str,
+) -> tuple[str, AdapterUsage, str, str]:
+    if params.append_text:
+        return _append_plain_text(current_plain_text, params.append_text), AdapterUsage(), SYSTEM_PROVIDER_CODE, 'content-append-action'
+
+    revised, usage, provider_code, model_code = await _run_model_text(
+        runtime,
+        '你是 Erise-AI 的知识文稿编辑助手。请根据用户要求修改正文。只输出修改后的完整正文，不要解释，不要使用 Markdown 代码块。'
+        '如果用户只要求增加或补充内容，请保留原文结构，并将新增内容放在最合适的位置；未指定位置时追加到正文末尾。',
+        f'{target_label}标题：{resource_title or "未命名"}\n'
+        f'用户要求：{params.instruction}\n\n'
+        f'当前正文：\n{_trim_text(current_plain_text, 9000)}\n\n'
+        '请输出修改后的完整正文：',
+    )
+    revised = revised.strip()
+    if not revised:
+        raise AiServiceError('ACTION_CONTENT_EMPTY', 'Revised content is empty', status_code=400)
+    return revised, usage, provider_code, model_code
+
+
+async def execute_document_content_action(
+    runtime: ActionRuntimeContext,
+    params: ContentUpdateActionParams,
+    permission: ActionPermissionDecision,
+) -> ActionExecutionResult:
+    resource = permission.resource or {}
+    title = str(resource.get('title') or '文档')
+    current_plain_text = str(resource.get('plainText') or '')
+    started_at = perf_counter()
+    revised, usage, provider_code, model_code = await _build_revised_plain_text(
+        runtime,
+        params,
+        title,
+        current_plain_text,
+        '文档',
+    )
+    detail = await update_document_content(permission.target_id, runtime.user_id, revised, runtime.request_id)
+    latency_ms = max(1, int((perf_counter() - started_at) * 1000))
+    compact_detail = None
+    if isinstance(detail, dict):
+        compact_detail = {
+            'id': detail.get('id'),
+            'projectId': detail.get('projectId'),
+            'title': detail.get('title'),
+            'updatedAt': detail.get('updatedAt'),
+        }
+    return ActionExecutionResult(
+        action_code='document.update_content',
+        answer=f'已根据你的要求更新文档《{str((detail or {}).get("title") or title)}》的正文内容。',
+        answer_source=SYSTEM_ACTION_SOURCE,
+        used_tools=['document.update_content'],
+        provider_code=provider_code,
+        model_code=model_code,
+        usage=usage,
+        raw_payload={'document': compact_detail, 'plainTextLength': len(revised)},
+        latency_ms=latency_ms,
+        target_type=permission.target_type,
+        target_id=permission.target_id,
+    )
+
+
+async def execute_file_content_action(
+    runtime: ActionRuntimeContext,
+    params: ContentUpdateActionParams,
+    permission: ActionPermissionDecision,
+) -> ActionExecutionResult:
+    resource = permission.resource or {}
+    file_name = str(resource.get('fileName') or '文件')
+    current_plain_text = str(resource.get('plainText') or '')
+    started_at = perf_counter()
+    revised, usage, provider_code, model_code = await _build_revised_plain_text(
+        runtime,
+        params,
+        file_name,
+        current_plain_text,
+        '文件',
+    )
+    detail = await update_file_content(permission.target_id, runtime.user_id, revised, runtime.request_id)
+    latency_ms = max(1, int((perf_counter() - started_at) * 1000))
+    compact_detail = None
+    if isinstance(detail, dict):
+        compact_detail = {
+            'id': detail.get('id'),
+            'projectId': detail.get('projectId'),
+            'fileName': detail.get('fileName'),
+            'fileExt': detail.get('fileExt'),
+            'archived': detail.get('archived'),
+            'updatedAt': detail.get('updatedAt'),
+        }
+    return ActionExecutionResult(
+        action_code='file.update_content',
+        answer=f'已根据你的要求更新文件《{str((detail or {}).get("fileName") or file_name)}》的正文内容。',
+        answer_source=SYSTEM_ACTION_SOURCE,
+        used_tools=['file.update_content'],
+        provider_code=provider_code,
+        model_code=model_code,
+        usage=usage,
+        raw_payload={'file': compact_detail, 'plainTextLength': len(revised)},
+        latency_ms=latency_ms,
+        target_type=permission.target_type,
+        target_id=permission.target_id,
+    )
 
 
 async def execute_document_summary_action(
@@ -417,12 +722,36 @@ async def execute_weekly_report_draft_action(
 def build_builtin_action_definitions() -> list[ActionDefinition]:
     return [
         ActionDefinition(
+            action_code='file.update_title',
+            match_rule=match_file_title_action,
+            param_schema=DocumentTitleActionParams,
+            permission_rule=permission_file_title_target,
+            executor=execute_file_title_action,
+            fallback_message='我识别到你想修改文件标题，但当前没有唯一可操作的文件。请先附上单个文件后再试。',
+        ),
+        ActionDefinition(
             action_code='document.update_title',
             match_rule=match_document_title_action,
             param_schema=DocumentTitleActionParams,
             permission_rule=permission_document_target,
             executor=execute_document_title_action,
             fallback_message='我识别到你想修改文档标题，但当前没有唯一可操作的文档。请先附上单个文档后再试。',
+        ),
+        ActionDefinition(
+            action_code='file.update_content',
+            match_rule=match_file_content_action,
+            param_schema=ContentUpdateActionParams,
+            permission_rule=permission_file_content_target,
+            executor=execute_file_content_action,
+            fallback_message='我识别到你想修改文件正文，但当前没有唯一且可编辑的文件可供操作。',
+        ),
+        ActionDefinition(
+            action_code='document.update_content',
+            match_rule=match_document_content_action,
+            param_schema=ContentUpdateActionParams,
+            permission_rule=permission_document_target,
+            executor=execute_document_content_action,
+            fallback_message='我识别到你想修改文档正文，但当前没有唯一可操作的文档。',
         ),
         ActionDefinition(
             action_code='document.generate_summary',

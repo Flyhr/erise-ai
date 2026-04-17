@@ -66,8 +66,9 @@ public class DocumentController {
     }
 
     @PostMapping("/{id}/publish")
-    public ApiResponse<DocumentDetailView> publish(@PathVariable Long id) {
-        return ApiResponse.success(documentService.publish(id));
+    public ApiResponse<DocumentDetailView> publish(@PathVariable Long id,
+                                                   @RequestBody(required = false) @Valid DocumentPublishRequest request) {
+        return ApiResponse.success(documentService.publish(id, request));
     }
 
     @PostMapping("/publish-new")
@@ -199,6 +200,23 @@ class DocumentService {
         return toInternalContext(document, content);
     }
 
+    InternalDocumentContextView internalUpdateContent(Long id, Long actorUserId, String plainText) {
+        DocumentEntity document = requireAccessibleDocument(id, actorUserId);
+        DocumentContentEntity content = contentByDocumentId(document.getId());
+        String normalizedPlainText = plainText == null ? "" : plainText;
+        String htmlSnapshot = toHtmlSnapshot(normalizedPlainText);
+        content.setContentJson(toTinyMceContentJson(htmlSnapshot));
+        content.setContentHtmlSnapshot(htmlSnapshot);
+        content.setPlainText(normalizedPlainText);
+        content.setUpdatedBy(actorUserId);
+        documentContentMapper.updateById(content);
+        document.setUpdatedBy(actorUserId);
+        documentMapper.updateById(document);
+        syncRagKnowledge(document, normalizedPlainText, false);
+        auditLogService.log(actorUserId, "DOCUMENT_CONTENT_UPDATE_BY_AI", "DOCUMENT", id, java.util.Map.of("plainTextLength", normalizedPlainText.length()));
+        return toInternalContext(document, content);
+    }
+
     List<TagView> internalUpdateTags(Long id, Long actorUserId, List<String> tags) {
         requireAccessibleDocument(id, actorUserId);
         documentTagRelMapper.delete(new LambdaQueryWrapper<DocumentTagRelEntity>().eq(DocumentTagRelEntity::getDocumentId, id));
@@ -286,10 +304,23 @@ class DocumentService {
         return toDetail(document, content);
     }
 
-    DocumentDetailView publish(Long id) {
+    @Transactional
+    DocumentDetailView publish(Long id, DocumentPublishRequest request) {
         var currentUser = SecurityUtils.currentUser();
         DocumentEntity document = requireAccessibleDocument(id);
         DocumentContentEntity content = contentByDocumentId(id);
+        if (request != null) {
+            document.setTitle(request.title());
+            document.setSummary(request.summary());
+            document.setUpdatedBy(currentUser.userId());
+            documentMapper.updateById(document);
+
+            content.setContentJson(request.contentJson());
+            content.setContentHtmlSnapshot(request.contentHtmlSnapshot());
+            content.setPlainText(request.plainText());
+            content.setUpdatedBy(currentUser.userId());
+            documentContentMapper.updateById(content);
+        }
         int nextVersion = document.getLatestVersionNo() + 1;
 
         DocumentVersionEntity version = new DocumentVersionEntity();
@@ -310,7 +341,16 @@ class DocumentService {
         documentMapper.updateById(document);
 
         syncRagKnowledge(document, content.getPlainText(), false);
-        auditLogService.log(currentUser, "DOCUMENT_PUBLISH", "DOCUMENT", id, java.util.Map.of("versionNo", nextVersion));
+        auditLogService.log(
+                currentUser,
+                "DOCUMENT_PUBLISH",
+                "DOCUMENT",
+                id,
+                java.util.Map.of(
+                        "versionNo", nextVersion,
+                        "updatedBeforePublish", request != null
+                )
+        );
         return detail(id);
     }
 
@@ -503,6 +543,21 @@ class DocumentService {
         }
         return builder.length() == 0 ? "<p></p>" : builder.toString();
     }
+
+    private String toTinyMceContentJson(String htmlSnapshot) {
+        return "{\"type\":\"TINYMCE\",\"html\":\"" + escapeJson(htmlSnapshot) + "\"}";
+    }
+
+    private String escapeJson(String value) {
+        return value == null ? "" : value
+                .replace("\\", "\\\\")
+                .replace("\"", "\\\"")
+                .replace("\b", "\\b")
+                .replace("\f", "\\f")
+                .replace("\n", "\\n")
+                .replace("\r", "\\r")
+                .replace("\t", "\\t");
+    }
 }
 
 interface DocumentMapper extends BaseMapper<DocumentEntity> {
@@ -573,6 +628,15 @@ record DocumentCreateRequest(@NotNull Long projectId, @NotBlank String title, St
 }
 
 record DocumentUpdateRequest(
+        @NotBlank String title,
+        String summary,
+        @NotNull String contentJson,
+        @NotNull String contentHtmlSnapshot,
+        @NotNull String plainText
+) {
+}
+
+record DocumentPublishRequest(
         @NotBlank String title,
         String summary,
         @NotNull String contentJson,

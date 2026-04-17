@@ -38,12 +38,25 @@ async def update_document_title(document_id: int, actor_user_id: int, title: str
     return await _request('POST', f'/documents/{document_id}/title', request_id, {'actorUserId': actor_user_id, 'title': title})
 
 
+async def update_file_title(file_id: int, actor_user_id: int, title: str, request_id: str) -> dict[str, object] | None:
+    return await _request('POST', f'/files/{file_id}/title', request_id, {'actorUserId': actor_user_id, 'title': title})
+
+
 async def update_document_summary(document_id: int, actor_user_id: int, summary: str, request_id: str) -> dict[str, object] | None:
     return await _request(
         'POST',
         f'/documents/{document_id}/summary',
         request_id,
         {'actorUserId': actor_user_id, 'summary': summary},
+    )
+
+
+async def update_document_content(document_id: int, actor_user_id: int, plain_text: str, request_id: str) -> dict[str, object] | None:
+    return await _request(
+        'POST',
+        f'/documents/{document_id}/content',
+        request_id,
+        {'actorUserId': actor_user_id, 'plainText': plain_text},
     )
 
 
@@ -61,3 +74,12 @@ async def update_document_tags(document_id: int, actor_user_id: int, tags: list[
 
 async def archive_file(file_id: int, actor_user_id: int, request_id: str) -> dict[str, object] | None:
     return await _request('POST', f'/files/{file_id}/archive', request_id, {'actorUserId': actor_user_id})
+
+
+async def update_file_content(file_id: int, actor_user_id: int, plain_text: str, request_id: str) -> dict[str, object] | None:
+    return await _request(
+        'POST',
+        f'/files/{file_id}/content',
+        request_id,
+        {'actorUserId': actor_user_id, 'plainText': plain_text},
+    )

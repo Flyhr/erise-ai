@@ -78,6 +78,12 @@ export interface AdminUserView {
   createdAt: string
 }
 
+export interface AdminUserUpdatePayload {
+  username: string
+  displayName: string
+  email: string
+}
+
 export interface AdminTaskView {
   id: number
   taskOrigin: 'FILE_PARSE' | 'RAG' | 'TEMP_FILE_PARSE'
@@ -152,6 +158,12 @@ export const getAdminUsers = (params: { pageNum?: number; pageSize?: number; q?:
 
 export const updateAdminUserStatus = (id: number, status: string) =>
   http.post(`/v1/admin/users/${id}/status`, { status })
+
+export const updateAdminUser = (id: number, payload: AdminUserUpdatePayload) =>
+  http.put<never, AdminUserView>(`/v1/admin/users/${id}`, payload)
+
+export const deleteAdminUser = (id: number) =>
+  http.delete(`/v1/admin/users/${id}`)
 
 export const getAdminTasks = (params: { pageNum?: number; pageSize?: number }) =>
   http.get<never, PageResponse<AdminTaskView>>('/v1/admin/tasks', { params })

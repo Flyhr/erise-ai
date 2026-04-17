@@ -5,12 +5,14 @@ from unittest.mock import AsyncMock, patch
 
 from fastapi.testclient import TestClient
 
+from src.app.actions.protocol import ActionExecutionResult
 from src.app.api.deps import RequestContext
 from src.app.adapters.llm.base import AdapterStreamEvent, AdapterUsage
 from src.app.models.ai_request_log import AiRequestLog
 from src.app.schemas.chat import ChatCompletionRequest, ChatContext
 from src.app.schemas.message import CitationView
 from src.app.schemas.rag import RagQueryHit, RagQueryResponse
+from src.app.services.context_service import LoadedAttachmentContext
 from src.app.services.rag_service import RetrievalDecision
 
 from tests.support import (
@@ -188,6 +190,112 @@ class AiBaselineApiTest(unittest.TestCase):
             self.assertEqual(1, len(logs))
             self.assertTrue(logs[0].stream)
             self.assertEqual('success', logs[0].message_status)
+
+    def test_stream_completion_endpoint_with_action_result(self) -> None:
+        action_result = ActionExecutionResult(
+            action_code='rename_document_title',
+            answer='The title has been updated to test-file-5mb.',
+            answer_source='ACTION_EXECUTED',
+            used_tools=['document_title_update'],
+            provider_code='SYSTEM',
+            model_code='action-router',
+            usage=AdapterUsage(),
+        )
+        with TestClient(app) as client:
+            with patch('src.app.services.chat_service.action_service.execute', new=AsyncMock(return_value=action_result)):
+                with client.stream(
+                    'POST',
+                    '/internal/ai/chat/completions/stream',
+                    headers=request_headers('stream-action-1'),
+                    json={'message': 'Rename this file title to test-file-5mb', 'context': {'projectId': 88, 'attachments': []}},
+                ) as response:
+                    self.assertEqual(200, response.status_code)
+                    payload = ''.join(response.iter_text())
+
+        self.assertIn('event: stream.start', payload)
+        self.assertIn('event: stream.delta', payload)
+        self.assertIn('The title has been updated to test-file-5mb.', payload)
+        self.assertIn('event: stream.end', payload)
+
+    def test_stream_completion_endpoint_with_pending_attachment_guard(self) -> None:
+        pending_attachment = LoadedAttachmentContext(
+            attachment_type='FILE',
+            source_id=501,
+            project_id=88,
+            title='Test Attachment.pdf',
+            summary='',
+            plain_text='',
+            snippet='',
+            truncated=False,
+            parse_status='PROCESSING',
+            index_status='PENDING',
+            parse_error_message=None,
+            readiness='processing',
+        )
+        with TestClient(app) as client:
+            with (
+                patch('src.app.services.chat_service.action_service.execute', new=AsyncMock(return_value=None)),
+                patch('src.app.services.chat_service.load_attachment_contexts', new=AsyncMock(return_value=[pending_attachment])),
+            ):
+                with client.stream(
+                    'POST',
+                    '/internal/ai/chat/completions/stream',
+                    headers=request_headers('stream-attachment-guard-1'),
+                    json={
+                        'message': 'Summarize this document',
+                        'context': {
+                            'projectId': 88,
+                            'attachments': [
+                                {
+                                    'attachmentType': 'FILE',
+                                    'sourceId': 501,
+                                    'projectId': 88,
+                                    'title': 'Test Attachment.pdf',
+                                }
+                            ],
+                        },
+                    },
+                ) as response:
+                    self.assertEqual(200, response.status_code)
+                    payload = ''.join(response.iter_text())
+
+        self.assertIn('event: stream.start', payload)
+        self.assertIn('event: stream.delta', payload)
+        self.assertIn('Test Attachment.pdf', payload)
+        self.assertIn('event: stream.end', payload)
+
+    def test_auto_created_session_title_is_truncated_from_first_message(self) -> None:
+        long_message = 'first-message-' * 5
+        with TestClient(app) as client:
+            adapter = FakeAdapter(answer='title-truncate-ok')
+            with (
+                patch('src.app.services.chat_service.action_service.execute', new=AsyncMock(return_value=None)),
+                patch('src.app.services.chat_service.load_attachment_contexts', new=AsyncMock(return_value=[])),
+                patch('src.app.services.chat_service.build_prompt_messages', new=AsyncMock(return_value=[{'role': 'user', 'content': long_message}])),
+                patch('src.app.services.chat_service.get_model_config', return_value=fake_model()),
+                patch('src.app.services.chat_service.get_model_adapter', return_value=adapter),
+                patch('src.app.services.chat_service.rag_service.query', new=AsyncMock(return_value=_retrieval_decision())),
+            ):
+                completion = client.post(
+                    '/internal/ai/chat/completions',
+                    headers=request_headers('complete-title-1'),
+                    json={
+                        'message': long_message,
+                        'context': {'projectId': 55, 'attachments': []},
+                    },
+                )
+
+            self.assertEqual(200, completion.status_code, completion.text)
+            session_id = completion.json()['data']['sessionId']
+
+            detail = client.get(
+                f'/internal/ai/chat/sessions/{session_id}',
+                headers=request_headers('session-title-detail-1'),
+            )
+            self.assertEqual(200, detail.status_code, detail.text)
+            session_title = detail.json()['data']['title']
+            self.assertEqual(long_message[:30], session_title)
+            self.assertEqual(30, len(session_title))
 
     def test_rag_query_file_extract_and_pdf_ocr_endpoints(self) -> None:
         with TestClient(app) as client:

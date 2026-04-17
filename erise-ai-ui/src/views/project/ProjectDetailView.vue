@@ -241,7 +241,7 @@ import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { useRoute, useRouter } from 'vue-router'
 import { createContentItem, deleteContentItem } from '@/api/content'
-import { createDocument, deleteDocument, getDocument } from '@/api/document'
+import { deleteDocument, getDocument } from '@/api/document'
 import { deleteFile, downloadFileContent, retryFileParse } from '@/api/file'
 import { getKnowledgeAssets } from '@/api/knowledge'
 import { getProject, updateProject } from '@/api/project'
@@ -700,17 +700,10 @@ const switchAssetTab = async (value: string) => {
 }
 
 const createDocumentDirectly = async () => {
-  try {
-    const created = await createDocument({
-      projectId,
-      title: '未命名文档',
-      summary: '请输入文档摘要',
-    })
-    ElMessage.success('文档已创建')
-    await router.push(`/documents/${created.id}/edit`)
-  } catch (error) {
-    ElMessage.error(resolveErrorMessage(error, '文档创建失败，请稍后重试'))
-  }
+  await router.push({
+    path: '/documents/new/edit',
+    query: { projectId },
+  })
 }
 
 const createTableDirectly = async () => {
