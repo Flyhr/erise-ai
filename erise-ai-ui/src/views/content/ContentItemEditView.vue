@@ -1,13 +1,7 @@
 ﻿<template>
   <div class="page-shell">
-    <AppPageHeader
-      :title="form.title || `${typeLabel}编辑`"
-      eyebrow="结构化内容"
-      :subtitle="pageSubtitle"
-      show-back
-      back-label="返回列表"
-      :back-to="backTarget"
-    >
+    <AppPageHeader :title="form.title || `${typeLabel}编辑`" eyebrow="表格内容" :subtitle="pageSubtitle" show-back
+      back-label="返回列表" :back-to="backTarget">
       <template #actions>
         <el-button v-if="isPreview" type="primary" @click="openEditMode">进入编辑</el-button>
         <template v-else>
@@ -19,7 +13,7 @@
 
     <ProjectSubnav v-if="projectId" :project-id="projectId" />
 
-    <AppSectionCard title="基础信息" description="结构化内容会作为独立实体保存，供搜索与 AI 使用。">
+    <AppSectionCard title="基础信息" description="表格内容会作为独立实体保存，供搜索与 AI 使用。">
       <el-form :model="form" label-position="top">
         <el-form-item label="标题">
           <el-input v-model="form.title" :disabled="isPreview" />

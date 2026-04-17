@@ -288,6 +288,27 @@ class FileService {
         return internalContext(fileId);
     }
 
+    InternalFileContextView internalUpdateTitle(Long fileId, Long actorUserId, String title) {
+        FileEntity entity = requireAccessibleFile(fileId, actorUserId);
+        String normalizedFileName = normalizeFileTitle(title, entity);
+        entity.setFileName(normalizedFileName);
+        entity.setUpdatedBy(actorUserId);
+        fileMapper.updateById(entity);
+        try {
+            ragKnowledgeService.updateKbSourceTitle(
+                    entity.getOwnerUserId(),
+                    entity.getProjectId(),
+                    "FILE",
+                    fileId,
+                    normalizedFileName,
+                    actorUserId
+            );
+        } catch (RuntimeException ignored) {
+        }
+        auditLogService.log(actorUserId, "FILE_TITLE_UPDATE_BY_AI", "FILE", fileId, java.util.Map.of("fileName", normalizedFileName));
+        return internalContext(fileId);
+    }
+
     ResponseEntity<InputStreamResource> stream(Long fileId, boolean inline) {
         var currentUser = SecurityUtils.currentUser();
         FileEntity entity = requireAccessibleFile(fileId);
@@ -568,6 +589,44 @@ class FileService {
     private String fileExtension(String name) {
         int index = name.lastIndexOf('.');
         return index > -1 ? name.substring(index + 1).toLowerCase(Locale.ROOT) : "bin";
+    }
+
+    private String normalizeFileTitle(String title, FileEntity entity) {
+        String value = title == null ? "" : title
+                .replace('\\', '_')
+                .replace('/', '_')
+                .replaceAll("[\\r\\n\\t]+", " ")
+                .replaceAll("\\s+", " ")
+                .trim();
+        if (value.isBlank()) {
+            throw new BizException(ErrorCodes.BAD_REQUEST, "File title is required");
+        }
+        String extension = entity.getFileExt();
+        if (extension == null || extension.isBlank()) {
+            extension = fileExtension(entity.getFileName());
+        }
+        extension = extension == null ? "" : extension.trim().toLowerCase(Locale.ROOT);
+        if (!extension.isBlank() && !"bin".equals(extension)) {
+            String suffix = "." + extension;
+            String lowerValue = value.toLowerCase(Locale.ROOT);
+            if (!lowerValue.endsWith(suffix)) {
+                int dotIndex = value.lastIndexOf('.');
+                if (dotIndex > 0 && dotIndex < value.length() - 1) {
+                    value = value.substring(0, dotIndex).trim();
+                }
+                value = value + suffix;
+            }
+        }
+        if (value.length() > 255) {
+            int suffixStart = value.lastIndexOf('.');
+            if (suffixStart > 0 && suffixStart < value.length() - 1) {
+                String suffix = value.substring(suffixStart);
+                value = value.substring(0, Math.max(1, 255 - suffix.length())) + suffix;
+            } else {
+                value = value.substring(0, 255);
+            }
+        }
+        return value;
     }
 
     private String buildTrashStorageKey(FileEntity entity) {

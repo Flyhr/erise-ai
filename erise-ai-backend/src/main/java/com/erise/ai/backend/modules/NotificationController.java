@@ -231,14 +231,16 @@ class NotificationService {
                                 title,
                                 content,
                                 read_flag,
+                                broadcast_flag,
                                 created_by,
                                 updated_by
-                            ) values (?, ?, ?, ?, 0, ?, ?)
+                            ) values (?, ?, ?, ?, 0, ?, ?, ?)
                             """,
                     userId,
                     ADMIN_NOTICE_TYPE,
                     title,
                     content,
+                    Boolean.TRUE.equals(request.sendToAll()) ? 1 : 0,
                     currentUser.userId(),
                     currentUser.userId());
         }

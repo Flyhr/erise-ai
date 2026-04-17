@@ -368,11 +368,16 @@ const publish = async () => {
       return
     }
 
-    const saved = await save({ silent: true })
-    if (!saved || !documentId.value) {
+    if (!documentId.value) {
       return
     }
-    const detail = await publishDocument(documentId.value)
+    const detail = await publishDocument(documentId.value, {
+      title: form.title,
+      summary: form.summary,
+      contentJson: JSON.stringify({ type: 'TINYMCE', html: contentHtml.value }),
+      contentHtmlSnapshot: contentHtml.value,
+      plainText: htmlToText(contentHtml.value),
+    })
     detailStatus.value = detail.docStatus
     updatedAt.value = detail.updatedAt
     showDocumentSyncFeedback(detail, '文档已发布')

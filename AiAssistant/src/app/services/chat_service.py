@@ -46,6 +46,8 @@ from src.app.utils.sse import sse_event
 SYSTEM_PROVIDER_CODE = 'SYSTEM'
 ATTACHMENT_CONTEXT_GUARD_MODEL = 'attachment-context-guard'
 STRICT_CITATION_GUARD_MODEL = 'strict-citation-guard'
+DEFAULT_SESSION_TITLE = '新会话'
+SESSION_TITLE_MAX_LENGTH = 30
 
 
 class CancellationStore:
@@ -112,8 +114,8 @@ class ChatService:
         return (current or 0) + 1
 
     def _session_title(self, title: str | None, message: str | None) -> str:
-        source = (title or message or '新会话').strip()
-        return source[:50] if source else '新会话'
+        source = ' '.join((title or message or DEFAULT_SESSION_TITLE).split())
+        return source[:SESSION_TITLE_MAX_LENGTH] if source else DEFAULT_SESSION_TITLE
 
     def _touch_session(self, session: AiChatSession) -> None:
         session.last_message_at = datetime.utcnow()
@@ -900,7 +902,7 @@ class ChatService:
                             'assistantMessageId': assistant_message.id,
                         },
                     )
-                    yield sse_event('stream.delta', {'requestId': request_id, 'delta': answer})
+                    yield sse_event('stream.delta', {'requestId': request_id, 'delta': action_result.answer})
                     yield sse_event(
                         'stream.end',
                         {
@@ -979,7 +981,7 @@ class ChatService:
                             'assistantMessageId': assistant_message.id,
                         },
                     )
-                    yield sse_event('stream.delta', {'requestId': request_id, 'delta': action_result.answer})
+                    yield sse_event('stream.delta', {'requestId': request_id, 'delta': answer})
                     yield sse_event(
                         'stream.end',
                         {
@@ -987,9 +989,9 @@ class ChatService:
                             'sessionId': session.id,
                             'assistantMessageId': assistant_message.id,
                             'usage': UsageView(
-                                prompt_tokens=action_result.usage.prompt_tokens,
-                                completion_tokens=action_result.usage.completion_tokens,
-                                total_tokens=action_result.usage.total_tokens,
+                                prompt_tokens=usage.prompt_tokens,
+                                completion_tokens=usage.completion_tokens,
+                                total_tokens=usage.total_tokens,
                             ).model_dump(by_alias=True),
                             'latencyMs': latency_ms,
                         },

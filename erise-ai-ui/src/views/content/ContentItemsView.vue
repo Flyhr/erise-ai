@@ -42,7 +42,7 @@
           </template>
         </el-table-column>
       </AppDataTable>
-      <AppEmptyState v-else :title="`当前项目还没有${typeLabel}`" description="先创建一条结构化内容，后续就可以在项目内统一维护和在 AI 助理中直接引用。" />
+      <AppEmptyState v-else :title="`当前项目还没有${typeLabel}`" description="先创建一条表格内容，后续就可以在项目内统一维护和在 AI 助理中直接引用。" />
 
       <template #footer>
         <div class="content-footer">
@@ -113,7 +113,7 @@ const createDefaults = () => {
   if (contentType.value === 'DATA_TABLE') {
     return {
       title: '未命名数据表',
-      summary: '用于维护结构化字段与记录。',
+      summary: '用于维护表格字段与记录。',
       contentJson: JSON.stringify({
         columns: [
           { key: 'field_1', label: '名称', type: 'TEXT' },

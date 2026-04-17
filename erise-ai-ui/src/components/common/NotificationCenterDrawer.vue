@@ -289,7 +289,7 @@ interface ComposeFormState {
   content: string
 }
 
-type NotificationTab = 'all' | 'system' | 'user'
+type NotificationTab = 'all' | 'system' | 'user' | 'unread' | 'read'
 
 const props = withDefaults(defineProps<{
   adminMode?: boolean
@@ -324,16 +324,27 @@ const composeForm = reactive<ComposeFormState>({
   content: '',
 })
 
-const tabOptions: Array<{ label: string; value: NotificationTab }> = [
+const adminTabOptions: Array<{ label: string; value: NotificationTab }> = [
   { value: 'all', label: '全部' },
   { value: 'system', label: '系统通知' },
   { value: 'user', label: '用户通知' },
 ]
 
+const userTabOptions: Array<{ label: string; value: NotificationTab }> = [
+  { value: 'all', label: '全部' },
+  { value: 'unread', label: '未读' },
+  { value: 'read', label: '已读' },
+  { value: 'system', label: '系统通知' },
+]
+
+const tabOptions = computed(() => (props.adminMode ? adminTabOptions : userTabOptions))
+
 const displayUnreadCount = computed(() => (unreadCount.value > 99 ? '99+' : unreadCount.value))
 
 const filteredNotifications = computed(() =>
   notifications.value.filter((item) => {
+    if (activeTab.value === 'unread') return !item.read
+    if (activeTab.value === 'read') return item.read
     if (activeTab.value === 'system') return isSystemNotification(item)
     if (activeTab.value === 'user') return !isSystemNotification(item)
     return true
@@ -360,6 +371,8 @@ const composeHint = computed(() =>
 )
 
 const emptyDescription = computed(() => {
+  if (activeTab.value === 'unread') return '当前没有未读通知。'
+  if (activeTab.value === 'read') return '当前没有已读通知。'
   if (activeTab.value === 'system') return '当前没有系统通知。'
   if (activeTab.value === 'user') return '当前没有用户通知。'
   return '当前没有通知。'

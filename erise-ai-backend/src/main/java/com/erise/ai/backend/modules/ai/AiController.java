@@ -143,7 +143,7 @@ class AiService {
                         event -> sendEvent(emitter, event),
                         error -> {
                             sendError(emitter, error.getMessage());
-                            emitter.completeWithError(error);
+                            emitter.complete();
                         },
                         emitter::complete
                 );

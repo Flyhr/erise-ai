@@ -16,6 +16,7 @@ import java.util.ArrayList;
 import java.util.List;
 import lombok.Data;
 import lombok.RequiredArgsConstructor;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -40,6 +41,7 @@ class RagKnowledgeService {
     private final CloudAiClient cloudAiClient;
     private final ObjectMapper objectMapper;
     private final SparseKnowledgeSupport sparseKnowledgeSupport;
+    private final JdbcTemplate jdbcTemplate;
 
     @Transactional(noRollbackFor = Exception.class)
     void replaceKbSource(Long ownerUserId,
@@ -92,6 +94,27 @@ class RagKnowledgeService {
                 mapIndexStatus(source == null ? null : source.getStatus()),
                 source == null ? null : source.getLastError()
         );
+    }
+
+    @Transactional(noRollbackFor = Exception.class)
+    void updateKbSourceTitle(Long ownerUserId,
+                             Long projectId,
+                             String sourceType,
+                             Long sourceId,
+                             String sourceTitle,
+                             Long actorUserId) {
+        RagSourceEntity source = findSource(SCOPE_KB, ownerUserId, sourceType, sourceId, 0L);
+        if (source == null) {
+            return;
+        }
+        source.setProjectId(projectId);
+        source.setSourceTitle(sourceTitle);
+        source.setUpdatedBy(actorUserId == null ? ownerUserId : actorUserId);
+        ragSourceMapper.updateById(source);
+        List<RagChunkEntity> chunks = ragChunkMapper.selectList(new LambdaQueryWrapper<RagChunkEntity>()
+                .eq(RagChunkEntity::getRagSourceId, source.getId())
+                .orderByAsc(RagChunkEntity::getChunkNum));
+        sparseKnowledgeSupport.rebuildSourceIndex(source, chunks, actorUserId == null ? ownerUserId : actorUserId);
     }
 
     private List<ChunkInput> normalizeChunks(List<ChunkInput> chunks) {
@@ -148,7 +171,7 @@ class RagKnowledgeService {
                     requestId(scopeType, sourceType, sourceId)
             );
 
-            ragChunkMapper.delete(new LambdaQueryWrapper<RagChunkEntity>().eq(RagChunkEntity::getRagSourceId, source.getId()));
+            hardDeleteChunks(source.getId());
             String collectionName = response == null || response.collectionName() == null
                     ? defaultCollection(scopeType)
                     : response.collectionName();
@@ -194,7 +217,7 @@ class RagKnowledgeService {
             task.setUpdatedBy(ownerUserId);
             ragTaskMapper.updateById(task);
         } catch (Exception exception) {
-            ragChunkMapper.delete(new LambdaQueryWrapper<RagChunkEntity>().eq(RagChunkEntity::getRagSourceId, source.getId()));
+            hardDeleteChunks(source.getId());
             source.setStatus(STATUS_FAILED);
             source.setChunkCount(0);
             source.setLastError(trimError(exception.getMessage()));
@@ -233,7 +256,7 @@ class RagKnowledgeService {
                     ),
                     requestId(scopeType, sourceType, sourceId)
             );
-            ragChunkMapper.delete(new LambdaQueryWrapper<RagChunkEntity>().eq(RagChunkEntity::getRagSourceId, source.getId()));
+            hardDeleteChunks(source.getId());
             sparseKnowledgeSupport.deleteSourceIndex(source.getId());
             source.setStatus(STATUS_DELETED);
             source.setChunkCount(0);
@@ -289,6 +312,13 @@ class RagKnowledgeService {
             ragSourceMapper.updateById(source);
         }
         return source;
+    }
+
+    private void hardDeleteChunks(Long ragSourceId) {
+        if (ragSourceId == null) {
+            return;
+        }
+        jdbcTemplate.update("delete from ea_rag_chunk where rag_source_id = ?", ragSourceId);
     }
 
     private RagTaskEntity createTask(RagSourceEntity source,

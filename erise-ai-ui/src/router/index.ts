@@ -30,8 +30,7 @@ const AdminUsersView = () => import("@/views/admin/AdminUsersView.vue");
 const AdminTasksView = () => import("@/views/admin/AdminTasksView.vue");
 const AdminAuditLogsView = () => import("@/views/admin/AdminAuditLogsView.vue");
 const AdminModelsView = () => import("@/views/admin/AdminModelsView.vue");
-const AdminAiPromptsView = () =>
-  import("@/views/admin/AdminAiPromptsView.vue");
+const AdminAiPromptsView = () => import("@/views/admin/AdminAiPromptsView.vue");
 const AdminAiRequestLogsView = () =>
   import("@/views/admin/AdminAiRequestLogsView.vue");
 const AdminAiFeedbackView = () =>
@@ -131,7 +130,7 @@ const router = createRouter({
           component: ContentItemsView,
           props: true,
           meta: {
-            title: "结构化内容",
+            title: "表格",
             description: "在项目内管理表格、画板和数据表。",
           },
         },
@@ -148,7 +147,7 @@ const router = createRouter({
           component: SearchView,
           meta: {
             title: "搜索",
-            description: "统一检索文件、文档与结构化内容。",
+            description: "统一检索文件、文档与表格内容。",
           },
         },
         {
@@ -211,7 +210,7 @@ const router = createRouter({
           component: ContentItemEditView,
           props: true,
           meta: {
-            title: "结构化编辑",
+            title: "表格编辑",
             description: "编辑表格、画板和数据表。",
           },
         },
@@ -338,7 +337,7 @@ const router = createRouter({
           component: ContentItemEditView,
           props: true,
           meta: {
-            title: "结构化编辑",
+            title: "表格编辑",
             admin: true,
           },
         },

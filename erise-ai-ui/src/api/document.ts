@@ -23,8 +23,10 @@ export const updateDocument = (
   payload: { title: string; summary?: string; contentJson: string; contentHtmlSnapshot: string; plainText: string },
 ) => http.put<never, DocumentDetailView>(`/v1/documents/${id}`, payload)
 
-export const publishDocument = (id: number) =>
-  http.post<never, DocumentDetailView>(`/v1/documents/${id}/publish`)
+export const publishDocument = (
+  id: number,
+  payload?: { title: string; summary?: string; contentJson: string; contentHtmlSnapshot: string; plainText: string },
+) => http.post<never, DocumentDetailView>(`/v1/documents/${id}/publish`, payload)
 
 export const retryDocumentIndex = (id: number) =>
   http.post<never, DocumentDetailView>(`/v1/documents/${id}/retry-index`)

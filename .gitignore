@@ -33,10 +33,10 @@ AiAssistant/INSTALL_NOTE.md
 AiAssistant/README.md
 AiAssistant/tests/
 !AiAssistant/tests/
-AiAssistant/tests/__pycache__/
-!AiAssistant/tests/__init__.py
-!AiAssistant/tests/support.py
-!AiAssistant/tests/test_ai_baseline.py
+# AiAssistant/tests/__pycache__/
+# !AiAssistant/tests/__init__.py
+# !AiAssistant/tests/support.py
+# !AiAssistant/tests/test_ai_baseline.py
 AiAssistant/.test-runtime/
 # Node
 node_modules/

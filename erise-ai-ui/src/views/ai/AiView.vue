@@ -462,7 +462,7 @@ import {
 } from '@/api/ai'
 import type { AiChatPayload } from '@/api/ai'
 import { getDocuments } from '@/api/document'
-import { getFiles } from '@/api/file'
+import { getFile, getFiles } from '@/api/file'
 import { getProjects } from '@/api/project'
 import { resolveApiUrl } from '@/api/http'
 import WorkspaceNavigationShell from '@/components/common/WorkspaceNavigationShell.vue'
@@ -1036,6 +1036,33 @@ const writeStoredMessageAssets = (sessionId: number, records: StoredMessageAsset
   window.sessionStorage.setItem(messageAttachmentStorageKey(sessionId), JSON.stringify(records))
 }
 
+const syncStoredFileTitle = (sessionId: number | undefined, fileId: number, nextTitle: string) => {
+  if (!sessionId) {
+    return
+  }
+  const records = readStoredMessageAssets(sessionId)
+  if (!records.length) {
+    return
+  }
+  let changed = false
+  const nextRecords = records.map((record) => {
+    const nextAttachments = record.attachments.map((attachment) => {
+      if (attachment.assetType !== 'FILE' || attachment.sourceId !== fileId || attachment.title === nextTitle) {
+        return attachment
+      }
+      changed = true
+      return {
+        ...attachment,
+        title: nextTitle,
+      }
+    })
+    return changed ? { ...record, attachments: nextAttachments } : record
+  })
+  if (changed) {
+    writeStoredMessageAssets(sessionId, nextRecords)
+  }
+}
+
 const persistMessageAssetRecord = (sessionId: number | undefined, record: StoredMessageAssetRecord) => {
   if (!sessionId || !record.attachments.length) {
     return
@@ -1308,6 +1335,70 @@ const restoreAttachmentState = (sessionId?: number, fallbackProjectId?: number) 
 
 const removeAttachmentState = (sessionId: number) => {
   window.sessionStorage.removeItem(attachmentStorageKey(sessionId))
+}
+
+const syncReferencedFileTitle = async (fileId: number) => {
+  try {
+    const detail = await getFile(fileId, { background: true })
+    const nextTitle = detail.fileName?.trim()
+    if (!nextTitle) {
+      return
+    }
+
+    selectedAttachments.value = selectedAttachments.value.map((attachment) =>
+      attachment.attachmentType === 'FILE' && attachment.sourceId === fileId
+        ? { ...attachment, title: nextTitle }
+        : attachment,
+    )
+    draftFiles.value = draftFiles.value.map((file) =>
+      file.id === fileId
+        ? { ...file, fileName: nextTitle }
+        : file,
+    )
+    draftAttachmentOptions.value = draftAttachmentOptions.value.map((item) =>
+      item.attachmentType === 'FILE' && item.sourceId === fileId
+        ? { ...item, title: nextTitle }
+        : item,
+    )
+    messages.value = messages.value.map((message) => {
+      const nextAttachments = message.attachments?.map((attachment) =>
+        attachment.assetType === 'FILE' && attachment.sourceId === fileId
+          ? { ...attachment, title: nextTitle }
+          : attachment,
+      )
+      const nextCitations = message.citations?.map((citation) =>
+        citation.sourceType === 'FILE' && citation.sourceId === fileId
+          ? { ...citation, sourceTitle: nextTitle }
+          : citation,
+      )
+      if (nextAttachments === message.attachments && nextCitations === message.citations) {
+        return message
+      }
+      return {
+        ...message,
+        attachments: nextAttachments,
+        citations: nextCitations,
+      }
+    })
+    persistAttachmentState(activeSessionId.value)
+    syncStoredFileTitle(activeSessionId.value, fileId, nextTitle)
+  } catch {
+    // Ignore best-effort reference refresh failures to avoid interrupting the chat flow.
+  }
+}
+
+const syncReferencedFileTitles = async (attachments: ComposerAssetSnapshot[] = []) => {
+  const fileIds = Array.from(
+    new Set(
+      attachments
+        .filter((attachment) => attachment.assetType === 'FILE' && attachment.sourceId)
+        .map((attachment) => Number(attachment.sourceId))
+        .filter((value) => Number.isFinite(value) && value > 0),
+    ),
+  )
+  for (const fileId of fileIds) {
+    await syncReferencedFileTitle(fileId)
+  }
 }
 
 const loadProjects = async (silent = true) => {
@@ -1674,6 +1765,7 @@ const applyChatResponse = async (
     persistMessageAssetRecord(response.sessionId, messageAssetRecord)
   }
   await syncSessionRoute(response.sessionId)
+  await syncReferencedFileTitles(userMessage.attachments || messageAssetRecord?.attachments || [])
   await refreshTempFiles(response.sessionId)
   await refreshSessions()
 }
@@ -2039,6 +2131,7 @@ const send = async (presetQuestion?: string) => {
             }
           }
           restoreAttachmentState(detail.id, detail.projectId)
+          await syncReferencedFileTitles(messageAssetRecord.attachments)
           await refreshTempFiles(donePayload.sessionId)
         }
         await refreshSessions()

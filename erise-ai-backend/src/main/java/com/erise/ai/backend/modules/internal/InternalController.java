@@ -21,6 +21,7 @@ public class InternalController {
     private final ProjectService projectService;
     private final DocumentService documentService;
     private final FileService fileService;
+    private final OfficeFileService officeFileService;
     private final AiTempFileService aiTempFileService;
 
     @PostMapping("/knowledge/retrieve")
@@ -56,6 +57,12 @@ public class InternalController {
         return ApiResponse.success(documentService.internalUpdateSummary(id, request.actorUserId(), request.summary()));
     }
 
+    @PostMapping("/documents/{id}/content")
+    public ApiResponse<InternalDocumentContextView> updateDocumentContent(@PathVariable Long id,
+                                                                          @Valid @RequestBody InternalDocumentContentUpdateRequest request) {
+        return ApiResponse.success(documentService.internalUpdateContent(id, request.actorUserId(), request.plainText()));
+    }
+
     @PostMapping("/documents/{id}/tags")
     public ApiResponse<java.util.List<TagView>> updateDocumentTags(@PathVariable Long id,
                                                                    @Valid @RequestBody InternalDocumentTagsUpdateRequest request) {
@@ -71,6 +78,19 @@ public class InternalController {
     public ApiResponse<InternalFileContextView> archiveFile(@PathVariable Long id,
                                                             @Valid @RequestBody InternalFileArchiveRequest request) {
         return ApiResponse.success(fileService.internalArchive(id, request.actorUserId()));
+    }
+
+    @PostMapping("/files/{id}/title")
+    public ApiResponse<InternalFileContextView> updateFileTitle(@PathVariable Long id,
+                                                                @Valid @RequestBody InternalFileTitleUpdateRequest request) {
+        return ApiResponse.success(fileService.internalUpdateTitle(id, request.actorUserId(), request.title()));
+    }
+
+    @PostMapping("/files/{id}/content")
+    public ApiResponse<InternalFileContextView> updateFileContent(@PathVariable Long id,
+                                                                  @Valid @RequestBody InternalFileContentUpdateRequest request) {
+        officeFileService.internalUpdateContent(id, request.actorUserId(), request.plainText());
+        return ApiResponse.success(fileService.internalContext(id));
     }
 
     @PostMapping("/projects/{id}/weekly-report-draft")
@@ -107,10 +127,19 @@ record InternalDocumentTitleUpdateRequest(@NotNull Long actorUserId, @NotBlank S
 record InternalDocumentSummaryUpdateRequest(@NotNull Long actorUserId, @NotBlank String summary) {
 }
 
+record InternalDocumentContentUpdateRequest(@NotNull Long actorUserId, @NotNull String plainText) {
+}
+
 record InternalDocumentTagsUpdateRequest(@NotNull Long actorUserId, @NotNull java.util.List<String> tags) {
 }
 
 record InternalFileArchiveRequest(@NotNull Long actorUserId) {
+}
+
+record InternalFileTitleUpdateRequest(@NotNull Long actorUserId, @NotBlank String title) {
+}
+
+record InternalFileContentUpdateRequest(@NotNull Long actorUserId, @NotNull String plainText) {
 }
 
 record InternalProjectWeeklyReportDraftRequest(

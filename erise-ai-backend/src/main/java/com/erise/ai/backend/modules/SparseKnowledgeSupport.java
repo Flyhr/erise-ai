@@ -77,8 +77,7 @@ class SparseKnowledgeSupport {
         if (ragSourceId == null) {
             return;
         }
-        ragSparseTermMapper.delete(new LambdaQueryWrapper<RagSparseTermEntity>()
-                .eq(RagSparseTermEntity::getRagSourceId, ragSourceId));
+        jdbcTemplate.update("delete from ea_rag_sparse_term where rag_source_id = ?", ragSourceId);
     }
 
     List<String> queryTerms(String keyword) {

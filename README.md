@@ -4,7 +4,7 @@ Erise-AI是一个面向个人的轻量项目知识库系统，核心能力覆盖
 
 - Ai回答明确区分“指定范围模式”和“通用模式”。指定范围模式禁止越界检索；通用模式必须严格执行“私有知识库→联网搜索（开启状态）→通用知识”三段式降级。
 - RAG体系：MySQL业务元数据+MinIO原始文件+Qdrant向量检索
-- 采用ofox.ai
+- 采用ofox.ai进行 embedding
 
 ## 运行链路
 
@@ -89,9 +89,9 @@ docker compose --env-file .env.dev -f docker-compose.dev.yml down
 
 3.  附件上下文有预算上限，长文档容易被截断
 
-4.  解析pdf大型文件（25MB）时速度极慢（3min）(4.16)
+### 解析pdf大型文件（25MB）时速度极慢(修复于4.16)
 
-- 实测 5MBtxt文件ai引用回答需要140s，25MBpdf文件会超时（300s​）
+- 实测 5MBtxt文件ai引用回答需要约120s，25MBpdf文件会更长（200s以上​）
 
 #### 部分pdf解析失败（已解决26.4.9）
 
