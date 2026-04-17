@@ -89,9 +89,9 @@ docker compose --env-file .env.dev -f docker-compose.dev.yml down
 
 3.  附件上下文有预算上限，长文档容易被截断
 
-### 解析pdf大型文件（25MB）时速度极慢（3min）(修复于4.16)
+### 解析pdf大型文件（25MB）时速度极慢(修复于4.16)
 
-- 实测 5MBtxt文件ai引用回答需要120s，25MBpdf文件会更长（200s以上​）
+- 实测 5MBtxt文件ai引用回答需要约120s，25MBpdf文件会更长（200s以上​）
 
 #### 部分pdf解析失败（已解决26.4.9）
 
