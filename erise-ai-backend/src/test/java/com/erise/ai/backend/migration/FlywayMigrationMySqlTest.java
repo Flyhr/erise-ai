@@ -20,7 +20,7 @@ import org.testcontainers.utility.DockerImageName;
 class FlywayMigrationMySqlTest {
 
     @Test
-    void migratesFreshSchemaThroughV13AndPreservesExpectedColumns() throws SQLException {
+    void migratesFreshSchemaThroughV16AndPreservesExpectedColumns() throws SQLException {
         Assumptions.assumeTrue(
                 DockerClientFactory.instance().isDockerAvailable(),
                 "Docker is required to run the MySQL Flyway migration regression test"
@@ -38,21 +38,36 @@ class FlywayMigrationMySqlTest {
             flyway.migrate();
 
             assertThat(flyway.info().current()).isNotNull();
-            assertThat(flyway.info().current().getVersion().getVersion()).isEqualTo("13");
+            assertThat(flyway.info().current().getVersion().getVersion()).isEqualTo("16");
 
             try (Connection connection = DriverManager.getConnection(
                     mysql.getJdbcUrl(),
                     mysql.getUsername(),
                     mysql.getPassword()
             )) {
+                assertThat(columnDefaultsFor(connection, "ea_file"))
+                        .containsKeys("review_status", "review_comment", "reviewed_by_user_id", "reviewed_at", "archived");
+
                 assertThat(columnDefaultsFor(connection, "ai_chat_message"))
                         .containsKeys("confidence", "refused_reason", "citations_json", "used_tools_json", "answer_source");
 
                 assertThat(columnDefaultsFor(connection, "ai_request_log"))
                         .containsKeys("user_id", "org_id", "project_id", "answer_source", "message_status", "total_token_count", "latency_ms");
 
+                assertThat(columnDefaultsFor(connection, "ai_model_config"))
+                        .containsKeys("is_default", "input_price_per_million", "output_price_per_million", "currency_code");
+
                 assertThat(columnDefaultsFor(connection, "ai_message_citation"))
                         .containsKey("section_path");
+
+                assertThat(columnDefaultsFor(connection, "ai_action_log"))
+                        .containsKeys("action_code", "action_status", "success_flag");
+
+                assertThat(columnDefaultsFor(connection, "ai_message_feedback"))
+                        .containsKeys("feedback_type", "feedback_note");
+
+                assertThat(columnDefaultsFor(connection, "ea_user_notification"))
+                        .containsKey("broadcast_flag");
 
                 Map<String, String> tempFileColumns = columnDefaultsFor(connection, "ea_ai_temp_file");
                 assertThat(tempFileColumns)
@@ -67,7 +82,7 @@ class FlywayMigrationMySqlTest {
     }
 
     @Test
-    void migratesLegacyAiSchemaThroughV13AndBackfillsMissingColumns() throws SQLException {
+    void migratesLegacyAiSchemaThroughV16AndBackfillsMissingColumns() throws SQLException {
         Assumptions.assumeTrue(
                 DockerClientFactory.instance().isDockerAvailable(),
                 "Docker is required to run the MySQL Flyway migration regression test"
@@ -158,21 +173,36 @@ class FlywayMigrationMySqlTest {
             flyway.migrate();
 
             assertThat(flyway.info().current()).isNotNull();
-            assertThat(flyway.info().current().getVersion().getVersion()).isEqualTo("13");
+            assertThat(flyway.info().current().getVersion().getVersion()).isEqualTo("16");
 
             try (Connection connection = DriverManager.getConnection(
                     mysql.getJdbcUrl(),
                     mysql.getUsername(),
                     mysql.getPassword()
             )) {
+                assertThat(columnDefaultsFor(connection, "ea_file"))
+                        .containsKeys("review_status", "review_comment", "reviewed_by_user_id", "reviewed_at", "archived");
+
                 assertThat(columnDefaultsFor(connection, "ai_chat_message"))
                         .containsKeys("confidence", "refused_reason", "citations_json", "used_tools_json", "answer_source");
 
                 assertThat(columnDefaultsFor(connection, "ai_request_log"))
                         .containsKeys("user_id", "org_id", "project_id", "answer_source", "message_status", "total_token_count", "latency_ms");
 
+                assertThat(columnDefaultsFor(connection, "ai_model_config"))
+                        .containsKeys("is_default", "input_price_per_million", "output_price_per_million", "currency_code");
+
                 assertThat(columnDefaultsFor(connection, "ai_message_citation"))
                         .containsKey("section_path");
+
+                assertThat(columnDefaultsFor(connection, "ai_action_log"))
+                        .containsKeys("action_code", "action_status", "success_flag");
+
+                assertThat(columnDefaultsFor(connection, "ai_message_feedback"))
+                        .containsKeys("feedback_type", "feedback_note");
+
+                assertThat(columnDefaultsFor(connection, "ea_user_notification"))
+                        .containsKey("broadcast_flag");
 
                 Map<String, String> tempFileColumns = columnDefaultsFor(connection, "ea_ai_temp_file");
                 assertThat(tempFileColumns)

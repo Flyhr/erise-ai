@@ -1,3 +1,7 @@
+-- Consolidated AI Assistant MySQL schema.
+-- Backend Flyway migrations in erise-ai-backend/src/main/resources/db/migration
+-- remain the canonical upgrade path. This file is for manual bootstrap/reference.
+
 CREATE TABLE IF NOT EXISTS ai_chat_session (
     id BIGINT NOT NULL AUTO_INCREMENT,
     user_id BIGINT NOT NULL,
@@ -29,6 +33,11 @@ CREATE TABLE IF NOT EXISTS ai_chat_message (
     sequence_no INT NOT NULL,
     model_code VARCHAR(128) NULL,
     provider_code VARCHAR(64) NULL,
+    confidence DOUBLE NULL,
+    refused_reason VARCHAR(255) NULL,
+    citations_json TEXT NULL,
+    used_tools_json TEXT NULL,
+    answer_source VARCHAR(64) NULL,
     prompt_tokens INT NULL,
     completion_tokens INT NULL,
     total_tokens INT NULL,
@@ -51,6 +60,9 @@ CREATE TABLE IF NOT EXISTS ai_request_log (
     id BIGINT NOT NULL AUTO_INCREMENT,
     request_id VARCHAR(128) NOT NULL,
     session_id BIGINT NOT NULL,
+    user_id BIGINT NOT NULL DEFAULT 0,
+    org_id BIGINT NOT NULL DEFAULT 0,
+    project_id BIGINT NULL,
     user_message_id BIGINT NULL,
     assistant_message_id BIGINT NULL,
     provider_code VARCHAR(64) NOT NULL,
@@ -61,8 +73,12 @@ CREATE TABLE IF NOT EXISTS ai_request_log (
     stream BOOLEAN NOT NULL DEFAULT FALSE,
     request_payload_json TEXT NULL,
     response_payload_json TEXT NULL,
+    answer_source VARCHAR(64) NULL,
+    message_status VARCHAR(32) NULL,
     input_token_count INT NULL,
     output_token_count INT NULL,
+    total_token_count INT NULL,
+    latency_ms INT NULL,
     duration_ms INT NULL,
     success_flag BOOLEAN NOT NULL DEFAULT FALSE,
     error_code VARCHAR(64) NULL,
@@ -87,8 +103,9 @@ CREATE TABLE IF NOT EXISTS ai_prompt_template (
     created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
     updated_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
     PRIMARY KEY (id),
-    UNIQUE KEY uk_ai_prompt_template_code (template_code),
-    KEY idx_ai_prompt_template_scene (scene)
+    UNIQUE KEY uk_ai_prompt_template_code_version (template_code, version_no),
+    KEY idx_ai_prompt_template_scene (scene),
+    KEY idx_ai_prompt_template_code_enabled (template_code, enabled, version_no)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS ai_model_config (
@@ -99,13 +116,86 @@ CREATE TABLE IF NOT EXISTS ai_model_config (
     base_url VARCHAR(255) NULL,
     api_key_ref VARCHAR(64) NULL,
     enabled BOOLEAN NOT NULL DEFAULT TRUE,
+    is_default TINYINT(1) NOT NULL DEFAULT 0,
     support_stream BOOLEAN NOT NULL DEFAULT TRUE,
     support_system_prompt BOOLEAN NOT NULL DEFAULT TRUE,
     max_context_tokens INT NULL,
+    input_price_per_million DECIMAL(12,4) NULL,
+    output_price_per_million DECIMAL(12,4) NULL,
+    currency_code VARCHAR(16) NOT NULL DEFAULT 'USD',
     priority_no INT NOT NULL DEFAULT 1,
     created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
     updated_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
     PRIMARY KEY (id),
     UNIQUE KEY uk_ai_model_config_model_code (model_code),
     KEY idx_ai_model_config_provider_priority (provider_code, priority_no)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS ai_message_citation (
+    id BIGINT NOT NULL AUTO_INCREMENT,
+    message_id BIGINT NOT NULL,
+    session_id BIGINT NOT NULL,
+    user_id BIGINT NOT NULL,
+    position_no INT NOT NULL DEFAULT 0,
+    source_type VARCHAR(32) NOT NULL,
+    source_id BIGINT NOT NULL,
+    source_title VARCHAR(255) NOT NULL,
+    snippet TEXT NULL,
+    page_no INT NULL,
+    section_path VARCHAR(255) NULL,
+    score DOUBLE NULL,
+    url VARCHAR(1000) NULL,
+    created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+    updated_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
+    PRIMARY KEY (id),
+    KEY idx_ai_message_citation_message_id (message_id),
+    KEY idx_ai_message_citation_session_id (session_id),
+    KEY idx_ai_message_citation_user_id (user_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS ai_action_log (
+    id BIGINT NOT NULL AUTO_INCREMENT,
+    request_id VARCHAR(128) NOT NULL,
+    session_id BIGINT NULL,
+    user_id BIGINT NOT NULL,
+    org_id BIGINT NOT NULL,
+    project_id BIGINT NULL,
+    action_code VARCHAR(64) NOT NULL,
+    match_rule VARCHAR(128) NOT NULL,
+    permission_rule VARCHAR(128) NOT NULL,
+    action_status VARCHAR(32) NOT NULL,
+    target_type VARCHAR(32) NULL,
+    target_id BIGINT NULL,
+    model_code VARCHAR(128) NULL,
+    provider_code VARCHAR(64) NULL,
+    params_json LONGTEXT NULL,
+    result_payload_json LONGTEXT NULL,
+    fallback_message VARCHAR(500) NULL,
+    error_code VARCHAR(64) NULL,
+    error_message VARCHAR(500) NULL,
+    latency_ms INT NULL,
+    success_flag TINYINT NOT NULL DEFAULT 0,
+    created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+    updated_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
+    PRIMARY KEY (id),
+    KEY idx_ai_action_log_request (request_id),
+    KEY idx_ai_action_log_session (session_id),
+    KEY idx_ai_action_log_action_status (action_code, action_status),
+    KEY idx_ai_action_log_user_created (user_id, created_at DESC)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS ai_message_feedback (
+    id BIGINT NOT NULL AUTO_INCREMENT,
+    message_id BIGINT NOT NULL,
+    session_id BIGINT NOT NULL,
+    user_id BIGINT NOT NULL,
+    feedback_type VARCHAR(16) NOT NULL,
+    feedback_note VARCHAR(500) NULL,
+    created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+    updated_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
+    PRIMARY KEY (id),
+    UNIQUE KEY uk_ai_message_feedback_message_user (message_id, user_id),
+    KEY idx_ai_message_feedback_user_created (user_id, created_at DESC),
+    KEY idx_ai_message_feedback_type_created (feedback_type, created_at DESC),
+    KEY idx_ai_message_feedback_session (session_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

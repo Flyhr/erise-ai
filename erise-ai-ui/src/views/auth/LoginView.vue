@@ -41,10 +41,6 @@
                 />
               </el-form-item>
 
-              <!-- <el-form-item v-if="mode === 'register'" label="显示名称">
-                <el-input v-model="form.displayName" placeholder="您的称呼" />
-              </el-form-item> -->
-
               <el-form-item v-if="mode === 'register'" label="邮箱" prop="email">
                 <el-input
                   v-model.trim="form.email"
@@ -91,25 +87,6 @@
               </el-button>
             </el-form>
             <ThirdPartyLogin />
-            <!-- <div class="divider">
-              <div class="divider__line"></div>
-              <span class="divider__text">第三方快捷登录</span>
-            </div> -->
-
-            <!-- <div class="social-row">
-              <button class="social-button" @click="handleFeatureInDevelopment">
-                <svg class="social-icon" viewBox="0 0 24 24" aria-hidden="true">
-                  <path
-                    d="M8.22 5.06c.1.01.2.02.3.04l-.11-.04c-.06-.02-.13-.04-.19-.05zm.88 11.23c.03-.1.06-.2.1-.3l-.1.3zM12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm6.27 12.33c-.09.68-.42 1.25-.97 1.69-.53.43-1.18.64-1.92.64-.53 0-1.02-.11-1.46-.32-.43-.2-.79-.49-1.05-.85l-.17-.23c-.3.4-.69.72-1.16.96-.46.24-1 .36-1.57.36-.78 0-1.45-.23-1.99-.7-.52-.46-.82-1.07-.88-1.8h-.02c-.05-.59.1-1.14.44-1.61.34-.47.81-.8 1.41-1.02-.4-.25-.71-.58-.92-.98-.21-.4-.32-.86-.32-1.37 0-.78.25-1.43.76-1.96s1.17-.79 1.99-.79c.67 0 1.24.16 1.7.47.45.31.78.71 1 1.2.22-.49.56-.89 1.01-1.2.45-.31 1.01-.47 1.67-.47.83 0 1.5.26 2.01.79.51.53.76 1.18.76 1.96 0 .53-.11.99-.33 1.39-.21.4-.53.73-.95.98.61.22 1.09.56 1.44 1.03.35.47.51 1.01.48 1.61h-.02z" />
-                </svg>
-              </button>
-              <button class="social-button" @click="handleFeatureInDevelopment">
-                <svg class="social-icon" viewBox="0 0 24 24" aria-hidden="true">
-                  <path
-                    d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm4.31 14.69c-.43.43-.98.71-1.63.85-.65.14-1.32.14-1.97 0-.65-.14-1.2-.42-1.63-.85-.43-.43-.71-.98-.85-1.63-.14-.65-.14-1.32 0-1.97.14-.65.42-.85 1.63-.85.65-.14 1.32-.14 1.97 0 .65.14 1.2.42 1.63.85.43.43.71.98.85 1.63.14.65.14 1.32 0 1.97-.14.65-.42 1.2-.85 1.63z" />
-                </svg>
-              </button>
-            </div> -->
           </div>
 
           <div class="login-footer">© 2026 ERISE AI 知识库 · 保留所有权利</div>
@@ -138,7 +115,6 @@ const formRef = ref<FormInstance>()
 const captcha = reactive({ captchaId: '', captchaImage: '' })
 const form = reactive({
   username: '',
-  displayName: '',
   email: '',
   password: '',
   captchaCode: ''
@@ -265,7 +241,6 @@ const submit = async () => {
       const session = await register({
         username: form.username,
         email: form.email,
-        displayName: form.displayName,
         password: form.password,
         captchaId: captcha.captchaId,
         captchaCode: form.captchaCode,
@@ -498,63 +473,6 @@ body {
 
 .submit-button {
   width: 100%;
-}
-
-.divider {
-  position: relative;
-  margin: 32px 0 24px;
-  text-align: center;
-}
-
-.divider__line {
-  position: absolute;
-  top: 50%;
-  left: 0;
-  right: 0;
-  height: 1px;
-  background: #eef2f7;
-}
-
-.divider__text {
-  position: relative;
-  display: inline-block;
-  padding: 0 16px;
-  background: #fff;
-  color: #94a3b8;
-  font-size: 11px;
-  font-weight: 800;
-  letter-spacing: 0.16em;
-}
-
-.social-row {
-  display: flex;
-  justify-content: center;
-  gap: 20px;
-}
-
-.social-button {
-  width: 46px;
-  height: 46px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: 9999px;
-  border: 1px solid #e2e8f0;
-  background: #f8fafc;
-  color: #475569;
-  cursor: pointer;
-  transition: all 0.2s ease;
-}
-
-.social-button:hover {
-  transform: translateY(-1px);
-  background: #f1f5f9;
-}
-
-.social-icon {
-  width: 20px;
-  height: 20px;
-  fill: currentColor;
 }
 
 .login-footer {

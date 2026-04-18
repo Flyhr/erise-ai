@@ -933,27 +933,6 @@ const handleDirectAddCommand = async (command: string | number | object) => {
   }
 }
 
-const handleAddCommand = async (command: string | number | object) => {
-  switch (String(command)) {
-    case 'document':
-      await createDocumentDirectly()
-      return
-      ElMessage.info('已进入项目文档页，可继续新建文档。')
-      break
-    case 'file':
-      openFilePicker()
-      return
-      ElMessage.info('已进入项目文件页，可继续上传文件。')
-      break
-    case 'table':
-      await createTableDirectly()
-      return
-      break
-    default:
-      break
-  }
-}
-
 onMounted(syncFromRoute)
 
 watch(

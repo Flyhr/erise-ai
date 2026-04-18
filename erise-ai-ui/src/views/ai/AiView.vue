@@ -30,55 +30,6 @@
               <input v-model.trim="sessionKeyword" type="text" placeholder="搜索会话..." />
             </label>
 
-            <!-- <div class="knowledge-card">
-              <div class="knowledge-subtabs">
-                <span class="section-eyebrow">知识库文件</span>
-              </div>
-              <div v-if="selectedAttachments.length" class="temp-file-list">
-                <div v-for="attachment in selectedAttachments.filter((item) => item.attachmentType === 'FILE')"
-                  :key="attachmentKeyOf(attachment)" class="temp-file-chip">
-                  <div class="temp-file-chip__copy">
-                    <strong>{{ attachment.title || `文件 #${attachment.sourceId}` }}</strong>
-                  </div>
-                  <button type="button" class="temp-file-chip__remove" :disabled="sending"
-                    @click="removeAttachment(attachment)">×</button>
-                </div>
-                <button v-if="selectedAttachments.some((item) => item.attachmentType !== 'FILE')" type="button"
-                  class="mini-link mini-link--block" @click="showUnavailable('当前只展示文件标签')">
-                  还有其它类型资料已附加
-                </button>
-              </div>
-              <div v-else class="knowledge-empty">还没有添加知识库文件。</div>
-
-              <div class="knowledge-temp">
-                <div class="knowledge-temp__head">
-                  <span class="section-eyebrow">临时文件</span>
-                </div>
-                <div v-if="tempFiles.length" class="temp-file-list">
-                  <div v-for="tempFile in tempFiles" :key="tempFile.id" class="temp-file-chip"
-                    :class="tempFileSurfaceClass(tempFile)">
-                    <div class="temp-file-chip__copy">
-                      <strong>{{ tempFile.fileName }}</strong>
-                      <small>{{ tempFileStatusLabel(tempFile) }}</small>
-                      <small v-if="tempFile.parseErrorMessage" class="temp-file-chip__error">{{
-                        tempFile.parseErrorMessage }}</small>
-                      <button v-if="isTempFileFailed(tempFile)" type="button" class="temp-file-chip__retry"
-                        :disabled="sending || uploadingTempFile" @click="retryFailedTempFile(tempFile)">
-                        重新解析
-                      </button>
-                    </div>
-                    <button type="button" class="temp-file-chip__remove" :disabled="sending || uploadingTempFile"
-                      @click="removeTempFile(tempFile)">
-                      ×
-                    </button>
-                  </div>
-                </div>
-                <div v-else class="knowledge-empty">
-                  {{ activeSessionId ? '当前会话还没有临时文件。' : '当前会话还没有临时文件' }}
-                </div>
-              </div>
-            </div> -->
-
             <div class="thread-list thread-list--history">
               <div v-for="session in visibleSessions" :key="session.id" class="thread-item"
                 :class="{ 'is-active': session.id === activeSessionId, 'is-hovering-delete': hoveredDeleteId === session.id }">
@@ -102,22 +53,12 @@
                 <h3>{{ sessionTitleText }}</h3>
               </div>
               <div class="chat-stage__meta">
-                <!-- <div class="header-model-chip"> -->
-                <!-- <span class="material-symbols-outlined">data_object</span> -->
-                <!-- <div class="header-model-chip__copy">
-                    <strong>{{ headerModelName }}</strong>
-                  </div> -->
-                <!-- </div> -->
                 <div class="web-search-toggle">
                   <span class="web-search-toggle__label">联网搜索</span>
                   <el-switch v-model="retrievalSettings.webSearchEnabledDefault" size="small" inline-prompt
                     active-text="开" inactive-text="关" :loading="savingRetrievalSettings"
                     :disabled="sending || savingRetrievalSettings" @change="handleWebSearchToggle" />
                 </div>
-                <!-- <div class="run-chip" :class="{ 'is-live': sending }">
-                  <span class="run-chip__dot"></span>
-                  <span>{{ thinkingStatusText }}</span>
-                </div> -->
               </div>
             </div>
 
@@ -324,13 +265,6 @@
                     </template>
                   </el-dropdown>
 
-
-
-                  <!-- <div class="composer-meta-pill composer-meta-pill--status">
-                    <span class="material-symbols-outlined">psychology</span>
-                    <span>{{ thinkingStatusText }}</span>
-                  </div> -->
-
                   <div class="composer-model-picker">
                     <span class="material-symbols-outlined">expand_circle_down</span>
                     <el-select v-model="selectedModelCode" size="small" class="toolbar-model-select"
@@ -455,7 +389,6 @@ import {
   getSession,
   getSessions,
   getTempFiles,
-  retryTempFile,
   submitAiMessageFeedback,
   updateRetrievalSettings,
   uploadTempFile,
@@ -778,9 +711,6 @@ const activeModel = computed(() => {
   }
   return pickPreferredAiModel(modelChoices.value, selectedModelCode.value)
 })
-const lastAssistantMessage = computed(() =>
-  [...messages.value].reverse().find((message) => message.roleCode === 'ASSISTANT'),
-)
 const sessionTitleText = computed(() => activeSessionSummary.value?.title || (messages.value.length ? '当前对话' : '开始一段新对话'))
 const sessionStatusText = computed(() => {
   if (sending.value) {
@@ -825,31 +755,6 @@ const pendingComposerAssets = computed<ComposerAssetSnapshot[]>(() => [
     state: tempFileState(file) as ComposerAssetState,
   })),
 ])
-const modelProviderLabel = computed(() => activeModel.value?.providerCode || (loadingModels.value ? '加载中' : '模型服务'))
-const headerModelName = computed(() => {
-  const modelCode = lastAssistantMessage.value?.modelCode
-  if (modelCode) {
-    const matched = modelChoices.value.find((model) => model.modelCode === modelCode)
-    if (matched?.modelName) {
-      return matched.modelName
-    }
-  }
-  return activeModel.value?.modelName || '未选择模型'
-})
-const headerProviderName = computed(() =>
-  lastAssistantMessage.value?.providerCode || activeModel.value?.providerCode || (loadingModels.value ? '加载中' : '模型服务'),
-)
-// const thinkingStatusText = computed(() => {
-//   if (sending.value) {
-//     return `思考中 ${runningSeconds.value}s`
-//   }
-//   const latencyMs = lastAssistantMessage.value?.latencyMs
-//   if (latencyMs && latencyMs > 0) {
-//     return latencyMs >= 1000 ? `思考耗时 ${(latencyMs / 1000).toFixed(latencyMs >= 10000 ? 0 : 1)}s` : `思考耗时 ${latencyMs}ms`
-//   }
-//   return sessionStatusText.value
-// })
-// const modelModeLabel = computed(() => (activeModel.value?.supportStream === false ? '普通回复' : '流式回复'))
 const quickPrompts = computed(() => [
   selectedAttachments.value.length || indexedTempFiles.value.length
     ? '总结我发送给你的文档、文件和临时资料主要内容'
@@ -873,7 +778,6 @@ const onDeleteMouseLeave = (id: number) => {
 
 const tempFileState = (file: AiTempFileView) => resolveKnowledgeReadiness(file.parseStatus, file.indexStatus)
 const isTempFileReady = (file: AiTempFileView) => tempFileState(file) === 'ready'
-const isTempFileFailed = (file: AiTempFileView) => tempFileState(file) === 'failed'
 const isTempFilePending = (file: AiTempFileView) => ['pending', 'processing'].includes(tempFileState(file))
 const indexedTempFiles = computed(() => tempFiles.value.filter((item) => isTempFileReady(item)))
 
@@ -881,11 +785,6 @@ const tempFileStatusLabel = (file: AiTempFileView) => {
   return `${knowledgeReadinessLabel(file.parseStatus, file.indexStatus)} · ${formatBytes(file.sizeBytes)}`
 }
 
-const tempFileSurfaceClass = (file: AiTempFileView) => ({
-  'is-ready': isTempFileReady(file),
-  'is-pending': isTempFilePending(file),
-  'is-failed': isTempFileFailed(file),
-})
 
 const attachmentFocusedQuestion = (value: string) =>
   /(这个|这份|该|上传的|附加的|发给你的).{0,8}(文档|文件|附件|资料|pdf)|(?:总结|概括|介绍|解释|说明).{0,8}(文档|文件|附件|pdf)|(?:this|the)\s+(?:document|file|attachment|pdf)|(?:uploaded|attached)\s+(?:document|file|pdf)/i.test(value)
@@ -1208,9 +1107,6 @@ const isCollapsible = (message: UiMessage) => {
 // 判断消息当前是否处于折叠状态（可折叠且未展开）
 const isCollapsed = (message: UiMessage) => isCollapsible(message) && !message.expanded
 // 切换消息展开/折叠状态（保留接口以备将来使用）
-const toggleExpanded = (message: UiMessage) => {
-  message.expanded = !message.expanded
-}
 const surfaceClasses = (message: UiMessage) => ({
   'is-user-surface': message.roleCode === 'USER',
   'is-assistant-surface': message.roleCode === 'ASSISTANT',
@@ -1656,19 +1552,6 @@ const handleTempFilePicked = async (event: Event) => {
   }
 }
 
-const retryFailedTempFile = async (file: AiTempFileView) => {
-  try {
-    const retried = await retryTempFile(file.id)
-    tempFiles.value = [retried, ...tempFiles.value.filter((item) => item.id !== retried.id)]
-    if (isTempFilePending(retried)) {
-      startTempFilePolling(retried.sessionId)
-    }
-    ElMessage.success('临时文件已重新进入解析队列。')
-  } catch (error) {
-    ElMessage.error(errorMessageOf(error))
-  }
-}
-
 const removeTempFile = async (file: AiTempFileView) => {
   try {
     await ElMessageBox.confirm(`确定从当前会话移除“${file.fileName}”吗？`, '删除临时文件', { type: 'warning' })
@@ -1706,10 +1589,6 @@ const refreshModels = async () => {
   } finally {
     loadingModels.value = false
   }
-}
-
-const showUnavailable = (feature = '当前功能还未开发') => {
-  ElMessageBox.alert('当前功能还未开发', feature, { confirmButtonText: '确定', type: 'info' })
 }
 
 const openSearch = async () => {
