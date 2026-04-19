@@ -35,8 +35,10 @@ class Settings(BaseSettings):
     ollama_embedding_model: str = 'nomic-embed-text'
     vllm_api_key: str = ''
     vllm_base_url: str = 'http://localhost:8000/v1'
+    vllm_model: str = 'Qwen/Qwen2.5-7B-Instruct'
     litellm_api_key: str = ''
     litellm_base_url: str = 'http://localhost:4000/v1'
+    litellm_model: str = 'deepseek/deepseek-chat'
     deepseek_model: str = 'deepseek-chat'
     default_model_code: str = 'deepseek-chat'
 
@@ -87,6 +89,8 @@ class Settings(BaseSettings):
     n8n_webhook_base_url: str | None = None
     n8n_webhook_secret: str = ''
     n8n_event_timeout_seconds: int = 15
+    n8n_event_max_retries: int = 2
+    n8n_event_retry_backoff_seconds: float = 1.0
 
     model_config = SettingsConfigDict(
         env_file='.env',

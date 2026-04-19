@@ -220,7 +220,13 @@ def bootstrap_defaults() -> None:
 
     with SessionLocal() as db:
         gateway_override_enabled = bool(settings.model_provider or settings.model_base_url or settings.model_api_key)
-        for row in build_default_model_rows(settings.ollama_chat_model):
+        for row in build_default_model_rows(
+            deepseek_model=settings.deepseek_model,
+            openai_model=settings.openai_model,
+            ollama_chat_model=settings.ollama_chat_model,
+            vllm_model=settings.vllm_model,
+            litellm_model=settings.litellm_model,
+        ):
             existing = db.execute(select(AiModelConfig).where(AiModelConfig.model_code == row['model_code'])).scalar_one_or_none()
             if existing:
                 continue

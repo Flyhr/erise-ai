@@ -1,2 +1,3 @@
-# Optional LangGraph orchestration dependency for phase-1 agents.
-langgraph>=0.2
+# Legacy compatibility note:
+# LangGraph is now declared in requirements.txt for the default install path.
+langgraph>=0.2,<1.0

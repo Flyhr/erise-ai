@@ -17,6 +17,15 @@ class UnstructuredExtractResult:
 
 class UnstructuredAdapter:
     SUPPORTED_EXTENSIONS = {'doc', 'docx', 'md', 'markdown', 'pdf', 'txt'}
+    RUNTIME_DEPENDENCY_HINTS = {
+        'libmagic': 'Install the libmagic runtime package in the container image.',
+        'magic': 'Install the libmagic runtime package in the container image.',
+        'tesseract': 'Install Tesseract OCR and the required language packs in the container image.',
+        'poppler': 'Install poppler-utils in the container image.',
+        'pdftoppm': 'Install poppler-utils in the container image.',
+        'no module named': 'Install the Python Unstructured dependency chain from requirements.txt.',
+        'modulenotfounderror': 'Install the Python Unstructured dependency chain from requirements.txt.',
+    }
 
     def supports(self, extension: str) -> bool:
         return extension in self.SUPPORTED_EXTENSIONS
@@ -45,7 +54,18 @@ class UnstructuredAdapter:
         try:
             elements = partition(**kwargs)
         except Exception as exc:
-            raise AiServiceError('AI_FILE_PARSE_FAILED', f'Unstructured parsing failed: {exc}', status_code=422) from exc
+            dependency_hint = self._runtime_dependency_hint(exc)
+            if dependency_hint:
+                raise AiServiceError(
+                    'AI_FILE_UNAVAILABLE',
+                    f'Unstructured runtime dependency is unavailable: {exc}. {dependency_hint}',
+                    status_code=503,
+                ) from exc
+            raise AiServiceError(
+                'AI_FILE_PARSE_FAILED',
+                f'Unstructured parsing failed during partition stage: {exc}',
+                status_code=422,
+            ) from exc
 
         plain_text = self._elements_to_text(elements)
         if not plain_text:
@@ -70,6 +90,13 @@ class UnstructuredAdapter:
                 status_code=503,
             ) from exc
         return partition
+
+    def _runtime_dependency_hint(self, exc: Exception) -> str | None:
+        normalized = f'{type(exc).__name__}: {exc}'.lower()
+        for token, hint in self.RUNTIME_DEPENDENCY_HINTS.items():
+            if token in normalized:
+                return hint
+        return None
 
     def _elements_to_text(self, elements: list[object]) -> str:
         texts: list[str] = []

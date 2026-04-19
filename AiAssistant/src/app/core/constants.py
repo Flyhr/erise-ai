@@ -26,13 +26,24 @@ DEFAULT_SYSTEM_PROMPTS = {
 }
 
 
-def build_default_model_rows(ollama_chat_model: str = 'qwen2.5:7b') -> tuple[dict[str, Any], ...]:
+def build_default_model_rows(
+    *,
+    deepseek_model: str = 'deepseek-chat',
+    openai_model: str = 'gpt-4.1-mini',
+    ollama_chat_model: str = 'qwen2.5:7b',
+    vllm_model: str = 'Qwen/Qwen2.5-7B-Instruct',
+    litellm_model: str = 'deepseek/deepseek-chat',
+) -> tuple[dict[str, Any], ...]:
+    normalized_deepseek_model = (deepseek_model or 'deepseek-chat').strip() or 'deepseek-chat'
+    normalized_openai_model = (openai_model or 'gpt-4.1-mini').strip() or 'gpt-4.1-mini'
     normalized_ollama_chat_model = (ollama_chat_model or 'qwen2.5:7b').strip() or 'qwen2.5:7b'
+    normalized_vllm_model = (vllm_model or 'Qwen/Qwen2.5-7B-Instruct').strip() or 'Qwen/Qwen2.5-7B-Instruct'
+    normalized_litellm_model = (litellm_model or 'deepseek/deepseek-chat').strip() or 'deepseek/deepseek-chat'
     return (
         {
             'provider_code': 'DEEPSEEK',
-            'model_code': 'deepseek-chat',
-            'model_name': 'DeepSeek Chat',
+            'model_code': normalized_deepseek_model,
+            'model_name': f'DeepSeek {normalized_deepseek_model}',
             'base_url': 'https://api.deepseek.com/v1',
             'api_key_ref': 'DEEPSEEK_API_KEY',
             'enabled': True,
@@ -44,8 +55,8 @@ def build_default_model_rows(ollama_chat_model: str = 'qwen2.5:7b') -> tuple[dic
         },
         {
             'provider_code': 'OPENAI',
-            'model_code': 'gpt-4.1-mini',
-            'model_name': 'GPT-4.1 Mini',
+            'model_code': normalized_openai_model,
+            'model_name': normalized_openai_model,
             'base_url': 'https://api.openai.com/v1',
             'api_key_ref': 'OPENAI_API_KEY',
             'enabled': True,
@@ -67,6 +78,32 @@ def build_default_model_rows(ollama_chat_model: str = 'qwen2.5:7b') -> tuple[dic
             'support_system_prompt': True,
             'max_context_tokens': 32768,
             'priority_no': 3,
+        },
+        {
+            'provider_code': 'VLLM',
+            'model_code': normalized_vllm_model,
+            'model_name': f'vLLM {normalized_vllm_model}',
+            'base_url': 'http://localhost:8000/v1',
+            'api_key_ref': 'VLLM_API_KEY',
+            'enabled': True,
+            'is_default': False,
+            'support_stream': True,
+            'support_system_prompt': True,
+            'max_context_tokens': 32768,
+            'priority_no': 4,
+        },
+        {
+            'provider_code': 'LITELLM',
+            'model_code': normalized_litellm_model,
+            'model_name': f'LiteLLM {normalized_litellm_model}',
+            'base_url': 'http://localhost:4000/v1',
+            'api_key_ref': 'LITELLM_API_KEY',
+            'enabled': True,
+            'is_default': False,
+            'support_stream': True,
+            'support_system_prompt': True,
+            'max_context_tokens': 64000,
+            'priority_no': 5,
         },
     )
 

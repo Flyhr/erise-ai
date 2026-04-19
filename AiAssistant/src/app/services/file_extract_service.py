@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from io import BytesIO
 from typing import Iterable
 
@@ -37,6 +37,19 @@ class FileExtractResult:
     error_code: str | None = None
     error_message: str | None = None
     retryable: bool = False
+    primary_attempts: int = 0
+    primary_error_status_code: int | None = None
+    primary_error_stage: str | None = None
+    primary_error_category: str | None = None
+    fallback_reason: str | None = None
+    monitoring_tags: list[str] = field(default_factory=list)
+
+
+@dataclass(slots=True)
+class PrimaryExtractOutcome:
+    result: FileExtractResult | None = None
+    error: AiServiceError | None = None
+    attempts: int = 0
 
 
 class FileExtractService:
@@ -66,43 +79,73 @@ class FileExtractService:
             raise AiServiceError('AI_FILE_EMPTY', 'File payload is empty', status_code=400)
 
         extension = self._normalize_extension(file_ext, file_name)
-        primary_error = self._extract_with_primary_error(file_bytes, file_name, extension)
-        if isinstance(primary_error, FileExtractResult):
-            return primary_error
+        primary_outcome = self._extract_with_primary_error(file_bytes, file_name, extension)
+        if primary_outcome is not None and primary_outcome.result is not None:
+            return primary_outcome.result
         legacy_result = self._extract_with_legacy_parsers(file_bytes, extension)
-        if primary_error is None:
+        if primary_outcome is None or primary_outcome.error is None:
             return legacy_result
-        return self._mark_fallback_result(legacy_result, primary_error)
+        return self._mark_fallback_result(legacy_result, primary_outcome.error, primary_outcome.attempts, extension)
 
     def _extract_with_primary_error(
         self,
         file_bytes: bytes,
         file_name: str | None,
         extension: str,
-    ) -> FileExtractResult | AiServiceError | None:
+    ) -> PrimaryExtractOutcome | None:
         if not unstructured_adapter.supports(extension):
             return None
         last_error: AiServiceError | None = None
+        attempts = 0
         for attempt in range(1, self.PRIMARY_MAX_ATTEMPTS + 1):
+            attempts = attempt
             try:
                 extracted = unstructured_adapter.extract(file_bytes, file_name, extension)
-                return self._result_from_text(
-                    extracted.plain_text,
-                    parser=extracted.parser,
-                    used_ocr=extracted.used_ocr,
-                    page_count=extracted.page_count,
-                    parse_status=self.PARSE_STATUS_SUCCESS,
-                    primary_parser=self.PRIMARY_PARSER,
+                return PrimaryExtractOutcome(
+                    result=self._result_from_text(
+                        extracted.plain_text,
+                        parser=extracted.parser,
+                        used_ocr=extracted.used_ocr,
+                        page_count=extracted.page_count,
+                        parse_status=self.PARSE_STATUS_SUCCESS,
+                        primary_parser=self.PRIMARY_PARSER,
+                        primary_attempts=attempt,
+                        monitoring_tags=self._build_monitoring_tags(
+                            extension=extension,
+                            parser=extracted.parser,
+                            parse_status=self.PARSE_STATUS_SUCCESS,
+                            primary_parser=self.PRIMARY_PARSER,
+                        ),
+                    ),
+                    attempts=attempt,
                 )
             except AiServiceError as exc:
                 last_error = exc
+                stage, category = self._classify_primary_error(exc)
                 if not self._should_retry_primary(exc, attempt):
+                    logger.warning(
+                        'file_extract_primary_failed parser=%s file_ext=%s attempt=%s/%s status_code=%s error_code=%s stage=%s category=%s message=%s',
+                        self.PRIMARY_PARSER,
+                        extension or 'unknown',
+                        attempt,
+                        self.PRIMARY_MAX_ATTEMPTS,
+                        exc.status_code,
+                        exc.error_code,
+                        stage,
+                        category,
+                        exc.message,
+                    )
                     break
                 logger.warning(
-                    'Primary extractor failed for `%s` on attempt %s/%s, retrying: %s',
+                    'file_extract_primary_retry parser=%s file_ext=%s attempt=%s/%s status_code=%s error_code=%s stage=%s category=%s message=%s',
+                    self.PRIMARY_PARSER,
                     extension or 'unknown',
                     attempt,
                     self.PRIMARY_MAX_ATTEMPTS,
+                    exc.status_code,
+                    exc.error_code,
+                    stage,
+                    category,
                     exc.message,
                 )
             except Exception as exc:
@@ -117,12 +160,19 @@ class FileExtractService:
                     exc,
                 )
         if last_error is not None:
+            stage, category = self._classify_primary_error(last_error)
             logger.warning(
-                'Primary extractor failed for `%s`, falling back to legacy parser: %s',
+                'file_extract_fallback parser=%s file_ext=%s attempts=%s fallback_parser=legacy status_code=%s error_code=%s stage=%s category=%s message=%s',
+                self.PRIMARY_PARSER,
                 extension or 'unknown',
+                attempts,
+                last_error.status_code,
+                last_error.error_code,
+                stage,
+                category,
                 last_error.message,
             )
-        return last_error
+        return PrimaryExtractOutcome(error=last_error, attempts=attempts)
 
     def _should_retry_primary(self, exc: AiServiceError, attempt: int) -> bool:
         if attempt >= self.PRIMARY_MAX_ATTEMPTS:
@@ -133,7 +183,14 @@ class FileExtractService:
             and 'dependency is unavailable' not in normalized
         ) or any(token in normalized for token in ('timeout', 'temporarily unavailable', 'connection reset'))
 
-    def _mark_fallback_result(self, result: FileExtractResult, primary_error: AiServiceError) -> FileExtractResult:
+    def _mark_fallback_result(
+        self,
+        result: FileExtractResult,
+        primary_error: AiServiceError,
+        primary_attempts: int,
+        extension: str,
+    ) -> FileExtractResult:
+        primary_error_stage, primary_error_category = self._classify_primary_error(primary_error)
         return FileExtractResult(
             plain_text=result.plain_text,
             chunks=result.chunks,
@@ -147,6 +204,20 @@ class FileExtractService:
             error_code=primary_error.error_code,
             error_message=primary_error.message,
             retryable=self._is_retryable_status(primary_error),
+            primary_attempts=primary_attempts,
+            primary_error_status_code=primary_error.status_code,
+            primary_error_stage=primary_error_stage,
+            primary_error_category=primary_error_category,
+            fallback_reason=self._fallback_reason(primary_error_category),
+            monitoring_tags=self._build_monitoring_tags(
+                extension=extension,
+                parser=result.parser,
+                parse_status=self.PARSE_STATUS_FALLBACK,
+                primary_parser=self.PRIMARY_PARSER,
+                fallback_parser=result.parser,
+                error_code=primary_error.error_code,
+                error_category=primary_error_category,
+            ),
         )
 
     def _is_retryable_status(self, exc: AiServiceError) -> bool:
@@ -293,6 +364,8 @@ class FileExtractService:
         page_count: int = 0,
         parse_status: str = PARSE_STATUS_SUCCESS,
         primary_parser: str = 'legacy',
+        primary_attempts: int = 0,
+        monitoring_tags: list[str] | None = None,
     ) -> FileExtractResult:
         normalized = self._normalize_text(plain_text)
         if not normalized:
@@ -308,7 +381,62 @@ class FileExtractService:
             page_count=page_count,
             parse_status=parse_status,
             primary_parser=primary_parser,
+            primary_attempts=primary_attempts,
+            monitoring_tags=list(monitoring_tags or []),
         )
+
+    def _classify_primary_error(self, exc: AiServiceError) -> tuple[str, str]:
+        normalized = (exc.message or '').lower()
+        if exc.error_code == 'AI_FILE_UNAVAILABLE':
+            if any(token in normalized for token in ('libmagic', 'tesseract', 'poppler', 'pdftoppm')):
+                return 'runtime_dependency', 'runtime_dependency_missing'
+            if any(token in normalized for token in ('no module named', 'modulenotfounderror', 'dependency is unavailable')):
+                return 'dependency_load', 'python_dependency_missing'
+            return 'dependency_load', 'parser_unavailable'
+        if 'produced no readable content' in normalized or 'no readable text content' in normalized:
+            return 'content_validation', 'empty_output'
+        if exc.error_code == 'AI_FILE_PARSE_FAILED':
+            return 'partition', 'parser_failed'
+        if exc.error_code == 'AI_FILE_UNSUPPORTED':
+            return 'compatibility', 'unsupported_type'
+        return 'unknown', 'unknown_failure'
+
+    def _fallback_reason(self, category: str) -> str:
+        mapping = {
+            'runtime_dependency_missing': 'primary_runtime_dependency_missing',
+            'python_dependency_missing': 'primary_python_dependency_missing',
+            'parser_unavailable': 'primary_parser_unavailable',
+            'empty_output': 'primary_empty_output',
+            'parser_failed': 'primary_parser_failed',
+            'unsupported_type': 'primary_unsupported_type',
+            'unknown_failure': 'primary_unknown_failure',
+        }
+        return mapping.get(category, 'primary_unknown_failure')
+
+    def _build_monitoring_tags(
+        self,
+        *,
+        extension: str,
+        parser: str,
+        parse_status: str,
+        primary_parser: str,
+        fallback_parser: str | None = None,
+        error_code: str | None = None,
+        error_category: str | None = None,
+    ) -> list[str]:
+        tags = [
+            f'file_ext:{extension or "unknown"}',
+            f'parse_status:{parse_status.lower()}',
+            f'primary_parser:{primary_parser}',
+            f'parser:{parser}',
+        ]
+        if fallback_parser:
+            tags.append(f'fallback_parser:{fallback_parser}')
+        if error_code:
+            tags.append(f'primary_error_code:{error_code}')
+        if error_category:
+            tags.append(f'primary_error_category:{error_category}')
+        return tags
 
     def capability_matrix(self) -> FileCapabilityMatrixView:
         statuses = [self.PARSE_STATUS_SUCCESS, self.PARSE_STATUS_FALLBACK, self.PARSE_STATUS_FAILED]

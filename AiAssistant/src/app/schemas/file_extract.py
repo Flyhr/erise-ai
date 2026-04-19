@@ -19,6 +19,12 @@ class FileExtractView(CamelModel):
     error_code: str | None = None
     error_message: str | None = None
     retryable: bool = False
+    primary_attempts: int = 0
+    primary_error_status_code: int | None = None
+    primary_error_stage: str | None = None
+    primary_error_category: str | None = None
+    fallback_reason: str | None = None
+    monitoring_tags: list[str] = Field(default_factory=list)
 
 
 class FileTypeCapabilityView(CamelModel):

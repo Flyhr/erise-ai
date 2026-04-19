@@ -163,6 +163,74 @@ class AgentApiTest(unittest.TestCase):
         self.assertIn('agent_graph_fallback', payload['usedTools'])
         self.assertIn('agent.fallback.chat_service', payload['executionTrace'])
 
+    def test_agent_logs_dependency_missing_when_langgraph_is_unavailable(self) -> None:
+        with TestClient(app) as client:
+            with (
+                patch('src.app.services.agent_graph_service.LANGGRAPH_AVAILABLE', False),
+                patch('src.app.services.agent_graph_service.LANGGRAPH_IMPORT_ERROR', 'ModuleNotFoundError: No module named langgraph'),
+                patch('src.app.services.agent_graph_service.logger.info') as info_log,
+                patch('src.app.services.agent_graph_service.fetch_project_context', new=AsyncMock(return_value={'id': 88, 'name': 'Apollo', 'description': 'Ship the knowledge platform'})),
+                patch('src.app.services.agent_graph_service.rag_service.query', new=AsyncMock(return_value=_retrieval_decision())),
+                patch('src.app.services.agent_graph_service.get_model_config', return_value=fake_model(model_code='qwen2.5:7b', provider_code='OLLAMA')),
+                patch(
+                    'src.app.services.agent_graph_service.get_model_adapter',
+                    return_value=FakeAdapter(
+                        answer='项目要求在发布前完成安全评审。',
+                        provider_code='OLLAMA',
+                        model_code='qwen2.5:7b',
+                    ),
+                ),
+            ):
+                response = client.post(
+                    '/internal/ai/chat/agents/run',
+                    headers=request_headers('agent-linear-fallback-1'),
+                    json={
+                        'agentType': 'project_qa',
+                        'message': '这个项目发布前要完成什么？',
+                        'context': {'projectId': 88, 'attachments': []},
+                    },
+                )
+
+        self.assertEqual(200, response.status_code, response.text)
+        payload = response.json()['data']
+        self.assertIn('agent.orchestration.linear.dependency_missing', payload['executionTrace'])
+        info_log.assert_called()
+        self.assertIn('reason=dependency_missing', info_log.call_args.args[0])
+
+    def test_agent_logs_runtime_failure_before_linear_fallback(self) -> None:
+        with TestClient(app) as client:
+            with (
+                patch('src.app.services.agent_graph_service.LANGGRAPH_AVAILABLE', True),
+                patch('src.app.services.agent_graph_service.AgentGraphService._run_langgraph', new=AsyncMock(side_effect=RuntimeError('graph execution failed'))),
+                patch('src.app.services.agent_graph_service.logger.warning') as warning_log,
+                patch('src.app.services.agent_graph_service.fetch_project_context', new=AsyncMock(return_value={'id': 88, 'name': 'Apollo', 'description': 'Ship the knowledge platform'})),
+                patch('src.app.services.agent_graph_service.rag_service.query', new=AsyncMock(return_value=_retrieval_decision())),
+                patch('src.app.services.agent_graph_service.get_model_config', return_value=fake_model(model_code='qwen2.5:7b', provider_code='OLLAMA')),
+                patch(
+                    'src.app.services.agent_graph_service.get_model_adapter',
+                    return_value=FakeAdapter(
+                        answer='项目要求在发布前完成安全评审。',
+                        provider_code='OLLAMA',
+                        model_code='qwen2.5:7b',
+                    ),
+                ),
+            ):
+                response = client.post(
+                    '/internal/ai/chat/agents/run',
+                    headers=request_headers('agent-linear-fallback-2'),
+                    json={
+                        'agentType': 'project_qa',
+                        'message': '这个项目发布前要完成什么？',
+                        'context': {'projectId': 88, 'attachments': []},
+                    },
+                )
+
+        self.assertEqual(200, response.status_code, response.text)
+        payload = response.json()['data']
+        self.assertIn('agent.orchestration.linear.runtime_failure', payload['executionTrace'])
+        warning_log.assert_called()
+        self.assertIn('reason=runtime_failure', warning_log.call_args.args[0])
+
 
 if __name__ == '__main__':
     unittest.main()

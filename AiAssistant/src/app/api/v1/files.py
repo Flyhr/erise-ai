@@ -33,6 +33,12 @@ async def extract_file(
         error_code=result.error_code,
         error_message=result.error_message,
         retryable=result.retryable,
+        primary_attempts=result.primary_attempts,
+        primary_error_status_code=result.primary_error_status_code,
+        primary_error_stage=result.primary_error_stage,
+        primary_error_category=result.primary_error_category,
+        fallback_reason=result.fallback_reason,
+        monitoring_tags=result.monitoring_tags,
     )
     return {'code': 0, 'msg': 'ok', 'data': view.model_dump(by_alias=True)}
 

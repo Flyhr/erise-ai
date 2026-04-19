@@ -26,6 +26,13 @@ APPROVAL_STATUS_APPLIED = 'APPLIED'
 APPROVAL_STATUS_REJECTED = 'REJECTED'
 APPROVAL_STATUS_FAILED = 'FAILED'
 
+APPROVAL_WORKFLOW_STATUS = {
+    APPROVAL_STATUS_PENDING: 'WAITING_FOR_REVIEW',
+    APPROVAL_STATUS_APPLIED: 'COMPLETED',
+    APPROVAL_STATUS_REJECTED: 'REJECTED',
+    APPROVAL_STATUS_FAILED: 'FAILED',
+}
+
 
 def _json_dumps(value: object | None) -> str | None:
     if value is None:
@@ -64,6 +71,26 @@ class ApprovalService:
         params_payload = params.model_dump(by_alias=True) if hasattr(params, 'model_dump') else params
         return f'Plan to execute `{definition.action_code}` on {target}. Params: {params_payload}'
 
+    def _approval_event_payload(self, approval: ApprovalRequest, event_type: str, **extra: object) -> dict[str, object]:
+        payload: dict[str, object] = {
+            'approvalId': approval.id,
+            'requestId': approval.request_id,
+            'actionCode': approval.action_code,
+            'userId': approval.initiated_user_id,
+            'confirmedUserId': approval.confirmed_user_id,
+            'executedUserId': approval.executed_user_id,
+            'projectId': approval.project_id,
+            'targetType': approval.target_type,
+            'targetId': approval.target_id,
+            'approvalStatus': approval.status,
+            'workflowExecutionStatus': APPROVAL_WORKFLOW_STATUS.get(approval.status, 'UNKNOWN'),
+            'workflowMode': 'WEBHOOK',
+            'workflowEngine': 'N8N',
+            'eventType': event_type,
+        }
+        payload.update({key: value for key, value in extra.items() if value is not None})
+        return payload
+
     async def create_pending(
         self,
         db: Session,
@@ -91,31 +118,32 @@ class ApprovalService:
         )
         db.add(approval)
         db.flush()
-        self._audit(
-            db,
-            approval,
-            status=APPROVAL_STATUS_PENDING,
-            payload={'event': 'plan_created', 'params': _json_loads(approval.params_json)},
-        )
-        await n8n_event_service.emit(
+        delivery = await n8n_event_service.emit(
             db,
             request_id=runtime.request_id,
             event_type='approval.pending',
             workflow_hint='approval-pending',
-            payload={
-                'approvalId': approval.id,
-                'requestId': approval.request_id,
-                'actionCode': approval.action_code,
-                'userId': approval.initiated_user_id,
-                'projectId': approval.project_id,
-                'targetType': approval.target_type,
-                'targetId': approval.target_id,
-                'planSummary': approval.plan_summary,
-            },
+            payload=self._approval_event_payload(
+                approval,
+                'approval.pending',
+                planSummary=approval.plan_summary,
+            ),
             approval_id=approval.id,
             session_id=approval.session_id,
             user_id=approval.initiated_user_id,
             project_id=approval.project_id,
+            workflow_status=APPROVAL_WORKFLOW_STATUS[APPROVAL_STATUS_PENDING],
+            idempotency_key=f'approval:{approval.id}:pending',
+        )
+        self._audit(
+            db,
+            approval,
+            status=APPROVAL_STATUS_PENDING,
+            payload={
+                'event': 'plan_created',
+                'params': _json_loads(approval.params_json),
+                'workflow': delivery.as_audit_payload(),
+            },
         )
         return approval
 
@@ -214,27 +242,27 @@ class ApprovalService:
                     success_flag=result.success_flag,
                 ),
             )
-            self._audit(db, approval, status=APPROVAL_STATUS_APPLIED, payload={'event': 'applied', 'comment': comment, 'result': result.raw_payload})
-            await n8n_event_service.emit(
+            delivery = await n8n_event_service.emit(
                 db,
                 request_id=runtime.request_id,
                 event_type='approval.applied',
                 workflow_hint='approval-applied',
-                payload={
-                    'approvalId': approval.id,
-                    'requestId': approval.request_id,
-                    'actionCode': approval.action_code,
-                    'userId': approval.initiated_user_id,
-                    'confirmedUserId': approval.confirmed_user_id,
-                    'executedUserId': approval.executed_user_id,
-                    'projectId': approval.project_id,
-                    'targetType': approval.target_type,
-                    'targetId': approval.target_id,
-                },
+                payload=self._approval_event_payload(
+                    approval,
+                    'approval.applied',
+                ),
                 approval_id=approval.id,
                 session_id=approval.session_id,
                 user_id=approval.initiated_user_id,
                 project_id=approval.project_id,
+                workflow_status=APPROVAL_WORKFLOW_STATUS[APPROVAL_STATUS_APPLIED],
+                idempotency_key=f'approval:{approval.id}:applied',
+            )
+            self._audit(
+                db,
+                approval,
+                status=APPROVAL_STATUS_APPLIED,
+                payload={'event': 'applied', 'comment': comment, 'result': result.raw_payload, 'workflow': delivery.as_audit_payload()},
             )
             db.commit()
             return result
@@ -244,27 +272,35 @@ class ApprovalService:
             approval.error_message = exc.message
             approval.executed_user_id = context.user_id
             approval.executed_at = datetime.utcnow()
-            self._audit(db, approval, status=APPROVAL_STATUS_FAILED, payload={'event': 'failed', 'comment': comment, 'errorCode': exc.error_code, 'message': exc.message})
-            await n8n_event_service.emit(
+            delivery = await n8n_event_service.emit(
                 db,
                 request_id=runtime.request_id,
                 event_type='approval.failed',
                 workflow_hint='approval-failed',
-                payload={
-                    'approvalId': approval.id,
-                    'requestId': approval.request_id,
-                    'actionCode': approval.action_code,
-                    'userId': approval.initiated_user_id,
-                    'projectId': approval.project_id,
-                    'targetType': approval.target_type,
-                    'targetId': approval.target_id,
-                    'errorCode': exc.error_code,
-                    'errorMessage': exc.message,
-                },
+                payload=self._approval_event_payload(
+                    approval,
+                    'approval.failed',
+                    errorCode=exc.error_code,
+                    errorMessage=exc.message,
+                ),
                 approval_id=approval.id,
                 session_id=approval.session_id,
                 user_id=approval.initiated_user_id,
                 project_id=approval.project_id,
+                workflow_status=APPROVAL_WORKFLOW_STATUS[APPROVAL_STATUS_FAILED],
+                idempotency_key=f'approval:{approval.id}:failed',
+            )
+            self._audit(
+                db,
+                approval,
+                status=APPROVAL_STATUS_FAILED,
+                payload={
+                    'event': 'failed',
+                    'comment': comment,
+                    'errorCode': exc.error_code,
+                    'message': exc.message,
+                    'workflow': delivery.as_audit_payload(),
+                },
             )
             db.commit()
             raise
@@ -276,27 +312,28 @@ class ApprovalService:
         approval.status = APPROVAL_STATUS_REJECTED
         approval.confirmed_user_id = context.user_id
         approval.confirmed_at = datetime.utcnow()
-        self._audit(db, approval, status=APPROVAL_STATUS_REJECTED, payload={'event': 'rejected', 'reason': reason})
-        await n8n_event_service.emit(
+        delivery = await n8n_event_service.emit(
             db,
             request_id=context.request_id or approval.request_id,
             event_type='approval.rejected',
             workflow_hint='approval-rejected',
-            payload={
-                'approvalId': approval.id,
-                'requestId': approval.request_id,
-                'actionCode': approval.action_code,
-                'userId': approval.initiated_user_id,
-                'confirmedUserId': approval.confirmed_user_id,
-                'projectId': approval.project_id,
-                'targetType': approval.target_type,
-                'targetId': approval.target_id,
-                'reason': reason,
-            },
+            payload=self._approval_event_payload(
+                approval,
+                'approval.rejected',
+                reason=reason,
+            ),
             approval_id=approval.id,
             session_id=approval.session_id,
             user_id=approval.initiated_user_id,
             project_id=approval.project_id,
+            workflow_status=APPROVAL_WORKFLOW_STATUS[APPROVAL_STATUS_REJECTED],
+            idempotency_key=f'approval:{approval.id}:rejected',
+        )
+        self._audit(
+            db,
+            approval,
+            status=APPROVAL_STATUS_REJECTED,
+            payload={'event': 'rejected', 'reason': reason, 'workflow': delivery.as_audit_payload()},
         )
         db.commit()
         return approval

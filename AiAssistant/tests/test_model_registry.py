@@ -70,14 +70,15 @@ class ModelRegistryTest(unittest.TestCase):
         self.assertEqual('qwen2.5:7b', defaults[0].model_code)
         self.assertEqual('OLLAMA', defaults[0].provider_code)
 
-    def test_gateway_provider_without_model_row_prefers_default_model_alias(self) -> None:
+    def test_gateway_provider_prefers_litellm_default_model_row(self) -> None:
         with patch.dict(
             os.environ,
             {
                 'MODEL_PROVIDER': 'LITELLM',
                 'MODEL_BASE_URL': 'http://litellm:4000/v1',
-                'DEFAULT_MODEL_CODE': 'qwen2.5:7b',
-                'OLLAMA_CHAT_MODEL': 'qwen2.5:7b',
+                'LITELLM_BASE_URL': 'http://litellm:4000/v1',
+                'LITELLM_MODEL': 'deepseek/deepseek-chat',
+                'DEFAULT_MODEL_CODE': 'deepseek/deepseek-chat',
             },
             clear=False,
         ):
@@ -87,11 +88,55 @@ class ModelRegistryTest(unittest.TestCase):
                 selected = get_model_config(db, None)
                 views = list_enabled_models(db)
 
-        self.assertEqual('qwen2.5:7b', selected.model_code)
-        self.assertEqual('OLLAMA', selected.provider_code)
+        self.assertEqual('deepseek/deepseek-chat', selected.model_code)
+        self.assertEqual('LITELLM', selected.provider_code)
         defaults = [item for item in views if item.is_default]
         self.assertEqual(1, len(defaults))
-        self.assertEqual('qwen2.5:7b', defaults[0].model_code)
+        self.assertEqual('deepseek/deepseek-chat', defaults[0].model_code)
+        self.assertEqual('LITELLM', defaults[0].provider_code)
+
+    def test_bootstrap_defaults_includes_vllm_and_litellm_models(self) -> None:
+        with patch.dict(
+            os.environ,
+            {
+                'VLLM_MODEL': 'Qwen/Qwen2.5-7B-Instruct',
+                'LITELLM_MODEL': 'deepseek/deepseek-chat',
+            },
+            clear=False,
+        ):
+            get_settings.cache_clear()
+            reset_database()
+            with SessionLocal() as db:
+                views = list_enabled_models(db)
+
+        models_by_provider = {(item.provider_code, item.model_code) for item in views}
+        self.assertIn(('VLLM', 'Qwen/Qwen2.5-7B-Instruct'), models_by_provider)
+        self.assertIn(('LITELLM', 'deepseek/deepseek-chat'), models_by_provider)
+
+    def test_gateway_provider_prefers_vllm_default_model_row(self) -> None:
+        with patch.dict(
+            os.environ,
+            {
+                'MODEL_PROVIDER': 'VLLM',
+                'MODEL_BASE_URL': 'http://vllm:8000/v1',
+                'VLLM_BASE_URL': 'http://vllm:8000/v1',
+                'VLLM_MODEL': 'Qwen/Qwen2.5-7B-Instruct',
+                'DEFAULT_MODEL_CODE': 'Qwen/Qwen2.5-7B-Instruct',
+            },
+            clear=False,
+        ):
+            get_settings.cache_clear()
+            reset_database()
+            with SessionLocal() as db:
+                selected = get_model_config(db, None)
+                views = list_enabled_models(db)
+
+        self.assertEqual('Qwen/Qwen2.5-7B-Instruct', selected.model_code)
+        self.assertEqual('VLLM', selected.provider_code)
+        defaults = [item for item in views if item.is_default]
+        self.assertEqual(1, len(defaults))
+        self.assertEqual('Qwen/Qwen2.5-7B-Instruct', defaults[0].model_code)
+        self.assertEqual('VLLM', defaults[0].provider_code)
 
     def test_get_embedding_route_prefers_ollama_model_override(self) -> None:
         with patch.dict(
@@ -125,6 +170,10 @@ class ModelRegistryTest(unittest.TestCase):
             'MODEL_PROVIDER',
             'MODEL_BASE_URL',
             'OLLAMA_CHAT_MODEL',
+            'VLLM_BASE_URL',
+            'LITELLM_BASE_URL',
+            'LITELLM_MODEL',
+            'VLLM_MODEL',
             'DEFAULT_MODEL_CODE',
             'EMBEDDING_PROVIDER_CODE',
             'OLLAMA_EMBEDDING_MODEL',

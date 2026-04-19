@@ -21,14 +21,17 @@ from src.app.services.rag_service import RetrievalDecision, rag_service
 
 logger = logging.getLogger(__name__)
 
+LANGGRAPH_IMPORT_ERROR: str | None = None
+
 try:
     from langgraph.graph import END, StateGraph
 
     LANGGRAPH_AVAILABLE = True
-except Exception:  # pragma: no cover - optional dependency
+except Exception as exc:  # pragma: no cover - optional dependency
     END = '__end__'
     StateGraph = None
     LANGGRAPH_AVAILABLE = False
+    LANGGRAPH_IMPORT_ERROR = f'{exc.__class__.__name__}: {exc}'
 
 
 @dataclass
@@ -50,6 +53,8 @@ class AgentState:
     usage: AdapterUsage = field(default_factory=AdapterUsage)
     fallback_used: bool = False
     fallback_reason: str | None = None
+    orchestration_mode: str = 'linear'
+    orchestration_fallback_detail: str | None = None
 
 
 class AgentGraphService:
@@ -57,18 +62,57 @@ class AgentGraphService:
         state.trace.append(step)
         return state
 
+    async def _run_with_orchestration_fallback(self, state: AgentState) -> AgentState:
+        if not LANGGRAPH_AVAILABLE:
+            detail = LANGGRAPH_IMPORT_ERROR or 'LangGraph import failed for an unknown reason.'
+            state.orchestration_mode = 'linear'
+            state.orchestration_fallback_detail = f'dependency_missing: {detail}'
+            self._trace(state, 'agent.orchestration.linear.dependency_missing')
+            logger.info(
+                'agent_graph_linear_fallback request_id=%s agent_type=%s reason=dependency_missing detail=%s',
+                state.request_id,
+                state.request.agent_type,
+                detail,
+            )
+            return await self._run_linear(state)
+
+        try:
+            state.orchestration_mode = 'langgraph'
+            self._trace(state, 'agent.orchestration.langgraph')
+            return await self._run_langgraph(state)
+        except Exception as exc:
+            detail = f'{exc.__class__.__name__}: {exc}'
+            state.orchestration_mode = 'linear'
+            state.orchestration_fallback_detail = f'runtime_failure: {detail}'
+            self._trace(state, 'agent.orchestration.linear.runtime_failure')
+            logger.warning(
+                'agent_graph_linear_fallback request_id=%s agent_type=%s reason=runtime_failure detail=%s',
+                state.request_id,
+                state.request.agent_type,
+                detail,
+                exc_info=True,
+            )
+            return await self._run_linear(state)
+
     async def run(self, db: Session, context: RequestContext, request: AgentRunRequest) -> AgentRunView:
         request_id = context.request_id
         started_at = perf_counter()
+        state = AgentState(request=request, db=db, context=context, request_id=request_id)
         try:
-            state = AgentState(request=request, db=db, context=context, request_id=request_id)
-            if LANGGRAPH_AVAILABLE:
-                state = await self._run_langgraph(state)
-            else:
-                state = await self._run_linear(state)
+            state = await self._run_with_orchestration_fallback(state)
         except Exception as exc:
-            logger.warning('agent_graph_failed request_id=%s agent_type=%s: %s', request_id, request.agent_type, exc, exc_info=True)
-            fallback = await self._fallback_to_chat(db, context, request, str(exc))
+            reason = str(exc)
+            if state.orchestration_fallback_detail:
+                reason = f'{state.orchestration_fallback_detail}; linear_execution_failed: {exc}'
+            logger.warning(
+                'agent_graph_chat_fallback request_id=%s agent_type=%s orchestration_mode=%s reason=%s',
+                request_id,
+                request.agent_type,
+                state.orchestration_mode,
+                reason,
+                exc_info=True,
+            )
+            fallback = await self._fallback_to_chat(db, context, request, reason)
             return AgentRunView(
                 request_id=fallback.request_id,
                 agent_type=request.agent_type,
@@ -81,7 +125,7 @@ class AgentGraphService:
                 latency_ms=fallback.latency_ms,
                 execution_trace=['agent.start', 'agent.fallback.chat_service'],
                 fallback_used=True,
-                fallback_reason=str(exc),
+                fallback_reason=reason,
                 usage=fallback.usage,
             )
 

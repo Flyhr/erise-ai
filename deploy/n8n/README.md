@@ -2,10 +2,24 @@
 
 This directory contains the first n8n workflow pack for Erise.
 
+Current integration mode: webhook-driven peripheral automation, not an embedded workflow engine.
+
+What exists today:
+
+- AiAssistant emits outbound webhook events and persists each delivery in `n8n_event_log`
+- approval events already map to workflow execution states
+- the event sender now includes retry, idempotency, and HMAC signature headers
+
+What does not exist yet:
+
+- no internal workflow runtime inside AiAssistant
+- no callback-driven workflow state reconciliation endpoint
+- no distributed compensation/orchestration engine inside the chat service
+
 ## Start
 
 ```bash
-docker compose --env-file .env.dev -f deploy/n8n/docker-compose.yml up -d
+docker compose --env-file .env.dev -f deploy/n8n/docker-compose.dev.yml up -d
 ```
 
 ## Workflow Files
@@ -38,8 +52,24 @@ Set these values before importing the workflows:
 N8N_ENABLED=true
 N8N_WEBHOOK_BASE_URL=http://localhost:5678/webhook
 N8N_WEBHOOK_SECRET=change-this-n8n-secret
+N8N_EVENT_MAX_RETRIES=2
+N8N_EVENT_RETRY_BACKOFF_SECONDS=1
 INTERNAL_API_KEY=please-change-this-internal-api-key-to-a-long-random-value
 ```
+
+Outbound webhook headers sent by AiAssistant:
+
+- `X-Request-Id`
+- `X-Idempotency-Key`
+- `X-N8N-Webhook-Secret`
+- `X-N8N-Signature`
+- `X-N8N-Signature-Timestamp`
+
+Recommended workflow practice:
+
+- validate the shared secret and HMAC signature before processing the payload
+- treat `X-Idempotency-Key` as the dedupe key for repeated deliveries
+- assume webhook delivery is at-least-once, not exactly-once
 
 ## Smoke Checks
 

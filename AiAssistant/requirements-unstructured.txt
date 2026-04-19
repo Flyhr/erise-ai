@@ -1,4 +1,4 @@
-# Optional primary parser dependency.
-# Keep this outside requirements.txt so the base Docker dev stack can still
-# start when the large Unstructured dependency chain is unavailable.
-unstructured>=0.16
+# Compatibility mirror of the primary parser dependency chain.
+# `requirements.txt` is the source of truth because Unstructured now runs as
+# the default primary parser in the extraction pipeline.
+unstructured[docx,pdf]>=0.16,<1.0

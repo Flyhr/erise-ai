@@ -1,7 +1,7 @@
 services:
   vllm:
     image: vllm/vllm-openai:${VLLM_IMAGE_TAG:-v0.8.5}
-    container_name: erise-ai-vllm
+    container_name: erise-ai-vllm-dev
     restart: unless-stopped
     profiles: ["vllm"]
     gpus: all
@@ -10,6 +10,7 @@ services:
     environment:
       HUGGING_FACE_HUB_TOKEN: ${HUGGING_FACE_HUB_TOKEN:-}
       HF_HOME: /root/.cache/huggingface
+      HF_ENDPOINT: ${HF_ENDPOINT:-https://hf-mirror.com}
       CUDA_VISIBLE_DEVICES: ${VLLM_CUDA_VISIBLE_DEVICES:-0}
       NVIDIA_VISIBLE_DEVICES: ${VLLM_NVIDIA_VISIBLE_DEVICES:-all}
     command:
@@ -40,14 +41,14 @@ services:
       timeout: 10s
       retries: 20
       start_period: 180s
-    expose:
-      - "8000"
+    ports:
+      - "${VLLM_HOST_PORT:-8000}:8000"
     volumes:
       - vllm-model-cache:/root/.cache/huggingface
 
   vllm-embed:
     image: vllm/vllm-openai:${VLLM_IMAGE_TAG:-v0.8.5}
-    container_name: erise-ai-vllm-embed
+    container_name: erise-ai-vllm-embed-dev
     restart: unless-stopped
     profiles: ["vllm"]
     gpus: all
@@ -56,6 +57,7 @@ services:
     environment:
       HUGGING_FACE_HUB_TOKEN: ${HUGGING_FACE_HUB_TOKEN:-}
       HF_HOME: /root/.cache/huggingface
+      HF_ENDPOINT: ${HF_ENDPOINT:-https://hf-mirror.com}
       CUDA_VISIBLE_DEVICES: ${VLLM_EMBED_CUDA_VISIBLE_DEVICES:-1}
       NVIDIA_VISIBLE_DEVICES: ${VLLM_EMBED_NVIDIA_VISIBLE_DEVICES:-all}
     command:
@@ -84,8 +86,8 @@ services:
       timeout: 10s
       retries: 20
       start_period: 180s
-    expose:
-      - "8001"
+    ports:
+      - "${VLLM_EMBED_HOST_PORT:-8001}:8001"
     volumes:
       - vllm-model-cache:/root/.cache/huggingface
 
