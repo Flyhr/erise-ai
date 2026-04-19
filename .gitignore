@@ -40,11 +40,10 @@ AiAssistant/INSTALL_NOTE.md
 AiAssistant/README.md
 AiAssistant/tests/
 !AiAssistant/tests/
-# AiAssistant/tests/__pycache__/
-# !AiAssistant/tests/__init__.py
-# !AiAssistant/tests/support.py
-# !AiAssistant/tests/test_ai_baseline.py
+
+# Test runtime artifacts
 AiAssistant/.test-runtime/
+
 # Node
 node_modules/
 dist/
@@ -88,5 +87,3 @@ erise-ai-ui/.env.dev
 deploy/env/*.local
 
 AiAssistant/tmp_ocr_test/scan_like.pdf
-erise-ai-backend/src/test/java/com/erise/ai/backend/BackendApplicationSmokeTest.java
-erise-ai-backend/src/test/java/com/erise/ai/backend/modules/RagIngestSupportTest.java

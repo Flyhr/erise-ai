@@ -1,31 +1,31 @@
-# Erise MCP Client Samples
+# Erise MCP 客户端示例
 
-This directory contains ready-to-copy MCP client samples for two access patterns:
+此目录提供两种访问方式下可直接复制使用的 MCP 客户端示例：
 
-- `clients/erise-mcp-proxy.json`: recommended for frontend or desktop clients that already use Erise JWT tokens.
-- `clients/erise-mcp-direct.json`: direct access to the AiAssistant MCP endpoint.
-- `clients/erise-mcp-request-examples.json`: JSON-RPC request bodies for smoke checks.
+- `clients/erise-mcp-proxy.json`：推荐用于已经使用 Erise JWT 的前端或桌面客户端
+- `clients/erise-mcp-direct.json`：直接访问 AiAssistant MCP 端点
+- `clients/erise-mcp-request-examples.json`：用于 smoke check 的 JSON-RPC 请求体示例
 
-## Recommended URLs
+## 推荐地址
 
-- Proxy: `http://localhost:8080/api/v1/ai/mcp`
-- Direct: `http://localhost:8081/mcp`
+- 代理方式：`http://localhost:8080/api/v1/ai/mcp`
+- 直连方式：`http://localhost:8081/mcp`
 
-## Required Header
+## 必需请求头
 
-Both paths require an Erise access token:
+无论使用哪种路径，都需要携带 Erise access token：
 
 ```http
 Authorization: Bearer <ERISE_ACCESS_TOKEN>
 ```
 
-## Frontend Usage
+## 前端用法
 
-The frontend can call the proxy directly with the existing helper in:
+前端可以直接复用现有 helper 调用代理端点，相关代码位于：
 
 - `erise-ai-ui/src/api/ai.ts`
 
-Example:
+示例：
 
 ```ts
 import { proxyMcp } from '@/api/ai'
