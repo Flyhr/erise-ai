@@ -4,6 +4,13 @@
 AGENTS.md
 
 docs/
+!docs/
+docs/*
+!docs/rebuild/
+docs/rebuild/*
+!docs/rebuild/14_frontend_acceptance_report.md
+!docs/rebuild/15_release_checklist.md
+!docs/rebuild/16_local_integration_runbook.md
 
 
 
@@ -69,6 +76,11 @@ erise-ai-ui/coverage/
 erise-ai-ui/playwright-report/
 erise-ai-ui/test-results/
 erise-ai-ui/tests/
+!erise-ai-ui/tests/
+erise-ai-ui/tests/*
+!erise-ai-ui/tests/e2e/
+erise-ai-ui/tests/e2e/*
+!erise-ai-ui/tests/e2e/acceptance.spec.ts
 erise-ai-ui/.env.dev
 .erise-ai-ui/docs/
 

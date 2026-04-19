@@ -280,7 +280,7 @@
 }
 
 .chat-stage__header {
-  height: 8%;
+  min-height: 72px;
   padding: 12px 20px 5px;
   border-bottom: 1px solid rgba(192, 199, 212, 0.45);
 }
@@ -288,6 +288,141 @@
 .chat-stage__meta {
   flex-wrap: wrap;
   justify-content: flex-end;
+}
+
+.chat-stage__overview {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px;
+  padding: 14px 20px 0;
+}
+
+.ai-overview-card {
+  padding: 16px 18px;
+  border-radius: 18px;
+  border: 1px solid rgba(192, 199, 212, 0.36);
+  background: rgba(255, 255, 255, 0.88);
+  box-shadow: 0 12px 28px rgba(15, 23, 42, 0.04);
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.ai-overview-card--context {
+  min-width: 0;
+}
+
+.ai-overview-card__head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.ai-overview-card__eyebrow {
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: #7c8593;
+}
+
+.ai-overview-card__head h4 {
+  margin: 4px 0 0;
+  font-size: 16px;
+  font-weight: 800;
+  color: #181c20;
+}
+
+.ai-overview-card__grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.ai-overview-card__metric {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 6px;
+  padding: 12px 14px;
+  border-radius: 14px;
+  background: rgba(241, 243, 250, 0.88);
+}
+
+.ai-overview-card__metric span {
+  color: #667085;
+  font-size: 12px;
+}
+
+.ai-overview-card__metric strong {
+  color: #181c20;
+  font-size: 14px;
+  font-weight: 700;
+  line-height: 1.5;
+  word-break: break-word;
+}
+
+.ai-overview-card__summary {
+  margin: 0;
+  color: #5f6775;
+  font-size: 13px;
+  line-height: 1.65;
+}
+
+.ai-index-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.ai-index-item {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 12px 14px;
+  border-radius: 14px;
+  border: 1px solid rgba(192, 199, 212, 0.28);
+  background: rgba(248, 249, 255, 0.92);
+}
+
+.ai-index-item__copy {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.ai-index-item__copy strong {
+  color: #181c20;
+  font-size: 13px;
+  font-weight: 700;
+  word-break: break-word;
+}
+
+.ai-index-item__copy small {
+  color: #667085;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.ai-index-item__status {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.ai-index-empty {
+  padding: 14px;
+  border-radius: 14px;
+  border: 1px dashed rgba(192, 199, 212, 0.36);
+  background: rgba(248, 249, 255, 0.72);
+  color: #667085;
+  font-size: 13px;
+  line-height: 1.6;
 }
 
 .web-search-toggle {
@@ -421,6 +556,23 @@
 .transcript-item__head {
   flex-wrap: wrap;
   justify-content: flex-end;
+}
+
+.transcript-item__meta-pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.transcript-item__meta-pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: rgba(15, 23, 42, 0.06);
+  color: #4b5563;
+  font-size: 11px;
+  font-weight: 700;
 }
 
 .transcript-item__metric {
@@ -993,6 +1145,17 @@
   font-size: 12px;
 }
 
+.citation-card__snippet {
+  margin: 0;
+  color: #4b5563;
+  font-size: 12px;
+  line-height: 1.6;
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
 .citation-card__action {
   border: 0;
   border-radius: 999px;
@@ -1120,6 +1283,10 @@
     grid-template-columns: 280px minmax(0, 1fr);
   }
 
+  .chat-stage__overview {
+    grid-template-columns: 1fr;
+  }
+
   .empty-stage__prompts {
     grid-template-columns: 1fr;
   }
@@ -1139,10 +1306,24 @@
   .thread-list--history {
     max-height: 320px;
   }
+
+  .ai-overview-card__grid {
+    grid-template-columns: 1fr;
+  }
+
+  .ai-index-item {
+    flex-direction: column;
+  }
+
+  .ai-index-item__status {
+    width: 100%;
+    justify-content: space-between;
+  }
 }
 
 @media (max-width: 720px) {
     .chat-stage__header,
+  .chat-stage__overview,
   .composer-wrap--architect,
   .message-board,
   .conversation-history {

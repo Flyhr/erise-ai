@@ -20,7 +20,7 @@ import org.testcontainers.utility.DockerImageName;
 class FlywayMigrationMySqlTest {
 
     @Test
-    void migratesFreshSchemaThroughV16AndPreservesExpectedColumns() throws SQLException {
+    void migratesFreshSchemaThroughV19AndPreservesExpectedColumns() throws SQLException {
         Assumptions.assumeTrue(
                 DockerClientFactory.instance().isDockerAvailable(),
                 "Docker is required to run the MySQL Flyway migration regression test"
@@ -38,7 +38,7 @@ class FlywayMigrationMySqlTest {
             flyway.migrate();
 
             assertThat(flyway.info().current()).isNotNull();
-            assertThat(flyway.info().current().getVersion().getVersion()).isEqualTo("16");
+            assertThat(flyway.info().current().getVersion().getVersion()).isEqualTo("19");
 
             try (Connection connection = DriverManager.getConnection(
                     mysql.getJdbcUrl(),
@@ -66,6 +66,21 @@ class FlywayMigrationMySqlTest {
                 assertThat(columnDefaultsFor(connection, "ai_message_feedback"))
                         .containsKeys("feedback_type", "feedback_note");
 
+                assertThat(columnDefaultsFor(connection, "approval_request"))
+                        .containsKeys("action_code", "status", "risk_level", "plan_summary");
+
+                assertThat(columnDefaultsFor(connection, "admin_action_request"))
+                        .containsKeys("approval_request_id", "action_code", "action_status");
+
+                assertThat(columnDefaultsFor(connection, "mcp_access_log"))
+                        .containsKeys("method", "tool_name", "resource_uri", "error_code");
+
+                assertThat(columnDefaultsFor(connection, "n8n_event_log"))
+                        .containsKeys("event_type", "workflow_hint", "target_url", "success_flag");
+
+                assertThat(columnDefaultsFor(connection, "automation_webhook_log"))
+                        .containsKeys("workflow_code", "event_type", "request_payload_json");
+
                 assertThat(columnDefaultsFor(connection, "ea_user_notification"))
                         .containsKey("broadcast_flag");
 
@@ -82,7 +97,7 @@ class FlywayMigrationMySqlTest {
     }
 
     @Test
-    void migratesLegacyAiSchemaThroughV16AndBackfillsMissingColumns() throws SQLException {
+    void migratesLegacyAiSchemaThroughV19AndBackfillsMissingColumns() throws SQLException {
         Assumptions.assumeTrue(
                 DockerClientFactory.instance().isDockerAvailable(),
                 "Docker is required to run the MySQL Flyway migration regression test"
@@ -173,7 +188,7 @@ class FlywayMigrationMySqlTest {
             flyway.migrate();
 
             assertThat(flyway.info().current()).isNotNull();
-            assertThat(flyway.info().current().getVersion().getVersion()).isEqualTo("16");
+            assertThat(flyway.info().current().getVersion().getVersion()).isEqualTo("19");
 
             try (Connection connection = DriverManager.getConnection(
                     mysql.getJdbcUrl(),
@@ -200,6 +215,21 @@ class FlywayMigrationMySqlTest {
 
                 assertThat(columnDefaultsFor(connection, "ai_message_feedback"))
                         .containsKeys("feedback_type", "feedback_note");
+
+                assertThat(columnDefaultsFor(connection, "approval_request"))
+                        .containsKeys("action_code", "status", "risk_level", "plan_summary");
+
+                assertThat(columnDefaultsFor(connection, "admin_action_request"))
+                        .containsKeys("approval_request_id", "action_code", "action_status");
+
+                assertThat(columnDefaultsFor(connection, "mcp_access_log"))
+                        .containsKeys("method", "tool_name", "resource_uri", "error_code");
+
+                assertThat(columnDefaultsFor(connection, "n8n_event_log"))
+                        .containsKeys("event_type", "workflow_hint", "target_url", "success_flag");
+
+                assertThat(columnDefaultsFor(connection, "automation_webhook_log"))
+                        .containsKeys("workflow_code", "event_type", "request_payload_json");
 
                 assertThat(columnDefaultsFor(connection, "ea_user_notification"))
                         .containsKey("broadcast_flag");

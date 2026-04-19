@@ -6,10 +6,9 @@ import logging
 import math
 import re
 
-from openai import AsyncOpenAI
-
 from src.app.core.config import get_settings
 from src.app.core.exceptions import AiServiceError
+from src.app.services.model_registry import ProviderRoute, get_embedding_adapter
 
 
 logger = logging.getLogger(__name__)
@@ -19,11 +18,6 @@ TOKEN_PATTERN = re.compile(r'[\u4e00-\u9fff]+|[a-zA-Z0-9_]+')
 class EmbeddingService:
     def __init__(self) -> None:
         self.settings = get_settings()
-        self.client = AsyncOpenAI(
-            api_key=self.settings.resolved_embedding_api_key,
-            base_url=self.settings.resolved_embedding_base_url,
-            timeout=self.settings.provider_timeout_seconds,
-        )
 
     def _tokenize(self, text: str) -> list[str]:
         tokens = TOKEN_PATTERN.findall((text or '').lower())
@@ -82,25 +76,25 @@ class EmbeddingService:
     async def embed(self, texts: list[str]) -> list[list[float]]:
         if not texts:
             return []
-        if not self.settings.resolved_embedding_api_key:
+        route, provider = get_embedding_adapter()
+        provider_base_url = getattr(provider, 'base_url', '')
+        provider_requires_api_key = bool(getattr(provider, 'require_api_key', True))
+        provider_api_key = getattr(provider, 'api_key', '')
+        if not provider_base_url or (provider_requires_api_key and not provider_api_key):
             if not self._allow_fallback():
-                raise AiServiceError('AI_EMBEDDING_NOT_CONFIGURED', 'Embedding api key is not configured', status_code=503)
-            return self._fallback_embeddings(texts, 'embedding api key is not configured')
+                raise AiServiceError('AI_EMBEDDING_NOT_CONFIGURED', 'Embedding provider is not configured', status_code=503)
+            return self._fallback_embeddings(texts, 'embedding provider is not configured')
         vectors: list[list[float]] = []
         batch_size = max(1, self.settings.embedding_batch_size)
         for start in range(0, len(texts), batch_size):
-            vectors.extend(await self._embed_batch(texts[start:start + batch_size]))
+            vectors.extend(await self._embed_batch(route, provider, texts[start:start + batch_size]))
         return vectors
 
-    async def _embed_batch(self, texts: list[str]) -> list[list[float]]:
+    async def _embed_batch(self, route: ProviderRoute, provider, texts: list[str]) -> list[list[float]]:
         attempts = max(1, self.settings.embedding_max_retries + 1)
         for attempt in range(1, attempts + 1):
             try:
-                response = await self.client.embeddings.create(
-                    model=self.settings.embedding_model,
-                    input=texts,
-                )
-                return [item.embedding for item in response.data]
+                return await provider.embed(route.model_code, texts)
             except Exception as exc:
                 message = str(exc)
                 if self._is_quota_error(message):

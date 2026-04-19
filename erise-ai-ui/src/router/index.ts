@@ -37,6 +37,8 @@ const AdminAiFeedbackView = () =>
   import("@/views/admin/AdminAiFeedbackView.vue");
 const AdminAiIndexTasksView = () =>
   import("@/views/admin/AdminAiIndexTasksView.vue");
+const AdminAcceptanceView = () =>
+  import("@/views/admin/AdminAcceptanceView.vue");
 const NotFoundView = () => import("@/views/admin/NotFoundView.vue");
 const WorkspaceShellLayout = () =>
   import("@/components/common/WorkspaceShellLayout.vue");
@@ -64,6 +66,16 @@ const router = createRouter({
       meta: {
         title: "项目 AI",
         description: "基于项目上下文和引用发起 AI 对话。",
+      },
+    },
+    {
+      path: "/projects/:id/ai",
+      component: AiView,
+      props: true,
+      meta: {
+        requiresAuth: true,
+        title: "项目 AI",
+        description: "围绕当前项目上下文发起 AI 对话并查看引用来源。",
       },
     },
     {
@@ -288,7 +300,6 @@ const router = createRouter({
           component: AdminAiPromptsView,
           meta: {
             title: "Prompt 模板",
-            description: "查看 Prompt 模板版本、启停状态与发布历史。",
           },
         },
         {
@@ -296,7 +307,6 @@ const router = createRouter({
           component: AdminAiRequestLogsView,
           meta: {
             title: "AI 请求日志",
-            description: "检索最近请求日志、错误记录与成本统计。",
           },
         },
         {
@@ -313,6 +323,14 @@ const router = createRouter({
           meta: {
             title: "索引任务",
             description: "查看索引任务状态、失败原因与重试入口。",
+          },
+        },
+        {
+          path: "acceptance",
+          component: AdminAcceptanceView,
+          meta: {
+            title: "前端闭环与验收",
+            description: "集中查看关键路径验收入口、回归建议与发布演练清单。",
           },
         },
         {

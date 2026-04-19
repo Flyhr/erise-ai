@@ -6,6 +6,7 @@ import json
 import math
 import os
 import sys
+from time import perf_counter
 from collections import Counter
 from pathlib import Path
 
@@ -88,6 +89,7 @@ def to_hit(document: dict[str, object], score: float) -> RagQueryHit:
 
 
 async def rank_case(case: dict[str, object], documents: list[dict[str, object]], top_k: int) -> dict[str, object]:
+    started_at = perf_counter()
     attachments = [
         AttachmentContext(
             attachment_type=str(item.get('attachmentType', 'DOCUMENT')),
@@ -147,6 +149,9 @@ async def rank_case(case: dict[str, object], documents: list[dict[str, object]],
     expected_source_ids = {int(item) for item in case.get('expectedSourceIds', [])}
     top_hit_id = reranked_hits[0].source_id if reranked_hits else None
     topk_hit = any(hit.source_id in expected_source_ids for hit in reranked_hits[:top_k])
+    citation_source_ids = {citation.source_id for citation in citations}
+    citation_accurate = bool(expected_source_ids and citation_source_ids & expected_source_ids and consistency.consistency_passed)
+    latency_ms = max(1, int((perf_counter() - started_at) * 1000))
 
     return {
         'caseId': case['id'],
@@ -157,6 +162,8 @@ async def rank_case(case: dict[str, object], documents: list[dict[str, object]],
         'topHitSourceTitle': reranked_hits[0].source_title if reranked_hits else None,
         'hitAt1': top_hit_id in expected_source_ids if top_hit_id is not None else False,
         'hitAtTopK': topk_hit,
+        'citationAccurate': citation_accurate,
+        'latencyMs': latency_ms,
         'confidence': round(confidence, 4) if confidence else 0.0,
         'citationCoverageRatio': round(consistency.coverage_ratio, 4),
         'weakEvidence': evidence.downgrade_required or not consistency.consistency_passed,
@@ -177,6 +184,9 @@ async def run_evaluation(dataset_path: Path, top_k: int) -> dict[str, object]:
     hit_at_top_k = sum(1 for item in results if item['hitAtTopK']) / total
     avg_citation_coverage = sum(float(item['citationCoverageRatio']) for item in results) / total
     weak_evidence_ratio = sum(1 for item in results if item['weakEvidence']) / total
+    citation_accuracy = sum(1 for item in results if item['citationAccurate']) / total
+    latencies = sorted(int(item['latencyMs']) for item in results)
+    p95_index = min(len(latencies) - 1, max(0, math.ceil(len(latencies) * 0.95) - 1)) if latencies else 0
 
     return {
         'dataset': str(dataset_path),
@@ -184,8 +194,11 @@ async def run_evaluation(dataset_path: Path, top_k: int) -> dict[str, object]:
         'metrics': {
             'hitRateAt1': round(hit_at_1, 4),
             'hitRateAtTopK': round(hit_at_top_k, 4),
+            'citationAccuracy': round(citation_accuracy, 4),
             'averageCitationCoverage': round(avg_citation_coverage, 4),
             'weakEvidenceRatio': round(weak_evidence_ratio, 4),
+            'averageLatencyMs': round(sum(latencies) / total, 2) if latencies else 0,
+            'p95LatencyMs': latencies[p95_index] if latencies else 0,
         },
         'cases': results,
     }

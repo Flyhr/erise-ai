@@ -54,11 +54,32 @@ services:
     volumes:
       - minio-data:/data
 
+  qdrant:
+    image: qdrant/qdrant:v1.13.4
+    container_name: erise-ai-qdrant
+    restart: unless-stopped
+    environment:
+      QDRANT__SERVICE__API_KEY: ${QDRANT_API_KEY:-}
+    ports:
+      - "${QDRANT_HOST_PORT:-6333}:6333"
+      - "${QDRANT_GRPC_PORT:-6334}:6334"
+    volumes:
+      - qdrant-data:/qdrant/storage
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "bash -lc \"exec 3<>/dev/tcp/127.0.0.1/6333 && printf 'GET /healthz HTTP/1.1\\r\\nHost: localhost\\r\\nConnection: close\\r\\n\\r\\n' >&3 && grep -q '200 OK' <&3\"",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+
   backend:
     build:
       context: ./erise-ai-backend
+      dockerfile: Dockerfile
     container_name: erise-ai-backend
-    dockerfile: Dockerfile # 生产专用
     restart: unless-stopped
     env_file:
       - .env
@@ -77,6 +98,8 @@ services:
         condition: service_healthy
       minio:
         condition: service_started
+      qdrant:
+        condition: service_healthy
     ports:
       - "${BACKEND_PORT:-8080}:8080"
 
@@ -93,6 +116,7 @@ services:
       INTERNAL_SERVICE_TOKEN: ${INTERNAL_API_KEY}
       JAVA_INTERNAL_BASE_URL: http://backend:8080/internal/v1
       JAVA_INTERNAL_API_KEY: ${INTERNAL_API_KEY}
+      QDRANT_URL: http://qdrant:6333
       OPENAI_API_KEY: ${OPENAI_API_KEY}
       OPENAI_BASE_URL: ${OPENAI_BASE_URL}
       DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY}
@@ -102,6 +126,8 @@ services:
       mysql:
         condition: service_healthy
       redis:
+        condition: service_healthy
+      qdrant:
         condition: service_healthy
       backend:
         condition: service_started
@@ -142,3 +168,4 @@ volumes:
   mysql-data:
   redis-data:
   minio-data:
+  qdrant-data:

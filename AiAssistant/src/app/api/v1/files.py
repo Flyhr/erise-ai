@@ -26,8 +26,23 @@ async def extract_file(
         parser=result.parser,
         used_ocr=result.used_ocr,
         page_count=result.page_count,
+        parse_status=result.parse_status,
+        primary_parser=result.primary_parser,
+        fallback_parser=result.fallback_parser,
+        fallback_used=result.fallback_used,
+        error_code=result.error_code,
+        error_message=result.error_message,
+        retryable=result.retryable,
     )
     return {'code': 0, 'msg': 'ok', 'data': view.model_dump(by_alias=True)}
+
+
+@router.get('/capabilities')
+async def capabilities(
+    context: RequestContext = Depends(get_request_context),
+) -> dict[str, object]:
+    del context
+    return {'code': 0, 'msg': 'ok', 'data': file_extract_service.capability_matrix().model_dump(by_alias=True)}
 
 
 @router.post('/chunk-text')

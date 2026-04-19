@@ -19,6 +19,7 @@ import java.util.List;
 import java.util.Map;
 import lombok.RequiredArgsConstructor;
 import org.slf4j.MDC;
+import org.springframework.http.ResponseEntity;
 import org.springframework.http.MediaType;
 import org.springframework.http.codec.ServerSentEvent;
 import org.springframework.stereotype.Service;
@@ -27,6 +28,7 @@ import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
@@ -79,6 +81,13 @@ public class AiController {
     @GetMapping("/models")
     public ApiResponse<List<AiModelView>> models() {
         return ApiResponse.success(aiService.models());
+    }
+
+    @PostMapping("/mcp")
+    public ResponseEntity<String> mcpProxy(
+            @RequestHeader("Authorization") String authorization,
+            @RequestBody String body) {
+        return aiService.mcpProxy(authorization, body);
     }
 }
 
@@ -205,6 +214,14 @@ class AiService {
         return cloudAiClient.models(currentUser, requestId()).stream()
                 .map(item -> new AiModelView(item.providerCode(), item.modelCode(), item.modelName(), item.isDefault(), item.supportStream(), item.maxContextTokens()))
                 .toList();
+    }
+
+    ResponseEntity<String> mcpProxy(String authorization, String body) {
+        CurrentUser currentUser = SecurityUtils.currentUser();
+        String requestId = requestId();
+        ResponseEntity<String> response = cloudAiClient.mcpProxy(authorization, requestId, body);
+        auditLogService.log(currentUser, "AI_MCP_PROXY", "USER", currentUser.userId(), Map.of("requestId", requestId, "statusCode", response.getStatusCode().value()));
+        return response;
     }
 
     private void validateProjectAccess(Long projectId) {

@@ -18,7 +18,7 @@
       </article>
     </section>
 
-    <AppSectionCard title="AI 请求日志" description="检索最近请求、错误日志与模型调用表现。" :unpadded="true">
+    <AppSectionCard title="AI 请求日志" :unpadded="true">
       <template #actions>
         <el-select v-model="windowDays" class="days-select" @change="loadStats">
           <el-option :value="7" label="近 7 天" />
@@ -28,7 +28,8 @@
       </template>
 
       <AppFilterBar>
-        <el-input v-model="filters.q" clearable placeholder="搜索请求号、用户、项目、模型或错误信息" @clear="handleSearch" @keyup.enter="handleSearch" />
+        <el-input v-model="filters.q" clearable placeholder="搜索请求号、用户、项目、模型或错误信息" @clear="handleSearch"
+          @keyup.enter="handleSearch" />
         <el-select v-model="filters.modelCode" clearable placeholder="模型" @change="handleSearch">
           <el-option v-for="model in models" :key="model.id" :label="model.modelName" :value="model.modelCode" />
         </el-select>
@@ -41,7 +42,8 @@
           <el-option label="仅成功" value="success" />
           <el-option label="仅失败" value="failed" />
         </el-select>
-        <el-date-picker v-model="filters.createdDate" type="date" value-format="YYYY-MM-DD" placeholder="日期" @change="handleSearch" />
+        <el-date-picker v-model="filters.createdDate" type="date" value-format="YYYY-MM-DD" placeholder="日期"
+          @change="handleSearch" />
         <el-switch v-model="filters.errorOnly" inline-prompt active-text="错" inactive-text="全" @change="handleSearch" />
         <template #actions>
           <el-button @click="resetFilters">重置</el-button>
@@ -100,7 +102,8 @@
 
         <div class="table-footer">
           <span class="table-count">共 {{ total }} 条</span>
-          <CompactPager variant="project" :page-num="pageNum" :page-size="pageSize" :total="total" @change="handlePageChange" />
+          <CompactPager variant="project" :page-num="pageNum" :page-size="pageSize" :total="total"
+            @change="handlePageChange" />
         </div>
       </template>
     </AppSectionCard>
@@ -167,11 +170,11 @@ const formatLargeNumber = (value: number) => {
 }
 
 const sceneLabel = (scene?: string) =>
-  ({
-    general_chat: '通用',
-    project_chat: '项目',
-    document_chat: '文档',
-  }[scene || ''] || scene || '--')
+({
+  general_chat: '通用',
+  project_chat: '项目',
+  document_chat: '文档',
+}[scene || ''] || scene || '--')
 
 const loadModels = async () => {
   models.value = await getAiModels()

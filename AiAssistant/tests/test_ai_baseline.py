@@ -91,6 +91,28 @@ class AiBaselineApiTest(unittest.TestCase):
                 self.assertGreaterEqual(len(data), 1, data)
                 self.assertTrue(any(item['modelCode'] == 'gpt-4.1-mini' for item in data), data)
 
+                with patch('src.app.api.v1.models.model_health_service.check', new=AsyncMock(return_value=type('Health', (), {
+                    'model_dump': lambda self, by_alias=True: {
+                        'status': 'UP',
+                        'routes': [
+                            {
+                                'role': 'chat',
+                                'providerCode': 'OPENAI',
+                                'modelCode': 'gpt-4.1-mini',
+                                'baseUrl': 'https://api.openai.com/v1',
+                                'configured': True,
+                                'status': 'UP',
+                                'latencyMs': 12,
+                            }
+                        ],
+                    }
+                })())):
+                    model_health = client.get('/internal/ai/chat/models/health', headers=request_headers('models-health'))
+                self.assertEqual(200, model_health.status_code, model_health.text)
+                health_data = model_health.json()['data']
+                self.assertEqual('UP', health_data['status'])
+                self.assertEqual('chat', health_data['routes'][0]['role'])
+
     def test_session_create_message_query_and_chat_completion_logs_request_fields(self) -> None:
         with TestClient(app) as client:
             create = client.post(
@@ -324,7 +346,8 @@ class AiBaselineApiTest(unittest.TestCase):
             )
             self.assertEqual(200, extract.status_code, extract.text)
             extract_payload = extract.json()['data']
-            self.assertEqual('text-decoder', extract_payload['parser'])
+            self.assertIn(extract_payload['parser'], {'unstructured', 'text-decoder'})
+            self.assertIn(extract_payload['parseStatus'], {'SUCCESS', 'FALLBACK'})
             self.assertIn('第一行', extract_payload['plainText'])
             self.assertGreaterEqual(len(extract_payload['chunks']), 1)
 

@@ -1,0 +1,4 @@
+# Optional primary parser dependency.
+# Keep this outside requirements.txt so the base Docker dev stack can still
+# start when the large Unstructured dependency chain is unavailable.
+unstructured>=0.16

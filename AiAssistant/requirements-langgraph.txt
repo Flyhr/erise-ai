@@ -1,0 +1,2 @@
+# Optional LangGraph orchestration dependency for phase-1 agents.
+langgraph>=0.2

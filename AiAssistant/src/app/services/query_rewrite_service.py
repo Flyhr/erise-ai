@@ -16,6 +16,16 @@ STOPWORDS = {
 }
 
 SYNONYM_MAP: dict[str, list[str]] = {
+    'release': ['delivery', 'launch', 'ship'],
+    'risk': ['issue', 'blocker', 'hazard'],
+    'approval': ['review', 'signoff', 'audit'],
+    'handoff': ['delivery', 'transfer', 'transition'],
+    'dependency': ['blocker', 'upstream', 'prerequisite'],
+    'rollback': ['restore', 'revert', 'recovery'],
+    'security': ['permission', 'access control', 'audit'],
+    'deadline': ['due date', 'schedule', 'milestone'],
+    'budget': ['cost', 'expense', 'spend'],
+    'report': ['summary', 'weekly update', 'status'],
     '总结': ['摘要', '概述', '主要内容'],
     '概括': ['摘要', '概述'],
     '摘要': ['总结', '概述'],

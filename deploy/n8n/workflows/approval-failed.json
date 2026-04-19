@@ -1,0 +1,53 @@
+{
+  "name": "Erise Approval Failed Alert",
+  "nodes": [
+    {
+      "parameters": {
+        "path": "approval-failed",
+        "httpMethod": "POST",
+        "responseMode": "lastNode"
+      },
+      "id": "ApprovalFailedWebhook",
+      "name": "Approval Failed Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [260, 260]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://host.docker.internal:8080/api/v1/automation/webhooks/notifications",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-N8N-Webhook-Secret",
+              "value": "={{$env.N8N_WEBHOOK_SECRET}}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ { requestId: $json.body.requestId, workflowCode: 'approval-failed', eventType: 'approval.failed', title: 'AI 写操作执行失败', content: '审批编号 #' + $json.body.approvalId + ' 执行失败，错误码：' + ($json.body.errorCode || 'UNKNOWN') + '。', notificationType: 'N8N_ALERT', sendToAll: false, userIds: [$json.body.userId] } }}"
+      },
+      "id": "ApprovalFailedNotify",
+      "name": "Approval Failed Notify",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [620, 260]
+    }
+  ],
+  "connections": {
+    "Approval Failed Webhook": {
+      "main": [
+        [
+          {
+            "node": "Approval Failed Notify",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  }
+}

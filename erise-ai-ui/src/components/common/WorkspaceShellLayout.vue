@@ -3,6 +3,7 @@
     v-model="searchKeyword"
     :active-nav="activeNav"
     @create="showComingSoon('新建内容')"
+    @navigate-admin="router.push('/admin')"
     @navigate-dashboard="goDashboard"
     @navigate-projects="router.push('/projects')"
     @navigate-knowledge="goKnowledge"

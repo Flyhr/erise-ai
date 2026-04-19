@@ -17,13 +17,17 @@ engine = create_engine(settings.mysql_dsn, **engine_kwargs)
 SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False, expire_on_commit=False, class_=Session)
 
 REQUIRED_TABLES = {
+    'admin_action_request',
     'ai_action_log',
     'ai_chat_session',
     'ai_chat_message',
     'ai_request_log',
+    'approval_request',
     'ai_prompt_template',
     'ai_model_config',
     'ai_message_citation',
+    'mcp_access_log',
+    'n8n_event_log',
 }
 
 REQUIRED_COLUMNS = {

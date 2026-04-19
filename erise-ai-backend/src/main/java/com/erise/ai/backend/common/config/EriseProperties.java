@@ -14,6 +14,7 @@ public class EriseProperties {
     private final Internal internal = new Internal();
     private final Cloud cloud = new Cloud();
     private final Bootstrap bootstrap = new Bootstrap();
+    private final N8n n8n = new N8n();
 
     @Getter
     @Setter
@@ -52,5 +53,12 @@ public class EriseProperties {
         private String adminUsername;
         private String adminPassword;
         private String adminDisplayName;
+    }
+
+    @Getter
+    @Setter
+    public static class N8n {
+        private boolean enabled = false;
+        private String webhookSecret;
     }
 }

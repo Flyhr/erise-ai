@@ -1,0 +1,53 @@
+{
+  "name": "Erise Approval Pending Notify",
+  "nodes": [
+    {
+      "parameters": {
+        "path": "approval-pending",
+        "httpMethod": "POST",
+        "responseMode": "lastNode"
+      },
+      "id": "ApprovalWebhook",
+      "name": "Approval Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [280, 260]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://host.docker.internal:8080/api/v1/automation/webhooks/notifications",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-N8N-Webhook-Secret",
+              "value": "={{$env.N8N_WEBHOOK_SECRET}}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ { requestId: $json.body.requestId, workflowCode: 'approval-pending', eventType: 'approval.pending', title: '待确认 AI 写操作', content: '审批编号 #' + $json.body.approvalId + '，动作：' + $json.body.actionCode + '。', notificationType: 'N8N_EVENT', sendToAll: false, userIds: [$json.body.userId] } }}"
+      },
+      "id": "SendNotification",
+      "name": "Send Notification",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [620, 260]
+    }
+  ],
+  "connections": {
+    "Approval Webhook": {
+      "main": [
+        [
+          {
+            "node": "Send Notification",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  }
+}

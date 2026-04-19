@@ -1,0 +1,126 @@
+{
+  "documents": [
+    {
+      "sourceType": "DOCUMENT",
+      "sourceId": 101,
+      "sourceTitle": "Leave Policy",
+      "sectionPath": "Request Flow",
+      "pageNo": 2,
+      "snippet": "Annual leave requests must be submitted at least three working days before the planned absence. Manager approval is required before the leave is valid.",
+      "url": "/documents/101/edit?mode=preview&pageNo=2"
+    },
+    {
+      "sourceType": "DOCUMENT",
+      "sourceId": 102,
+      "sourceTitle": "Expense Reimbursement Rules",
+      "sectionPath": "Approval Requirements",
+      "pageNo": 4,
+      "snippet": "Travel reimbursement must include invoices and itinerary records. Amounts above 5000 require an additional department head approval.",
+      "url": "/documents/102/edit?mode=preview&pageNo=4"
+    },
+    {
+      "sourceType": "FILE",
+      "sourceId": 201,
+      "sourceTitle": "Weekly Report Template",
+      "sectionPath": "Required Sections",
+      "pageNo": 1,
+      "snippet": "The weekly project report must include progress this week, risks and blockers, next week plan, and cross-team coordination requests.",
+      "url": "/files/201?pageNo=1"
+    },
+    {
+      "sourceType": "DOCUMENT",
+      "sourceId": 103,
+      "sourceTitle": "OCR Processing Guide",
+      "sectionPath": "PDF Text Extraction",
+      "pageNo": 3,
+      "snippet": "Scanned PDFs first try native text extraction. If readable text is insufficient, OCR is used and page-level text is preserved.",
+      "url": "/documents/103/edit?mode=preview&pageNo=3"
+    },
+    {
+      "sourceType": "FILE",
+      "sourceId": 202,
+      "sourceTitle": "Release Checklist",
+      "sectionPath": "Security Gate",
+      "pageNo": 5,
+      "snippet": "Before release, the team must complete security review, permission audit, database backup, rollback plan, and smoke testing.",
+      "url": "/files/202?pageNo=5"
+    },
+    {
+      "sourceType": "DOCUMENT",
+      "sourceId": 104,
+      "sourceTitle": "Incident Response Manual",
+      "sectionPath": "Rollback",
+      "pageNo": 6,
+      "snippet": "For high severity incidents, rollback must be initiated within fifteen minutes when the error budget is exhausted or data corruption is suspected.",
+      "url": "/documents/104/edit?mode=preview&pageNo=6"
+    },
+    {
+      "sourceType": "FILE",
+      "sourceId": 203,
+      "sourceTitle": "RAG Evaluation Plan",
+      "sectionPath": "Metrics",
+      "pageNo": 2,
+      "snippet": "RAG quality is measured by hit rate at one, hit rate at top k, citation accuracy, weak evidence ratio, and average retrieval latency.",
+      "url": "/files/203?pageNo=2"
+    },
+    {
+      "sourceType": "DOCUMENT",
+      "sourceId": 105,
+      "sourceTitle": "Access Control Design",
+      "sectionPath": "MCP Security",
+      "pageNo": 8,
+      "snippet": "MCP tools must enforce user identity, project permission checks, dry run for write operations, confirmation before apply, and full audit logging.",
+      "url": "/documents/105/edit?mode=preview&pageNo=8"
+    },
+    {
+      "sourceType": "FILE",
+      "sourceId": 204,
+      "sourceTitle": "Data Retention Policy",
+      "sectionPath": "Retention Window",
+      "pageNo": 3,
+      "snippet": "Deleted project files are retained for thirty days before permanent removal. Audit logs are retained for at least one year.",
+      "url": "/files/204?pageNo=3"
+    },
+    {
+      "sourceType": "DOCUMENT",
+      "sourceId": 106,
+      "sourceTitle": "Deployment Runbook",
+      "sectionPath": "Docker Startup",
+      "pageNo": 1,
+      "snippet": "The development environment is started through Docker Compose. The AI service, backend, database, Redis, Qdrant, MinIO, UI, and Nginx run as containers.",
+      "url": "/documents/106/edit?mode=preview&pageNo=1"
+    }
+  ],
+  "cases": [
+    {"id": "leave_advance_notice", "query": "How many working days in advance should annual leave be submitted?", "expectedSourceIds": [101], "topK": 3, "referenceAnswer": "Annual leave requests must be submitted at least three working days before the planned absence."},
+    {"id": "leave_approval", "query": "Who must approve leave before it is valid?", "expectedSourceIds": [101], "topK": 3, "referenceAnswer": "Manager approval is required before leave is valid."},
+    {"id": "expense_documents", "query": "What documents are required for travel reimbursement?", "expectedSourceIds": [102], "topK": 3, "referenceAnswer": "Travel reimbursement must include invoices and itinerary records."},
+    {"id": "expense_threshold", "query": "When does reimbursement need department head approval?", "expectedSourceIds": [102], "topK": 3, "referenceAnswer": "Amounts above 5000 require additional department head approval."},
+    {"id": "weekly_sections", "query": "What sections should the weekly project report include?", "expectedSourceIds": [201], "topK": 3, "referenceAnswer": "It should include progress this week, risks and blockers, next week plan, and coordination requests."},
+    {"id": "weekly_risks", "query": "Does the weekly report template ask for risks and blockers?", "expectedSourceIds": [201], "topK": 3, "referenceAnswer": "Yes, risks and blockers are required sections."},
+    {"id": "ocr_native_first", "query": "What happens before OCR is used for scanned PDFs?", "expectedSourceIds": [103], "topK": 3, "referenceAnswer": "The system first tries native text extraction."},
+    {"id": "ocr_page_preserve", "query": "Does OCR preserve page-level text?", "expectedSourceIds": [103], "topK": 3, "referenceAnswer": "Yes, OCR output preserves page-level text."},
+    {"id": "release_security_gate", "query": "What security checks are required before release?", "expectedSourceIds": [202], "topK": 3, "referenceAnswer": "Security review and permission audit are required before release."},
+    {"id": "release_rollback_plan", "query": "Is a rollback plan part of the release checklist?", "expectedSourceIds": [202], "topK": 3, "referenceAnswer": "Yes, a rollback plan is part of the release checklist."},
+    {"id": "incident_rollback_time", "query": "How quickly should rollback start for high severity incidents?", "expectedSourceIds": [104], "topK": 3, "referenceAnswer": "Rollback should be initiated within fifteen minutes."},
+    {"id": "incident_corruption", "query": "When is rollback required if data corruption is suspected?", "expectedSourceIds": [104], "topK": 3, "referenceAnswer": "Rollback is required when data corruption is suspected."},
+    {"id": "rag_metrics", "query": "Which metrics are used to measure RAG quality?", "expectedSourceIds": [203], "topK": 3, "referenceAnswer": "RAG quality uses hit rate at one, hit rate at top k, citation accuracy, weak evidence ratio, and average latency."},
+    {"id": "rag_latency", "query": "Does the RAG evaluation include retrieval latency?", "expectedSourceIds": [203], "topK": 3, "referenceAnswer": "Yes, average retrieval latency is measured."},
+    {"id": "mcp_identity", "query": "What identity controls must MCP tools enforce?", "expectedSourceIds": [105], "topK": 3, "referenceAnswer": "MCP tools must enforce user identity and project permission checks."},
+    {"id": "mcp_write_flow", "query": "What is required before MCP write operations are applied?", "expectedSourceIds": [105], "topK": 3, "referenceAnswer": "Write operations require dry run, confirmation before apply, and audit logging."},
+    {"id": "retention_deleted_files", "query": "How long are deleted project files retained?", "expectedSourceIds": [204], "topK": 3, "referenceAnswer": "Deleted project files are retained for thirty days."},
+    {"id": "retention_audit_logs", "query": "How long are audit logs retained?", "expectedSourceIds": [204], "topK": 3, "referenceAnswer": "Audit logs are retained for at least one year."},
+    {"id": "docker_services", "query": "Which services run in the Docker development environment?", "expectedSourceIds": [106], "topK": 3, "referenceAnswer": "The AI service, backend, database, Redis, Qdrant, MinIO, UI, and Nginx run as containers."},
+    {"id": "docker_startup", "query": "How is the development environment started?", "expectedSourceIds": [106], "topK": 3, "referenceAnswer": "It is started through Docker Compose."},
+    {"id": "security_and_release", "query": "Before launch, what security and rollback items must be ready?", "expectedSourceIds": [202], "topK": 3, "referenceAnswer": "Security review, permission audit, database backup, rollback plan, and smoke testing must be ready."},
+    {"id": "approval_policy", "query": "Explain approval requirements for expenses over 5000.", "expectedSourceIds": [102], "topK": 3, "referenceAnswer": "Expenses over 5000 require additional department head approval."},
+    {"id": "report_status", "query": "What should a project status report cover next week?", "expectedSourceIds": [201], "topK": 3, "referenceAnswer": "It should cover the next week plan and coordination requests."},
+    {"id": "permission_audit", "query": "Where is permission audit mentioned as mandatory?", "expectedSourceIds": [202, 105], "topK": 3, "referenceAnswer": "Permission audit is mandatory before release and MCP tools must enforce project permission checks."},
+    {"id": "citation_metric", "query": "Which evaluation metric checks whether references are correct?", "expectedSourceIds": [203], "topK": 3, "referenceAnswer": "Citation accuracy checks whether references are correct."},
+    {"id": "weak_evidence_metric", "query": "What metric tracks weak evidence in RAG results?", "expectedSourceIds": [203], "topK": 3, "referenceAnswer": "Weak evidence ratio tracks weak evidence in RAG results."},
+    {"id": "text_extraction_fallback", "query": "When does scanned PDF processing use OCR?", "expectedSourceIds": [103], "topK": 3, "referenceAnswer": "OCR is used when native text extraction has insufficient readable text."},
+    {"id": "deleted_files_and_audit", "query": "Compare deleted file retention and audit log retention.", "expectedSourceIds": [204], "topK": 3, "referenceAnswer": "Deleted files are retained for thirty days, while audit logs are retained for at least one year."},
+    {"id": "docker_ai_stack", "query": "Is Qdrant part of the Docker AI stack?", "expectedSourceIds": [106], "topK": 3, "referenceAnswer": "Yes, Qdrant runs as a container in the Docker development environment."},
+    {"id": "mcp_audit_logging", "query": "Do MCP tools require audit logging?", "expectedSourceIds": [105], "topK": 3, "referenceAnswer": "Yes, MCP tools require full audit logging."}
+  ]
+}

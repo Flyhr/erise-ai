@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 
 from src.app.core.config import Settings, get_settings
 from src.app.core.exceptions import AiServiceError
+from src.app.core.request_context import set_current_request_id
 from src.app.db.session import get_db
 
 
@@ -39,7 +40,9 @@ def get_request_context(
         org_id = int(x_org_id) if x_org_id is not None else settings.default_org_id
     except ValueError as exc:
         raise AiServiceError('AI_FORBIDDEN', 'Invalid organization identity', status_code=400) from exc
-    return RequestContext(user_id=user_id, org_id=org_id, request_id=x_request_id or str(uuid4()))
+    request_id = x_request_id or str(uuid4())
+    set_current_request_id(request_id)
+    return RequestContext(user_id=user_id, org_id=org_id, request_id=request_id)
 
 
 def get_database_session(db: Session = Depends(get_db)) -> Session:

@@ -1,33 +1,27 @@
 <template>
   <div class="notification-center">
     <el-badge :value="displayUnreadCount" :hidden="unreadCount <= 0" :max="99">
-      <button
-        type="button"
-        class="notification-center__trigger"
-        :class="{ 'has-label': showLabel }"
-        @click="openDrawer"
-      >
+      <button type="button" class="notification-center__trigger" :class="{ 'has-label': showLabel }"
+        @click="openDrawer">
         <span class="material-symbols-outlined">notifications</span>
         <span v-if="showLabel">{{ buttonLabel }}</span>
       </button>
     </el-badge>
 
-    <el-drawer
-      v-model="visible"
-      :size="adminMode ? '420px' : '360px'"
-      :with-header="false"
-      append-to-body
-      class="notification-center__drawer"
-    >
+    <el-drawer v-model="visible" :size="adminMode ? '420px' : '360px'" :with-header="false" append-to-body
+      class="notification-center__drawer">
       <div class="notification-center__panel">
         <header class="notification-center__header">
           <div>
             <h2>通知中心</h2>
-            <p>统一查看系统公告、用户通知与历史消息</p>
           </div>
           <div class="notification-center__header-actions">
             <el-button v-if="adminMode" type="primary" @click="openComposeDialog">发送通知</el-button>
-            <el-button v-else text :disabled="unreadCount <= 0" @click="handleReadAll">全部已读</el-button>
+            <el-button type="danger" plain :disabled="selectedNotificationIds.length === 0" :loading="deleting"
+              @click="handleDeleteSelected">
+              删除所选
+            </el-button>
+            <!-- <el-button v-else text :disabled="unreadCount <= 0" @click="handleReadAll">全部已读</el-button> -->
           </div>
         </header>
 
@@ -36,43 +30,28 @@
         </div>
 
         <div v-if="adminMode" class="notification-center__batchbar">
-          <el-checkbox
-            :model-value="allVisibleSelected"
-            :indeterminate="selectAllIndeterminate"
-            :disabled="filteredNotifications.length === 0"
-            @change="handleSelectAllVisibleChange"
-          >
+          <el-checkbox :model-value="allVisibleSelected" :indeterminate="selectAllIndeterminate"
+            :disabled="filteredNotifications.length === 0" @change="handleSelectAllVisibleChange">
             全选当前页
           </el-checkbox>
           <span class="notification-center__batch-count">已选 {{ selectedNotificationIds.length }} 条</span>
-          <el-button
-            type="danger"
-            plain
-            :disabled="selectedNotificationIds.length === 0"
-            :loading="deleting"
-            @click="handleDeleteSelected"
-          >
-            删除所选
-          </el-button>
+
         </div>
 
         <div v-if="listLoading" class="notification-center__state">
           <el-skeleton animated>
             <template #template>
               <el-skeleton-item variant="rect" style="width: 100%; height: 92px; border-radius: 18px;" />
-              <el-skeleton-item variant="rect" style="width: 100%; height: 92px; margin-top: 12px; border-radius: 18px;" />
-              <el-skeleton-item variant="rect" style="width: 100%; height: 92px; margin-top: 12px; border-radius: 18px;" />
+              <el-skeleton-item variant="rect"
+                style="width: 100%; height: 92px; margin-top: 12px; border-radius: 18px;" />
+              <el-skeleton-item variant="rect"
+                style="width: 100%; height: 92px; margin-top: 12px; border-radius: 18px;" />
             </template>
           </el-skeleton>
         </div>
 
-        <el-result
-          v-else-if="loadError"
-          class="notification-center__state"
-          icon="warning"
-          title="通知加载失败"
-          :sub-title="loadError"
-        >
+        <el-result v-else-if="loadError" class="notification-center__state" icon="warning" title="通知加载失败"
+          :sub-title="loadError">
           <template #extra>
             <el-button type="primary" @click="loadNotifications">重新加载</el-button>
           </template>
@@ -80,25 +59,15 @@
 
         <el-scrollbar v-else-if="filteredNotifications.length" class="notification-center__list-shell">
           <div class="notification-center__list">
-            <article
-              v-for="item in filteredNotifications"
-              :key="item.id"
-              class="notification-card"
-              :class="{
-                'is-unread': !item.read,
-                'is-system': isSystemNotification(item),
-                'is-read-card': item.read,
-              }"
-              @click="openDetailDialog(item)"
-            >
+            <article v-for="item in filteredNotifications" :key="item.id" class="notification-card" :class="{
+              'is-unread': !item.read,
+              'is-system': isSystemNotification(item),
+              'is-read-card': item.read,
+            }" @click="openDetailDialog(item)">
               <header class="notification-card__header">
                 <div class="notification-card__title-group">
-                  <el-checkbox
-                    v-if="adminMode"
-                    :model-value="isNotificationSelected(item.id)"
-                    @click.stop
-                    @change="handleNotificationSelectionChange(item.id, $event)"
-                  />
+                  <el-checkbox v-if="adminMode" :model-value="isNotificationSelected(item.id)" @click.stop
+                    @change="handleNotificationSelectionChange(item.id, $event)" />
                   <div v-if="isSystemNotification(item)" class="notification-card__system-icon">
                     <span class="material-symbols-outlined">campaign</span>
                   </div>
@@ -119,7 +88,8 @@
                 <span class="notification-card__type">{{ notificationTypeLabel(item.notificationType) }}</span>
                 <div class="notification-card__footer-actions">
                   <el-button v-if="!item.read" text type="primary" @click.stop="handleRead(item.id)">标记已读</el-button>
-                  <el-button v-if="adminMode" text type="danger" @click.stop="handleDeleteSingle(item.id)">删除</el-button>
+                  <el-button v-if="adminMode" text type="danger"
+                    @click.stop="handleDeleteSingle(item.id)">删除</el-button>
                 </div>
               </footer>
             </article>
@@ -141,19 +111,13 @@
       </div>
     </el-drawer>
 
-    <el-dialog
-      v-model="detailDialogVisible"
-      width="520px"
-      align-center
-      append-to-body
-      destroy-on-close
-      class="notification-detail-dialog"
-      :show-close="false"
-    >
+    <el-dialog v-model="detailDialogVisible" width="520px" align-center append-to-body destroy-on-close
+      class="notification-detail-dialog" :show-close="false">
       <div v-if="activeNotification" class="notification-detail-dialog__panel">
         <div class="notification-detail-dialog__hero">
           <div class="notification-detail-dialog__icon">
-            <span class="material-symbols-outlined">{{ isSystemNotification(activeNotification) ? 'campaign' : 'notifications' }}</span>
+            <span class="material-symbols-outlined">{{ isSystemNotification(activeNotification) ? 'campaign' :
+              'notifications' }}</span>
           </div>
           <div class="notification-detail-dialog__copy">
             <h2>{{ activeNotification.title }}</h2>
@@ -162,7 +126,8 @@
         </div>
 
         <div class="notification-detail-dialog__meta">
-          <span class="notification-detail-dialog__chip">{{ notificationTypeLabel(activeNotification.notificationType) }}</span>
+          <span class="notification-detail-dialog__chip">{{ notificationTypeLabel(activeNotification.notificationType)
+          }}</span>
           <span class="notification-detail-dialog__chip" :class="{ 'is-read': activeNotification.read }">
             {{ activeNotification.read ? '已读' : '未读' }}
           </span>
@@ -179,15 +144,8 @@
       </div>
     </el-dialog>
 
-    <el-dialog
-      v-model="composeDialogVisible"
-      width="560px"
-      align-center
-      append-to-body
-      destroy-on-close
-      class="notification-compose-dialog"
-      :show-close="false"
-    >
+    <el-dialog v-model="composeDialogVisible" width="560px" align-center append-to-body destroy-on-close
+      class="notification-compose-dialog" :show-close="false">
       <div class="notification-compose-dialog__panel">
         <div class="notification-compose-dialog__hero">
           <div class="notification-compose-dialog__icon">
@@ -199,13 +157,8 @@
           </div>
         </div>
 
-        <el-form
-          ref="composeFormRef"
-          :model="composeForm"
-          :rules="composeRules"
-          label-position="top"
-          class="notification-compose"
-        >
+        <el-form ref="composeFormRef" :model="composeForm" :rules="composeRules" label-position="top"
+          class="notification-compose">
           <el-form-item label="发送范围">
             <el-radio-group v-model="composeForm.scope">
               <el-radio-button label="all">所有用户</el-radio-button>
@@ -214,20 +167,11 @@
           </el-form-item>
 
           <el-form-item v-if="composeForm.scope === 'specific'" label="选择用户" prop="userIds">
-            <el-select
-              v-model="composeForm.userIds"
-              multiple
-              filterable
-              remote
-              reserve-keyword
-              collapse-tags
-              collapse-tags-tooltip
-              placeholder="输入用户名、昵称或邮箱搜索"
-              :remote-method="loadRecipientOptions"
-              :loading="recipientLoading"
-              class="notification-compose__select"
-            >
-              <el-option v-for="option in recipientOptions" :key="option.value" :label="option.label" :value="option.value" />
+            <el-select v-model="composeForm.userIds" multiple filterable remote reserve-keyword collapse-tags
+              collapse-tags-tooltip placeholder="输入用户名、昵称或邮箱搜索" :remote-method="loadRecipientOptions"
+              :loading="recipientLoading" class="notification-compose__select">
+              <el-option v-for="option in recipientOptions" :key="option.value" :label="option.label"
+                :value="option.value" />
             </el-select>
           </el-form-item>
 
@@ -236,14 +180,8 @@
           </el-form-item>
 
           <el-form-item label="通知正文" prop="content">
-            <el-input
-              v-model="composeForm.content"
-              type="textarea"
-              :rows="7"
-              maxlength="4000"
-              show-word-limit
-              placeholder="请输入要发送给用户的通知内容"
-            />
+            <el-input v-model="composeForm.content" type="textarea" :rows="7" maxlength="4000" show-word-limit
+              placeholder="请输入要发送给用户的通知内容" />
           </el-form-item>
 
           <div class="notification-compose__footer">
@@ -399,12 +337,12 @@ const isSystemNotification = (item: UserNotificationView) =>
   ['SYSTEM', 'ADMIN_NOTICE', 'ANNOUNCEMENT', 'FILE_REVIEW'].includes((item.notificationType || '').toUpperCase())
 
 const notificationTypeLabel = (type?: string) =>
-  ({
-    SYSTEM: '系统通知',
-    ADMIN_NOTICE: '运营通知',
-    ANNOUNCEMENT: '平台公告',
-    FILE_REVIEW: '审核结果',
-  }[String(type || '').toUpperCase()] || '普通通知')
+({
+  SYSTEM: '系统通知',
+  ADMIN_NOTICE: '运营通知',
+  ANNOUNCEMENT: '平台公告',
+  FILE_REVIEW: '审核结果',
+}[String(type || '').toUpperCase()] || '普通通知')
 
 const formatRelativeTime = (value?: string) => {
   if (!value) return '--'

@@ -18,6 +18,7 @@ class ActionRuntimeContext:
     request: ChatCompletionRequest
     request_id: str
     session_id: int | None = None
+    approval_confirmed: bool = False
 
     @property
     def user_id(self) -> int:
@@ -55,6 +56,8 @@ class ActionExecutionResult:
     latency_ms: int | None = None
     target_type: str | None = None
     target_id: int | None = None
+    approval_id: int | None = None
+    approval_status: str | None = None
 
 
 ParamsT = TypeVar('ParamsT')
@@ -72,6 +75,7 @@ class ActionDefinition(Generic[ParamsT]):
     permission_rule: PermissionRule
     executor: Executor
     fallback_message: str
+    requires_confirmation: bool = True
 
     @property
     def match_rule_name(self) -> str:

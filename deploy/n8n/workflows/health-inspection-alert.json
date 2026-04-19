@@ -1,0 +1,126 @@
+{
+  "name": "Erise Health Inspection Alert",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 30
+            }
+          ]
+        }
+      },
+      "id": "Schedule",
+      "name": "Schedule",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1,
+      "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "http://host.docker.internal:8080/actuator/health"
+      },
+      "id": "BackendHealth",
+      "name": "Backend Health",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [500, 220]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "http://host.docker.internal:8081/internal/ai/chat/models/health",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "X-Internal-Service-Token", "value": "={{$env.INTERNAL_API_KEY}}" },
+            { "name": "X-User-Id", "value": "1" },
+            { "name": "X-Org-Id", "value": "0" },
+            { "name": "X-Request-Id", "value": "n8n-health-inspection" }
+          ]
+        }
+      },
+      "id": "AiHealth",
+      "name": "AI Health",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [500, 380]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "string": [
+            {
+              "value1": "={{$json[\"status\"] || $json[\"data\"][\"status\"]}}",
+              "operation": "notEqual",
+              "value2": "UP"
+            }
+          ]
+        }
+      },
+      "id": "IfDegraded",
+      "name": "If Degraded",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [760, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://host.docker.internal:8080/api/v1/automation/webhooks/notifications",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-N8N-Webhook-Secret",
+              "value": "={{$env.N8N_WEBHOOK_SECRET}}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\"requestId\": \"n8n-health-inspection\", \"workflowCode\": \"health-inspection-alert\", \"eventType\": \"inspection.degraded\", \"title\": \"Erise 巡检告警\", \"content\": \"检测到后端或 AI 健康状态异常，请查看 n8n 与服务日志。\", \"sendToAll\": true}"
+      },
+      "id": "AlertNotification",
+      "name": "Alert Notification",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [1030, 300]
+    }
+  ],
+  "connections": {
+    "Schedule": {
+      "main": [
+        [
+          { "node": "Backend Health", "type": "main", "index": 0 },
+          { "node": "AI Health", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Backend Health": {
+      "main": [
+        [
+          { "node": "If Degraded", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "AI Health": {
+      "main": [
+        [
+          { "node": "If Degraded", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "If Degraded": {
+      "main": [
+        [
+          { "node": "Alert Notification", "type": "main", "index": 0 }
+        ],
+        []
+      ]
+    }
+  }
+}

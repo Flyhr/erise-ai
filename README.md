@@ -43,6 +43,14 @@ FastAPI
 docker compose --env-file .env.dev -f docker-compose.dev.yml up --build
 ```
 
+榛樿 dev 妯″紡鏄函 Docker 閾捐矾锛屼笉闇€鍦ㄥ涓绘満鍗曠嫭瀹夎 Ollama銆?
+- `cloud` 榛樿鐩磋繛 `ollama`
+- `ollama-init` 浼氳嚜鍔ㄩ鐑?chat / embedding 妯″瀷
+- 濡傛灉瑕佺敤 LiteLLM 浣滀负缃戝叧锛?
+```bash
+docker compose --env-file .env.dev -f docker-compose.dev.yml -f deploy/litellm/docker-compose.dev.yml up --build
+```
+
 停止环境：
 
 ```bash

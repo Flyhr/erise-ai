@@ -1,0 +1,53 @@
+{
+  "name": "Erise Approval Applied Notify",
+  "nodes": [
+    {
+      "parameters": {
+        "path": "approval-applied",
+        "httpMethod": "POST",
+        "responseMode": "lastNode"
+      },
+      "id": "ApprovalAppliedWebhook",
+      "name": "Approval Applied Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [260, 260]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://host.docker.internal:8080/api/v1/automation/webhooks/notifications",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-N8N-Webhook-Secret",
+              "value": "={{$env.N8N_WEBHOOK_SECRET}}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ { requestId: $json.body.requestId, workflowCode: 'approval-applied', eventType: 'approval.applied', title: 'AI 写操作已执行', content: '审批编号 #' + $json.body.approvalId + ' 已执行完成。', notificationType: 'N8N_EVENT', sendToAll: false, userIds: [$json.body.userId] } }}"
+      },
+      "id": "ApprovalAppliedNotify",
+      "name": "Approval Applied Notify",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [620, 260]
+    }
+  ],
+  "connections": {
+    "Approval Applied Webhook": {
+      "main": [
+        [
+          {
+            "node": "Approval Applied Notify",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  }
+}

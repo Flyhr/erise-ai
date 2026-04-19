@@ -6,6 +6,9 @@ from unittest.mock import AsyncMock, patch
 from fastapi.testclient import TestClient
 
 from src.app.actions.builtin_actions import match_file_content_action, match_file_title_action
+from src.app.actions.service import action_service
+from src.app.models.admin_action_request import AdminActionRequest
+from src.app.models.approval_request import ApprovalRequest
 from src.app.models.ai_message import AiChatMessage
 from src.app.models.ai_message_citation import AiMessageCitation
 from src.app.models.ai_session import AiChatSession
@@ -19,6 +22,7 @@ from tests.support import SessionLocal, app, fake_model, request_headers, reset_
 class AgentActionFrameworkTest(unittest.TestCase):
     def setUp(self) -> None:
         reset_database()
+        action_service.settings.action_confirmation_required = False
 
     def test_file_title_action_matches_common_current_file_phrase(self) -> None:
         request = ChatCompletionRequest.model_validate(
@@ -104,6 +108,66 @@ class AgentActionFrameworkTest(unittest.TestCase):
             request_logs = db.query(AiRequestLog).all()
             self.assertEqual(1, len(request_logs))
             self.assertEqual('document-title-update', request_logs[0].model_code)
+
+    def test_write_action_requires_confirmation_before_apply(self) -> None:
+        original_required = action_service.settings.action_confirmation_required
+        action_service.settings.action_confirmation_required = True
+        try:
+            with TestClient(app) as client:
+                with (
+                    patch(
+                        'src.app.actions.builtin_actions.fetch_document_context',
+                        new=AsyncMock(return_value={'id': 9, 'projectId': 55, 'title': '旧标题', 'summary': '', 'plainText': '正文'}),
+                    ),
+                    patch(
+                        'src.app.actions.builtin_actions.update_document_title',
+                        new=AsyncMock(return_value={'id': 9, 'projectId': 55, 'title': '确认后的标题', 'summary': '', 'plainText': '正文'}),
+                    ) as update_document_title_mock,
+                ):
+                    plan_response = client.post(
+                        '/internal/ai/chat/completions',
+                        headers=request_headers('approval-plan-1'),
+                        json={
+                            'message': '把这份文档标题改为：确认后的标题',
+                            'context': {
+                                'projectId': 55,
+                                'attachments': [{'attachmentType': 'DOCUMENT', 'sourceId': 9, 'projectId': 55}],
+                            },
+                        },
+                    )
+
+                    self.assertEqual(200, plan_response.status_code, plan_response.text)
+                    self.assertIn('审批编号', plan_response.json()['data']['answer'])
+                    update_document_title_mock.assert_not_awaited()
+
+                    with SessionLocal() as db:
+                        approval = db.query(ApprovalRequest).one()
+                        self.assertEqual('PENDING', approval.status)
+                        approval_id = approval.id
+                        action_log = db.query(AiActionLog).one()
+                        self.assertEqual('pending_confirmation', action_log.action_status)
+
+                    confirm_response = client.post(
+                        f'/internal/ai/chat/actions/approvals/{approval_id}/confirm',
+                        headers=request_headers('approval-confirm-1'),
+                        json={'comment': '确认执行'},
+                    )
+
+                    self.assertEqual(200, confirm_response.status_code, confirm_response.text)
+                    self.assertTrue(confirm_response.json()['data']['applied'])
+                    update_document_title_mock.assert_awaited_once_with(9, 1, '确认后的标题', 'approval-confirm-1')
+
+            with SessionLocal() as db:
+                approval = db.query(ApprovalRequest).one()
+                self.assertEqual('APPLIED', approval.status)
+                self.assertEqual(1, approval.confirmed_user_id)
+                self.assertEqual(1, approval.executed_user_id)
+                audits = db.query(AdminActionRequest).order_by(AdminActionRequest.id.asc()).all()
+                self.assertEqual(['PENDING', 'APPLIED'], [item.action_status for item in audits])
+                action_statuses = [item.action_status for item in db.query(AiActionLog).order_by(AiActionLog.id.asc()).all()]
+                self.assertEqual(['pending_confirmation', 'applied'], action_statuses)
+        finally:
+            action_service.settings.action_confirmation_required = original_required
 
     def test_file_title_action_uses_selected_file_attachment(self) -> None:
         with SessionLocal() as db:

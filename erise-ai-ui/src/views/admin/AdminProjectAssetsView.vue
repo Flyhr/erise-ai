@@ -3,13 +3,8 @@
     <section class="project-detail__toolbar admin-assets-toolbar">
       <div class="admin-assets-toolbar__search-group">
         <div class="project-detail__search">
-          <el-input
-            v-model="keyword"
-            clearable
-            placeholder="搜索名称、摘要或文件类型"
-            @clear="handleSearch"
-            @keyup.enter="handleSearch"
-          >
+          <el-input v-model="keyword" clearable placeholder="搜索名称、摘要或文件类型" @clear="handleSearch"
+            @keyup.enter="handleSearch">
             <template #prefix>
               <span class="material-symbols-outlined">search</span>
             </template>
@@ -22,13 +17,8 @@
       </div>
 
       <div class="admin-assets-toolbar__actions">
-        <ProjectSubnav
-          :project-id="0"
-          mode="value"
-          :model-value="activeTab"
-          :items="tabItems"
-          @update:modelValue="handleTabChange"
-        />
+        <ProjectSubnav :project-id="0" mode="value" :model-value="activeTab" :items="tabItems"
+          @update:modelValue="handleTabChange" />
         <span class="project-detail__meta-chip">
           <span class="material-symbols-outlined">inventory_2</span>
           <span>共 {{ total }} 条{{ assetCollectionLabel }}</span>
@@ -41,18 +31,12 @@
         <el-skeleton animated>
           <template #template>
             <el-skeleton-item variant="rect" style="width: 100%; height: 56px; border-radius: 18px;" />
-            <el-skeleton-item
-              variant="rect"
-              style="width: 100%; height: 72px; margin-top: 14px; border-radius: 16px;"
-            />
-            <el-skeleton-item
-              variant="rect"
-              style="width: 100%; height: 72px; margin-top: 12px; border-radius: 16px;"
-            />
-            <el-skeleton-item
-              variant="rect"
-              style="width: 100%; height: 72px; margin-top: 12px; border-radius: 16px;"
-            />
+            <el-skeleton-item variant="rect"
+              style="width: 100%; height: 72px; margin-top: 14px; border-radius: 16px;" />
+            <el-skeleton-item variant="rect"
+              style="width: 100%; height: 72px; margin-top: 12px; border-radius: 16px;" />
+            <el-skeleton-item variant="rect"
+              style="width: 100%; height: 72px; margin-top: 12px; border-radius: 16px;" />
           </template>
         </el-skeleton>
       </div>
@@ -111,13 +95,9 @@
                 </td>
                 <td>
                   <div class="project-assets-table__status-stack">
-                    <button
-                      v-if="isRetryableFailedFile(row)"
-                      type="button"
-                      class="project-assets-table__status is-clickable"
-                      :class="`is-${assetTone(row)}`"
-                      @click.stop="retryAsset(row)"
-                    >
+                    <button v-if="isRetryableFailedFile(row)" type="button"
+                      class="project-assets-table__status is-clickable" :class="`is-${assetTone(row)}`"
+                      @click.stop="retryAsset(row)">
                       <span class="material-symbols-outlined">{{ assetStatusIcon(row) }}</span>
                       <span>{{ assetStatusLabel(row) }}</span>
                     </button>
@@ -138,7 +118,8 @@
                 <td>{{ relativeTime(row.updatedAt) }}</td>
                 <td class="project-assets-table__actions-cell" @click.stop>
                   <el-dropdown trigger="click" @command="handleRowCommand(row, $event)">
-                    <button type="button" class="project-assets-table__menu-trigger" @click.stop><span>···</span></button>
+                    <button type="button" class="project-assets-table__menu-trigger"
+                      @click.stop><span>···</span></button>
                     <template #dropdown>
                       <el-dropdown-menu>
                         <el-dropdown-item command="preview">预览</el-dropdown-item>
@@ -160,13 +141,8 @@
 
       <div v-if="!assetError" class="project-detail__table-footer">
         <span class="project-detail__table-count">共 {{ total }} 条{{ assetCollectionLabel }}</span>
-        <CompactPager
-          variant="project"
-          :page-num="pageNum"
-          :page-size="pageSize"
-          :total="total"
-          @change="handlePageChange"
-        />
+        <CompactPager variant="project" :page-num="pageNum" :page-size="pageSize" :total="total"
+          @change="handlePageChange" />
       </div>
     </section>
 
@@ -174,7 +150,6 @@
       <div class="admin-assets-export-dialog">
         <div class="admin-assets-export-dialog__copy">
           <strong>{{ exportTarget?.title || '当前文档' }}</strong>
-          <span>导出格式与文档编辑页保持一致。</span>
         </div>
         <div class="admin-assets-export-dialog__actions">
           <el-button :loading="exporting" @click="exportDocumentAsset('doc')">导出 .doc</el-button>

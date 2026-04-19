@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import logging
 import math
+import re
 from dataclasses import dataclass
 from time import sleep
 from typing import Any
@@ -23,11 +24,73 @@ from src.app.schemas.rag import (
     build_debug_chat_context,
 )
 from src.app.services.embedding_service import embedding_service
+from src.app.services.model_registry import get_embedding_model_code
 from src.app.services.query_rewrite_service import QueryVariant, query_rewrite_service
 from src.app.services.web_search_service import search_web
 
 
 logger = logging.getLogger(__name__)
+
+WEB_SEARCH_EXPLICIT_PATTERNS = [
+    re.compile(pattern, re.IGNORECASE)
+    for pattern in (
+        r'联网',
+        r'上网',
+        r'搜(?:一下|一搜|索)?',
+        r'搜索',
+        r'查(?:一下|一查|查一下|查看|找一下|找找)?',
+        r'检索',
+        r'官网',
+        r'链接',
+        r'来源',
+        r'\bsearch\b',
+        r'\blook\s+up\b',
+        r'\bbrowse\b',
+        r'\bgoogle\b',
+        r'\bbing\b',
+        r'\bofficial\s+site\b',
+        r'\bsource\b',
+        r'\blink\b',
+    )
+]
+WEB_SEARCH_FRESHNESS_PATTERNS = [
+    re.compile(pattern, re.IGNORECASE)
+    for pattern in (
+        r'最新',
+        r'最近',
+        r'当前',
+        r'目前',
+        r'现在',
+        r'实时',
+        r'今天',
+        r'今日',
+        r'昨天',
+        r'明天',
+        r'本周',
+        r'本月',
+        r'今年',
+        r'新闻',
+        r'天气',
+        r'股价',
+        r'价格',
+        r'汇率',
+        r'市值',
+        r'版本',
+        r'发布',
+        r'更新',
+        r'\btoday\b',
+        r'\bcurrent\b',
+        r'\blatest\b',
+        r'\brecent\b',
+        r'\bnow\b',
+        r'\bnews\b',
+        r'\bweather\b',
+        r'\bprice\b',
+        r'\bversion\b',
+        r'\brelease\b',
+        r'\bupdate\b',
+    )
+]
 
 
 @dataclass(slots=True)
@@ -54,7 +117,7 @@ class RagService:
     RRF_RANK_CONSTANT = 60
     MIN_FUSION_CANDIDATES = 20
     MAX_FUSION_CANDIDATES = 30
-    FALLBACK_CONFIDENCE_CAP = 0.74
+    FALLBACK_CONFIDENCE_CAP = 0.82
     RERANK_MODEL_NAME = 'BAAI/bge-reranker-base'
 
     def __init__(self) -> None:
@@ -197,10 +260,27 @@ class RagService:
                     'source_type': request.source_type,
                     'source_id': request.source_id,
                     'source_name': request.source_name,
+                    'source_url': request.source_url or self._build_citation_url(
+                        request.source_type,
+                        request.source_id,
+                        chunk.page_no,
+                        chunk.section_path,
+                        chunk.chunk_num,
+                    ),
+                    'source_version': request.source_version,
                     'chunk_num': chunk.chunk_num,
+                    'chunk_id': chunk.chunk_id or self._chunk_id(request.source_type, request.source_id, chunk.chunk_num),
+                    'chunk_hash': chunk.chunk_hash or self._chunk_hash(chunk.chunk_text),
                     'chunk_text': chunk.chunk_text,
                     'page_no': chunk.page_no,
                     'section_path': chunk.section_path,
+                    'task_id': chunk.task_id or request.task_id,
+                    'metadata': {
+                        **(request.metadata or {}),
+                        **(chunk.metadata or {}),
+                        'embedding_model': get_embedding_model_code(),
+                        'embedding_version': self.settings.embedding_version,
+                    },
                     'updated_at': request.updated_at.isoformat() if request.updated_at else None,
                 },
             )
@@ -262,6 +342,7 @@ class RagService:
                 query_plan.variants,
                 key='priority_source',
                 label='Priority 1: temporary files and @ references',
+                mode='SCOPED',
             )
             used_tools.append(attachment_stage.key)
             if attachment_stage.sufficient:
@@ -286,6 +367,7 @@ class RagService:
                 query_plan.variants,
                 key='project_knowledge',
                 label='Priority 2: project files',
+                mode='SCOPED',
             )
             used_tools.append(project_stage.key)
             if project_stage.sufficient:
@@ -307,7 +389,8 @@ class RagService:
             else []
         )
 
-        if bool(request.web_search_enabled):
+        should_use_web_search = self._should_use_web_search(request, query_plan)
+        if should_use_web_search:
             used_tools.append('web_search')
             web_query = query_plan.rewritten_query or query_plan.normalized_query or request.message
             web_hits = await self._safe_web_search(web_query)
@@ -344,7 +427,7 @@ class RagService:
             confidence=None,
             context_messages=[{
                 'role': 'system',
-                'content': self._build_general_context(bool(request.web_search_enabled), bool(auxiliary_citations)),
+                'content': self._build_general_context(should_use_web_search, bool(auxiliary_citations)),
             }],
             rewritten_queries=query_plan.all_queries,
             rewrite_hints=query_plan.hints,
@@ -360,8 +443,9 @@ class RagService:
         query_variants: list[QueryVariant],
         key: str,
         label: str,
+        mode: str,
     ) -> RetrievalStage:
-        hits = await self._private_hits(request, context, candidate_limit, 'SCOPED', query_variants)
+        hits = await self._private_hits(request, context, candidate_limit, mode, query_variants)
         top_hits = hits[:top_k]
         confidence = top_hits[0].score if top_hits else None
         return RetrievalStage(
@@ -442,6 +526,18 @@ class RagService:
                 return True
         return False
 
+    def _should_use_web_search(self, request: ChatCompletionRequest, query_plan: Any) -> bool:
+        if request.web_search_enabled is not True:
+            return False
+        query = (query_plan.rewritten_query or query_plan.normalized_query or request.message or '').strip()
+        if not query:
+            return False
+        if any(pattern.search(query) for pattern in WEB_SEARCH_EXPLICIT_PATTERNS):
+            return True
+        if any(pattern.search(query) for pattern in WEB_SEARCH_FRESHNESS_PATTERNS):
+            return True
+        return False
+
     async def debug_query(
         self,
         user_id: int,
@@ -504,7 +600,8 @@ class RagService:
     ) -> list[RagQueryHit]:
         try:
             return await self._vector_search(request, context, top_k, mode, query_variants)
-        except Exception:
+        except Exception as exception:
+            logger.warning('Vector search failed and will be skipped: %s', exception, exc_info=True)
             return []
 
     async def _safe_keyword_search(
@@ -542,16 +639,34 @@ class RagService:
                 self._ensure_collection(collection_name)
                 response = self._run_qdrant(
                     f'search `{collection_name}`',
-                    lambda: self.client.search(
-                        collection_name=collection_name,
-                        query_vector=vector,
-                        query_filter=query_filter,
-                        limit=top_k,
-                        with_payload=True,
-                    ),
+                    lambda: self._search_points(collection_name, vector, query_filter, top_k),
                 )
                 hits.extend(self._response_to_hits(response, boost=variant.boost))
         return self._dedupe_hits(hits)[:top_k]
+
+    def _search_points(
+        self,
+        collection_name: str,
+        vector: list[float],
+        query_filter: Filter,
+        limit: int,
+    ) -> list[Any]:
+        if hasattr(self.client, 'search'):
+            return self.client.search(
+                collection_name=collection_name,
+                query_vector=vector,
+                query_filter=query_filter,
+                limit=limit,
+                with_payload=True,
+            )
+        response = self.client.query_points(
+            collection_name=collection_name,
+            query=vector,
+            query_filter=query_filter,
+            limit=limit,
+            with_payload=True,
+        )
+        return list(getattr(response, 'points', response))
 
     async def _keyword_search(
         self,
@@ -587,6 +702,13 @@ class RagService:
                         snippet=str(item.get('snippet') or ''),
                         page_no=int(item['pageNo']) if item.get('pageNo') is not None else None,
                         section_path=str(item.get('sectionPath') or '') or None,
+                        url=self._build_citation_url(
+                            str(item.get('sourceType') or ''),
+                            int(item.get('sourceId') or 0),
+                            int(item['pageNo']) if item.get('pageNo') is not None else None,
+                            str(item.get('sectionPath') or '') or None,
+                            None,
+                        ),
                     )
                 )
         return hits
@@ -671,15 +793,30 @@ class RagService:
         hits: list[RagQueryHit] = []
         for item in response:
             payload = item.payload or {}
+            source_type = str(payload.get('source_type') or '')
+            source_id = int(payload.get('source_id') or 0)
+            page_no = int(payload['page_no']) if payload.get('page_no') is not None else None
+            section_path = str(payload.get('section_path') or '') or None
+            chunk_num = int(payload['chunk_num']) if payload.get('chunk_num') is not None else None
+            metadata = payload.get('metadata') if isinstance(payload.get('metadata'), dict) else {}
             hits.append(
                 RagQueryHit(
                     score=float(item.score) * boost,
-                    source_type=str(payload.get('source_type') or ''),
-                    source_id=int(payload.get('source_id') or 0),
+                    source_type=source_type,
+                    source_id=source_id,
                     source_title=str(payload.get('source_name') or 'knowledge-snippet'),
                     snippet=str(payload.get('chunk_text') or ''),
-                    page_no=int(payload['page_no']) if payload.get('page_no') is not None else None,
-                    section_path=str(payload.get('section_path') or '') or None,
+                    page_no=page_no,
+                    section_path=section_path,
+                    url=str(payload.get('source_url') or '') or self._build_citation_url(source_type, source_id, page_no, section_path, chunk_num),
+                    project_id=int(payload['project_id']) if payload.get('project_id') is not None else None,
+                    session_id=int(payload['session_id']) if payload.get('session_id') is not None else None,
+                    chunk_num=chunk_num,
+                    chunk_id=str(payload.get('chunk_id') or '') or None,
+                    chunk_hash=str(payload.get('chunk_hash') or '') or None,
+                    task_id=str(payload.get('task_id') or '') or None,
+                    source_version=str(payload.get('source_version') or '') or None,
+                    metadata=metadata,
                 )
             )
         return hits
@@ -766,6 +903,8 @@ class RagService:
         return sorted(normalized, key=lambda item: item.score, reverse=True)
 
     def _get_reranker(self) -> Any | None:
+        if not self.settings.rag_rerank_enabled:
+            return None
         if self._reranker_unavailable:
             return None
         if self._reranker is not None:
@@ -811,6 +950,43 @@ class RagService:
             score=hit.score,
             url=hit.url,
         )
+
+    def _build_citation_url(
+        self,
+        source_type: str,
+        source_id: int,
+        page_no: int | None,
+        section_path: str | None,
+        chunk_num: int | None,
+    ) -> str | None:
+        normalized = (source_type or '').strip().upper()
+        if not source_id:
+            return None
+        if normalized == 'DOCUMENT':
+            path = f'/documents/{source_id}/edit?mode=preview'
+        elif normalized == 'FILE':
+            path = f'/files/{source_id}'
+        elif normalized == 'TEMP_FILE':
+            path = f'/ai?tempFileId={source_id}'
+        else:
+            path = f'/knowledge?sourceType={normalized or "UNKNOWN"}&sourceId={source_id}'
+        extras: list[str] = []
+        if page_no is not None:
+            extras.append(f'pageNo={page_no}')
+        if section_path:
+            extras.append(f'sectionPath={section_path}')
+        if chunk_num is not None:
+            extras.append(f'chunkNum={chunk_num}')
+        if not extras:
+            return path
+        separator = '&' if '?' in path else '?'
+        return f'{path}{separator}' + '&'.join(extras)
+
+    def _chunk_id(self, source_type: str, source_id: int, chunk_num: int) -> str:
+        return f'{source_type.upper()}:{source_id}:{chunk_num}'
+
+    def _chunk_hash(self, chunk_text: str) -> str:
+        return hashlib.sha256((chunk_text or '').encode('utf-8')).hexdigest()
 
     def _build_priority_context(self, hits: list[RagQueryHit], stage_label: str) -> str:
         lines = [
@@ -904,7 +1080,7 @@ class RagService:
         return {
             'upserted': upserted,
             'collectionName': collection_name,
-            'embeddingModelCode': self.settings.embedding_model,
+            'embeddingModelCode': get_embedding_model_code(),
             'embeddingVersion': self.settings.embedding_version,
             'embeddingDimension': self.settings.embedding_dimensions,
         }

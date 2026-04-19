@@ -19,6 +19,7 @@ import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpMethod;
 import org.springframework.http.MediaType;
+import org.springframework.http.ResponseEntity;
 import org.springframework.http.client.reactive.ReactorClientHttpConnector;
 import org.springframework.http.codec.ServerSentEvent;
 import org.springframework.stereotype.Component;
@@ -101,6 +102,33 @@ public class CloudAiClient {
 
     public List<ModelResponse> models(CurrentUser user, String requestId) {
         return get(user, properties.getCloud().getBaseUrl() + "/internal/ai/chat/models", requestId, new TypeReference<List<ModelResponse>>() { });
+    }
+
+    public ResponseEntity<String> mcpProxy(String authorization, String requestId, String body) {
+        try {
+            HttpHeaders headers = new HttpHeaders();
+            headers.setContentType(MediaType.APPLICATION_JSON);
+            headers.set("Authorization", authorization);
+            headers.set("X-Request-Id", requestId);
+            HttpEntity<String> entity = new HttpEntity<>(body, headers);
+            return restTemplate.exchange(
+                    properties.getCloud().getBaseUrl() + "/mcp",
+                    HttpMethod.POST,
+                    entity,
+                    String.class
+            );
+        } catch (RestClientResponseException exception) {
+            HttpHeaders headers = new HttpHeaders();
+            if (exception.getResponseHeaders() != null) {
+                headers.putAll(exception.getResponseHeaders());
+            }
+            return ResponseEntity.status(exception.getStatusCode())
+                    .headers(headers)
+                    .body(exception.getResponseBodyAsString());
+        } catch (RestClientException exception) {
+            log.warn("AI MCP proxy request failed", exception);
+            throw new BizException(ErrorCodes.AI_ERROR, extractRestClientMessage(exception, "AI MCP proxy unavailable"));
+        }
     }
 
     public RagIndexUpsertResponse upsertRagIndex(Long userId, RagIndexUpsertRequest request, String requestId) {

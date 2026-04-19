@@ -86,6 +86,7 @@ import {
   Files,
   Histogram,
   Menu,
+  Select,
   User,
 } from '@element-plus/icons-vue'
 import { useAuthStore } from '@/stores/auth'
@@ -108,6 +109,7 @@ const navItems = [
   { index: '/admin/ai/request-logs', label: '请求日志', icon: Histogram },
   { index: '/admin/ai/feedback', label: '用户反馈', icon: ChatDotRound },
   { index: '/admin/ai/index-tasks', label: '索引任务', icon: Document },
+  { index: '/admin/acceptance', label: '前端验收', icon: Select },
   { index: '/admin/logs', label: '审计日志', icon: DocumentCopy },
 ]
 
@@ -128,6 +130,7 @@ const activeNavIndex = computed(() => {
   if (route.path.startsWith('/admin/ai/request-logs')) return '/admin/ai/request-logs'
   if (route.path.startsWith('/admin/ai/feedback')) return '/admin/ai/feedback'
   if (route.path.startsWith('/admin/ai/index-tasks')) return '/admin/ai/index-tasks'
+  if (route.path.startsWith('/admin/acceptance')) return '/admin/acceptance'
   if (route.path.startsWith('/admin/logs') || route.path.startsWith('/admin/audit-logs')) return '/admin/logs'
   return '/admin'
 })

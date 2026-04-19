@@ -28,6 +28,7 @@ from src.app.models.ai_message_citation import AiMessageCitation
 from src.app.schemas.chat import ChatCompletionRequest
 from src.app.schemas.common import CamelModel
 from src.app.services.model_registry import get_model_adapter, get_model_config
+from src.app.services.n8n_event_service import n8n_event_service
 
 SYSTEM_PROVIDER_CODE = 'SYSTEM'
 SYSTEM_ACTION_SOURCE = 'SYSTEM_ACTION'
@@ -702,6 +703,22 @@ async def execute_weekly_report_draft_action(
         summary,
         body,
         runtime.request_id,
+    )
+    await n8n_event_service.emit(
+        runtime.db,
+        request_id=runtime.request_id,
+        event_type='weekly_report.created',
+        workflow_hint='weekly-report-created',
+        payload={
+            'projectId': permission.target_id,
+            'userId': runtime.user_id,
+            'documentId': detail.get('id') if isinstance(detail, dict) else None,
+            'title': detail.get('title') if isinstance(detail, dict) else title,
+            'summary': summary,
+        },
+        session_id=runtime.session_id,
+        user_id=runtime.user_id,
+        project_id=permission.target_id,
     )
     latency_ms = max(1, int((perf_counter() - started_at) * 1000))
     return ActionExecutionResult(

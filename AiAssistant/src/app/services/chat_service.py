@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import math
 import re
 from collections.abc import AsyncGenerator
@@ -48,6 +49,7 @@ ATTACHMENT_CONTEXT_GUARD_MODEL = 'attachment-context-guard'
 STRICT_CITATION_GUARD_MODEL = 'strict-citation-guard'
 DEFAULT_SESSION_TITLE = '新会话'
 SESSION_TITLE_MAX_LENGTH = 30
+logger = logging.getLogger(__name__)
 
 
 class CancellationStore:
@@ -789,7 +791,117 @@ class ChatService:
         )
         prompt_messages = self._inject_context_messages(prompt_messages, retrieval_decision)
         started_at = perf_counter()
-        result = await adapter.chat(model.model_code, prompt_messages, request.temperature, request.max_tokens)
+        try:
+            result = await adapter.chat(model.model_code, prompt_messages, request.temperature, request.max_tokens)
+        except AiServiceError as exc:
+            latency_ms = max(1, int((perf_counter() - started_at) * 1000))
+            logger.warning(
+                'chat_completion_failed request_id=%s provider=%s model=%s error_code=%s latency_ms=%s',
+                request_id,
+                exc.provider_code or model.provider_code,
+                exc.model_code or model.model_code,
+                exc.error_code,
+                latency_ms,
+                exc_info=True,
+            )
+            assistant_message = self._create_message(
+                db,
+                session.id,
+                context.user_id,
+                ROLE_ASSISTANT,
+                '',
+                STATUS_FAILED,
+                request_id=request_id,
+                model_code=exc.model_code or model.model_code,
+                provider_code=exc.provider_code or model.provider_code,
+            )
+            assistant_message.error_code = exc.error_code
+            assistant_message.error_message = exc.message
+            assistant_message.latency_ms = latency_ms
+            session.message_count = (session.message_count or 0) + 2
+            self._touch_session(session)
+            self._save_request_log(
+                db,
+                context,
+                session,
+                request_id=request_id,
+                user_message_id=user_message.id,
+                assistant_message_id=assistant_message.id,
+                provider_code=exc.provider_code or model.provider_code,
+                model_code=exc.model_code or model.model_code,
+                temperature=request.temperature,
+                max_tokens=request.max_tokens,
+                stream=False,
+                request_payload=request.model_dump(by_alias=True),
+                response_payload={'answer': ''},
+                usage=AdapterUsage(),
+                duration_ms=latency_ms,
+                success_flag=False,
+                answer_source=retrieval_decision.answer_source,
+                message_status=STATUS_FAILED,
+                error_code=exc.error_code,
+                error_message=exc.message,
+            )
+            db.commit()
+            raise
+        except Exception as exc:
+            latency_ms = max(1, int((perf_counter() - started_at) * 1000))
+            error_message = str(exc) or 'Provider request failed'
+            logger.warning(
+                'chat_completion_failed request_id=%s provider=%s model=%s error_code=%s latency_ms=%s',
+                request_id,
+                model.provider_code,
+                model.model_code,
+                'AI_PROVIDER_ERROR',
+                latency_ms,
+                exc_info=True,
+            )
+            assistant_message = self._create_message(
+                db,
+                session.id,
+                context.user_id,
+                ROLE_ASSISTANT,
+                '',
+                STATUS_FAILED,
+                request_id=request_id,
+                model_code=model.model_code,
+                provider_code=model.provider_code,
+            )
+            assistant_message.error_code = 'AI_PROVIDER_ERROR'
+            assistant_message.error_message = error_message
+            assistant_message.latency_ms = latency_ms
+            session.message_count = (session.message_count or 0) + 2
+            self._touch_session(session)
+            self._save_request_log(
+                db,
+                context,
+                session,
+                request_id=request_id,
+                user_message_id=user_message.id,
+                assistant_message_id=assistant_message.id,
+                provider_code=model.provider_code,
+                model_code=model.model_code,
+                temperature=request.temperature,
+                max_tokens=request.max_tokens,
+                stream=False,
+                request_payload=request.model_dump(by_alias=True),
+                response_payload={'answer': ''},
+                usage=AdapterUsage(),
+                duration_ms=latency_ms,
+                success_flag=False,
+                answer_source=retrieval_decision.answer_source,
+                message_status=STATUS_FAILED,
+                error_code='AI_PROVIDER_ERROR',
+                error_message=error_message,
+            )
+            db.commit()
+            raise AiServiceError(
+                'AI_PROVIDER_ERROR',
+                error_message,
+                status_code=502,
+                provider_code=model.provider_code,
+                model_code=model.model_code,
+            ) from exc
         latency_ms = max(1, int((perf_counter() - started_at) * 1000))
         consistency_assessment = citation_guard_service.assess_answer_consistency(
             result.text,

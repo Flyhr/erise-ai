@@ -7,9 +7,9 @@
       :user-role="sessionStatusText" :user-avatar="(activeModel?.modelName || '智').slice(0, 1)"
       search-placeholder="搜索项目、知识库、文件或 AI 会话..." @create="resetConversation"
       @navigate-dashboard="router.push('/workspace')" @navigate-projects="router.push('/projects')"
-      @navigate-knowledge="router.push('/knowledge')" @navigate-ai="router.push('/ai')" @search="openSearch"
-      @notify="showComingSoon('通知中心')" @settings="router.push('/settings/profile')"
-      @profile="router.push('/settings/profile')">
+      @navigate-knowledge="router.push('/knowledge')" @navigate-ai="router.push('/ai')"
+      @navigate-admin="router.push('/admin')" @search="openSearch" @notify="showComingSoon('通知中心')"
+      @settings="router.push('/settings/profile')" @profile="router.push('/settings/profile')">
       <div class="workspace-shell-card app-card">
         <div class="ai-workspace">
           <aside class="conversation-history">
@@ -59,8 +59,79 @@
                     active-text="开" inactive-text="关" :loading="savingRetrievalSettings"
                     :disabled="sending || savingRetrievalSettings" @change="handleWebSearchToggle" />
                 </div>
+                <el-button v-if="authStore.isAdmin" text class="chat-stage__admin-button"
+                  :disabled="sending || savingRetrievalSettings" @click="adminDrawerVisible = true">
+                  绠＄悊淇℃伅
+                </el-button>
               </div>
             </div>
+
+            <section v-if="false" class="chat-stage__overview">
+              <article class="ai-overview-card">
+                <div class="ai-overview-card__head">
+                  <div>
+                    <div class="ai-overview-card__eyebrow">会话元信息</div>
+                    <h4>当前会话</h4>
+                  </div>
+                  <AppStatusTag :label="sessionStatusText" :tone="sessionStatusTone" />
+                </div>
+                <div class="ai-overview-card__grid">
+                  <div v-for="item in sessionMetaItems" :key="item.label" class="ai-overview-card__metric">
+                    <span>{{ item.label }}</span>
+                    <strong>{{ item.value }}</strong>
+                  </div>
+                </div>
+              </article>
+
+              <article class="ai-overview-card">
+                <div class="ai-overview-card__head">
+                  <div>
+                    <div class="ai-overview-card__eyebrow">模型 / Provider</div>
+                    <h4>当前模型状态</h4>
+                  </div>
+                  <AppStatusTag :label="modelStatusText" :tone="modelStatusTone" />
+                </div>
+                <div class="ai-overview-card__grid">
+                  <div v-for="item in modelMetaItems" :key="item.label" class="ai-overview-card__metric">
+                    <span>{{ item.label }}</span>
+                    <strong>{{ item.value }}</strong>
+                  </div>
+                </div>
+                <p class="ai-overview-card__summary">{{ latestAssistantSummary }}</p>
+              </article>
+
+              <article class="ai-overview-card ai-overview-card--context">
+                <div class="ai-overview-card__head">
+                  <div>
+                    <div class="ai-overview-card__eyebrow">索引状态</div>
+                    <h4>对话上下文</h4>
+                  </div>
+                  <AppStatusTag :label="contextStatusText" :tone="contextStatusTone" />
+                </div>
+                <div class="ai-overview-card__grid">
+                  <div v-for="item in contextMetaItems" :key="item.label" class="ai-overview-card__metric">
+                    <span>{{ item.label }}</span>
+                    <strong>{{ item.value }}</strong>
+                  </div>
+                </div>
+                <p class="ai-overview-card__summary">{{ selectedKnowledgeSummary }}</p>
+                <div v-if="tempFiles.length" class="ai-index-list">
+                  <div v-for="file in tempFiles" :key="file.id" class="ai-index-item">
+                    <div class="ai-index-item__copy">
+                      <strong>{{ file.fileName }}</strong>
+                      <small>{{ tempFileMetaText(file) }}</small>
+                    </div>
+                    <div class="ai-index-item__status">
+                      <KnowledgeSyncStatus compact :parse-status="file.parseStatus" :index-status="file.indexStatus"
+                        :parse-error-message="file.parseErrorMessage" :can-retry="isTempFileFailed(file)"
+                        retry-text="重新解析" @retry="retryTempFileItem(file)" />
+                      <el-button text @click="removeTempFile(file)">移除</el-button>
+                    </div>
+                  </div>
+                </div>
+                <div v-else class="ai-index-empty">当前还没有临时文件。上传后会在这里展示解析与索引进度。</div>
+              </article>
+            </section>
 
             <section ref="messageListRef" class="message-board" :class="{ 'is-empty': !messages.length }">
               <div class="message-board__inner">
@@ -90,6 +161,21 @@
                     <div class="transcript-item__panel">
                       <div class="transcript-item__head">
                         <span class="transcript-item__time">{{ formatTime(message.createdAt) }}</span>
+                        <div v-if="authStore.isAdmin && message.roleCode === 'ASSISTANT'"
+                          class="transcript-item__meta-pills">
+                          <span v-if="messageProviderLabel(message)" class="transcript-item__meta-pill">
+                            {{ messageProviderLabel(message) }}
+                          </span>
+                          <span v-if="messageModelLabel(message)" class="transcript-item__meta-pill">
+                            {{ messageModelLabel(message) }}
+                          </span>
+                          <span v-if="messageCitationLabel(message)" class="transcript-item__meta-pill">
+                            {{ messageCitationLabel(message) }}
+                          </span>
+                        </div>
+                        <div v-else-if="message.attachments?.length" class="transcript-item__meta-pills">
+                          <span class="transcript-item__meta-pill">{{ message.attachments.length }} 个上下文</span>
+                        </div>
                       </div>
                       <div class="transcript-item__body" :class="surfaceClasses(message)">
                         <div
@@ -117,6 +203,9 @@
                               <div class="citation-card__content">
                                 <strong class="citation-card__title">{{ group.title }}</strong>
                                 <small class="citation-card__meta">{{ privateCitationMeta(group) }}</small>
+                                <p v-if="citationSnippet(group.snippet)" class="citation-card__snippet">
+                                  {{ citationSnippet(group.snippet) }}
+                                </p>
                               </div>
                             </button>
                           </div>
@@ -130,8 +219,11 @@
                               class="citation-card citation-card--web">
                               <div class="citation-card__content">
                                 <strong class="citation-card__title citation-card__title--single">{{ group.title
-                                }}</strong>
-                                <small class="citation-card__meta">{{ group.urlLabel || '网页引用' }}</small>
+                                  }}</strong>
+                                <small class="citation-card__meta">{{ webCitationMeta(group) }}</small>
+                                <p v-if="citationSnippet(group.snippet)" class="citation-card__snippet">
+                                  {{ citationSnippet(group.snippet) }}
+                                </p>
                               </div>
                               <button type="button" class="citation-card__action"
                                 @click="openCitation(group.representative)">
@@ -155,23 +247,15 @@
 
                         <div v-if="message.roleCode === 'ASSISTANT' && assistantActionVisible(message)"
                           class="assistant-actions">
-                          <button
-                            type="button"
-                            class="assistant-actions__button"
+                          <button type="button" class="assistant-actions__button"
                             :class="{ 'is-active': message.feedbackType === 'UP' }"
-                            :disabled="!canSubmitFeedback(message)"
-                            @click="submitAssistantFeedback(message, 'UP')"
-                          >
+                            :disabled="!canSubmitFeedback(message)" @click="submitAssistantFeedback(message, 'UP')">
                             <span class="material-symbols-outlined">thumb_up</span>
                             <span>{{ message.feedbackType === 'UP' ? '已点赞' : '点赞' }}</span>
                           </button>
-                          <button
-                            type="button"
-                            class="assistant-actions__button"
+                          <button type="button" class="assistant-actions__button"
                             :class="{ 'is-active': message.feedbackType === 'DOWN' }"
-                            :disabled="!canSubmitFeedback(message)"
-                            @click="submitAssistantFeedback(message, 'DOWN')"
-                          >
+                            :disabled="!canSubmitFeedback(message)" @click="submitAssistantFeedback(message, 'DOWN')">
                             <span class="material-symbols-outlined">thumb_down</span>
                             <span>{{ message.feedbackType === 'DOWN' ? '已点踩' : '点踩' }}</span>
                           </button>
@@ -289,8 +373,8 @@
 
                     <div class="composer-box__right-tools">
                       <span class="composer-box__hint">回车发送，使用换行组合键可继续输入</span>
-                      <button v-if="sending" type="button" class="send-button is-danger" :disabled="!currentRequestId"
-                        @click="stopGeneration">停止生成</button>
+                      <button v-if="sending" type="button" class="send-button is-danger"
+                        :disabled="!streamAbortController && !currentRequestId" @click="stopGeneration">停止生成</button>
                       <button v-else type="button" class="send-button send-button--architect" :disabled="!canSend"
                         @click="send()">
                         <span class="material-symbols-outlined">send</span>
@@ -304,6 +388,83 @@
         </div>
       </div>
     </WorkspaceNavigationShell>
+
+    <el-drawer v-model="adminDrawerVisible" size="560px" direction="rtl" :with-header="false" class="ai-admin-drawer">
+      <div class="ai-admin-drawer__head">
+        <div>
+          <div class="ai-overview-card__eyebrow">Admin</div>
+          <h3 class="ai-admin-drawer__title">Session / Model / Index</h3>
+        </div>
+        <el-button text @click="adminDrawerVisible = false">Close</el-button>
+      </div>
+
+      <section class="chat-stage__overview">
+        <article class="ai-overview-card">
+          <div class="ai-overview-card__head">
+            <div>
+              <div class="ai-overview-card__eyebrow">Session</div>
+              <h4>Current Session</h4>
+            </div>
+            <AppStatusTag :label="sessionStatusText" :tone="sessionStatusTone" />
+          </div>
+          <div class="ai-overview-card__grid">
+            <div v-for="item in sessionMetaItems" :key="item.label" class="ai-overview-card__metric">
+              <span>{{ item.label }}</span>
+              <strong>{{ item.value }}</strong>
+            </div>
+          </div>
+        </article>
+
+        <article class="ai-overview-card">
+          <div class="ai-overview-card__head">
+            <div>
+              <div class="ai-overview-card__eyebrow">Model</div>
+              <h4>Current Model</h4>
+            </div>
+            <AppStatusTag :label="modelStatusText" :tone="modelStatusTone" />
+          </div>
+          <div class="ai-overview-card__grid">
+            <div v-for="item in modelMetaItems" :key="item.label" class="ai-overview-card__metric">
+              <span>{{ item.label }}</span>
+              <strong>{{ item.value }}</strong>
+            </div>
+          </div>
+          <p class="ai-overview-card__summary">{{ latestAssistantSummary }}</p>
+        </article>
+
+        <article class="ai-overview-card ai-overview-card--context">
+          <div class="ai-overview-card__head">
+            <div>
+              <div class="ai-overview-card__eyebrow">Index</div>
+              <h4>Conversation Context</h4>
+            </div>
+            <AppStatusTag :label="contextStatusText" :tone="contextStatusTone" />
+          </div>
+          <div class="ai-overview-card__grid">
+            <div v-for="item in contextMetaItems" :key="item.label" class="ai-overview-card__metric">
+              <span>{{ item.label }}</span>
+              <strong>{{ item.value }}</strong>
+            </div>
+          </div>
+          <p class="ai-overview-card__summary">{{ selectedKnowledgeSummary }}</p>
+          <div v-if="tempFiles.length" class="ai-index-list">
+            <div v-for="file in tempFiles" :key="file.id" class="ai-index-item">
+              <div class="ai-index-item__copy">
+                <strong>{{ file.fileName }}</strong>
+                <small>{{ tempFileMetaText(file) }}</small>
+              </div>
+              <div class="ai-index-item__status">
+                <KnowledgeSyncStatus compact :parse-status="file.parseStatus" :index-status="file.indexStatus"
+                  :parse-error-message="file.parseErrorMessage" :can-retry="isTempFileFailed(file)" retry-text="Retry"
+                  @retry="retryTempFileItem(file)" />
+                <el-button text @click="removeTempFile(file)">Remove</el-button>
+              </div>
+            </div>
+          </div>
+          <div v-else class="ai-index-empty">No temp files.</div>
+        </article>
+      </section>
+    </el-drawer>
 
     <el-dialog v-model="attachmentDialogVisible" title="资料托盘" width="760px">
       <div class="attachment-dialog attachment-dialog--modern">
@@ -331,7 +492,7 @@
                   <strong>{{ file.fileName }}</strong>
                   <small>{{ knowledgeFileStatusText(file) }}</small>
                   <small v-if="file.parseErrorMessage" class="attachment-option__error">{{ file.parseErrorMessage
-                  }}</small>
+                    }}</small>
                 </span>
               </label>
             </div>
@@ -379,6 +540,7 @@ import MarkdownIt from 'markdown-it'
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { useRoute, useRouter } from 'vue-router'
+import { useAuthStore } from '@/stores/auth'
 import {
   cancelChat,
   chat,
@@ -389,6 +551,7 @@ import {
   getSession,
   getSessions,
   getTempFiles,
+  retryTempFile,
   submitAiMessageFeedback,
   updateRetrievalSettings,
   uploadTempFile,
@@ -398,6 +561,8 @@ import { getDocuments } from '@/api/document'
 import { getFile, getFiles } from '@/api/file'
 import { getProjects } from '@/api/project'
 import { resolveApiUrl } from '@/api/http'
+import AppStatusTag from '@/components/common/AppStatusTag.vue'
+import KnowledgeSyncStatus from '@/components/common/KnowledgeSyncStatus.vue'
 import WorkspaceNavigationShell from '@/components/common/WorkspaceNavigationShell.vue'
 import { useKnowledgeStatusPolling } from '@/composables/useKnowledgeStatusPolling'
 import type {
@@ -414,7 +579,10 @@ import type {
   ProjectDetailView,
 } from '@/types/models'
 import {
+  formatDateTime,
+  formatTokenCountInK,
   knowledgeReadinessLabel,
+  knowledgeReadinessTone,
   pickPreferredAiModel,
   resolveKnowledgeReadiness,
   sortAiModelsByPreference,
@@ -673,8 +841,11 @@ const networkError = ref('')
 const messageListRef = ref<HTMLDivElement | null>(null)
 const composerRef = ref<HTMLTextAreaElement | null>(null)
 const tempFileInputRef = ref<HTMLInputElement | null>(null)
+const streamAbortController = ref<AbortController | null>(null)
 const sendStartedAt = ref<number>()
 const clockNow = ref(Date.now())
+const authStore = useAuthStore()
+const adminDrawerVisible = ref(false)
 
 const routeProjectId = computed(() => parseNumber(props.id))
 const projectLocked = computed(() => Boolean(routeProjectId.value))
@@ -700,9 +871,7 @@ const visibleSessions = computed(() => {
     : scoped
 })
 const modelChoices = computed(() => {
-  const preferredProviders = new Set(['openai', 'deepseek'])
-  const filtered = availableModels.value.filter((model) => preferredProviders.has((model.providerCode || '').toLowerCase()))
-  return sortAiModelsByPreference(filtered.length ? filtered : availableModels.value)
+  return sortAiModelsByPreference(availableModels.value)
 })
 const activeSessionSummary = computed(() => sessions.value.find((session) => session.id === activeSessionId.value))
 const activeModel = computed(() => {
@@ -721,6 +890,144 @@ const sessionStatusText = computed(() => {
   }
   return messages.value.length ? '对话已就绪' : '等待你的第一条消息'
 })
+const sessionStatusTone = computed(() => {
+  if (sending.value) {
+    return 'primary'
+  }
+  if (networkError.value) {
+    return 'danger'
+  }
+  return messages.value.length ? 'success' : 'info'
+})
+const modelStatusText = computed(() => {
+  if (loadingModels.value) {
+    return '模型列表加载中'
+  }
+  if (!modelChoices.value.length) {
+    return '未发现可用模型'
+  }
+  return `${modelChoices.value.length} 个模型可用`
+})
+const modelStatusTone = computed(() => {
+  if (loadingModels.value) {
+    return 'primary'
+  }
+  return modelChoices.value.length ? 'success' : 'danger'
+})
+const formatProviderLabel = (value?: string) => {
+  const code = (value || '').trim()
+  if (!code) {
+    return '未识别'
+  }
+  const normalized = code.toUpperCase()
+  if (normalized === 'OPENAI') {
+    return 'OpenAI'
+  }
+  if (normalized === 'DEEPSEEK') {
+    return 'DeepSeek'
+  }
+  if (['QWEN', 'DASHSCOPE', 'TONGYI', 'ALIYUN', 'ALIBABA'].includes(normalized)) {
+    return '鍗冮棶'
+  }
+  return normalized
+}
+const latestMessageAt = computed(() => {
+  const latest = activeSessionSummary.value?.lastMessageAt || messages.value[messages.value.length - 1]?.createdAt
+  return latest ? formatDateTime(latest) : '尚未开始'
+})
+const sessionMetaItems = computed(() => [
+  { label: '会话', value: activeSessionId.value ? `#${activeSessionId.value}` : '新对话' },
+  { label: '项目', value: selectedProjectDisplay.value || '未绑定项目' },
+  { label: '消息数', value: `${messages.value.length} 条` },
+  { label: '最近活动', value: latestMessageAt.value },
+])
+const modelMetaItems = computed(() => [
+  { label: '当前模型', value: activeModel.value?.modelName || '未选择' },
+  { label: 'Provider', value: formatProviderLabel(activeModel.value?.providerCode) },
+  { label: '输出模式', value: activeModel.value ? (activeModel.value.supportStream !== false ? '流式回复' : '标准回复') : '等待配置' },
+  {
+    label: '上下文窗口',
+    value: activeModel.value?.maxContextTokens ? `${formatTokenCountInK(activeModel.value.maxContextTokens)} tokens` : '未配置',
+  },
+])
+const selectedAttachmentCounts = computed(() => ({
+  documentCount: selectedAttachments.value.filter((item) => item.attachmentType === 'DOCUMENT').length,
+  fileCount: selectedAttachments.value.filter((item) => item.attachmentType === 'FILE').length,
+}))
+const isTempFileFailed = (file: AiTempFileView) => tempFileState(file) === 'failed'
+const readyTempFileCount = computed(() => indexedTempFiles.value.length)
+const pendingTempFileCount = computed(() => tempFiles.value.filter((item) => isTempFilePending(item)).length)
+const failedTempFileCount = computed(() => tempFiles.value.filter((item) => isTempFileFailed(item)).length)
+const contextMetaItems = computed(() => [
+  {
+    label: '知识库上下文',
+    value: selectedAttachments.value.length ? `${selectedAttachments.value.length} 项` : '未附加',
+  },
+  { label: '临时文件', value: tempFiles.value.length ? `${tempFiles.value.length} 项` : '未上传' },
+  {
+    label: '可引用上下文',
+    value: `${selectedAttachments.value.length + readyTempFileCount.value} 项`,
+  },
+  {
+    label: '联网检索',
+    value: retrievalSettings.value.webSearchEnabledDefault ? '已开启' : '已关闭',
+  },
+])
+const selectedKnowledgeSummary = computed(() => {
+  if (!selectedAttachments.value.length) {
+    return '当前未附加知识库文档或文件。'
+  }
+  const parts = [
+    selectedAttachmentCounts.value.documentCount ? `${selectedAttachmentCounts.value.documentCount} 篇文档` : '',
+    selectedAttachmentCounts.value.fileCount ? `${selectedAttachmentCounts.value.fileCount} 个文件` : '',
+  ].filter(Boolean)
+  return `${parts.join('，')} 已纳入当前对话上下文。`
+})
+const contextStatusText = computed(() => {
+  if (failedTempFileCount.value > 0) {
+    return `有 ${failedTempFileCount.value} 个临时文件解析失败`
+  }
+  if (pendingTempFileCount.value > 0) {
+    return `有 ${pendingTempFileCount.value} 个临时文件正在解析`
+  }
+  if (selectedAttachments.value.length || readyTempFileCount.value) {
+    return '上下文与索引状态已就绪'
+  }
+  return '当前对话尚未绑定上下文'
+})
+const contextStatusTone = computed(() => {
+  if (failedTempFileCount.value > 0) {
+    return 'danger'
+  }
+  if (pendingTempFileCount.value > 0) {
+    return 'warning'
+  }
+  return selectedAttachments.value.length || readyTempFileCount.value ? 'success' : 'info'
+})
+const latestAssistantMessage = computed(() =>
+  [...messages.value].reverse().find((message) => message.roleCode === 'ASSISTANT'),
+)
+const latestAssistantSummary = computed(() => {
+  const assistantMessage = latestAssistantMessage.value
+  if (!assistantMessage) {
+    return '发送消息后，这里会显示本轮模型、Provider、耗时与引用状态。'
+  }
+  const parts = [
+    assistantMessage.providerCode ? formatProviderLabel(assistantMessage.providerCode) : '',
+    assistantMessage.modelCode || '',
+    assistantMessage.latencyMs ? `${assistantMessage.latencyMs} ms` : '',
+    assistantMessage.citations?.length ? `${assistantMessage.citations.length} 条引用` : '',
+  ].filter(Boolean)
+  return parts.join(' · ') || '本轮回复未返回模型元信息。'
+})
+const hasConversationDraft = computed(() =>
+  Boolean(
+    messages.value.length ||
+    question.value.trim() ||
+    selectedAttachments.value.length ||
+    tempFiles.value.length,
+  ),
+)
 const composerPlaceholder = computed(() =>
   routeProjectId.value
     ? '围绕当前项目继续提问，或先附加文档、文件、临时资料后再发起指令。'
@@ -785,6 +1092,11 @@ const tempFileStatusLabel = (file: AiTempFileView) => {
   return `${knowledgeReadinessLabel(file.parseStatus, file.indexStatus)} · ${formatBytes(file.sizeBytes)}`
 }
 
+const tempFileMetaText = (file: AiTempFileView) => {
+  const createdAt = formatDateTime(file.createdAt, 'MM-DD HH:mm')
+  return `${tempFileStatusLabel(file)} · 上传于 ${createdAt}`
+}
+
 
 const attachmentFocusedQuestion = (value: string) =>
   /(这个|这份|该|上传的|附加的|发给你的).{0,8}(文档|文件|附件|资料|pdf)|(?:总结|概括|介绍|解释|说明).{0,8}(文档|文件|附件|pdf)|(?:this|the)\s+(?:document|file|attachment|pdf)|(?:uploaded|attached)\s+(?:document|file|pdf)/i.test(value)
@@ -805,6 +1117,9 @@ const modelOptionLabel = (model: AiModelView) => {
   }
   if (provider === 'OPENAI') {
     return `${model.modelName} `
+  }
+  if (['QWEN', 'DASHSCOPE', 'TONGYI', 'ALIYUN', 'ALIBABA'].includes(provider)) {
+    return `${model.modelName} · 鍗冮棶`
   }
   return `${model.modelName} · ${model.providerCode}`
 }
@@ -893,6 +1208,11 @@ const assistantStatusLabel = (message: UiMessage) => {
   }
   return assistantThinkingLabel(message)
 }
+
+const messageProviderLabel = (message: UiMessage) => formatProviderLabel(message.providerCode)
+const messageModelLabel = (message: UiMessage) => message.modelCode || ''
+const messageCitationLabel = (message: UiMessage) =>
+  message.citations?.length ? `${message.citations.length} 条引用` : ''
 
 const assetTypeBadge = (asset: ComposerAssetSnapshot) => {
   if (asset.assetType === 'DOCUMENT') {
@@ -1019,6 +1339,20 @@ const pageLabelFromNumbers = (pageNumbers: number[]) => {
   return `第 ${sorted.join('、')} 页`
 }
 
+const citationScoreLabel = (score?: number) => {
+  if (!Number.isFinite(score)) {
+    return ''
+  }
+  const normalized = Number(score)
+  const percent = normalized > 1 ? Math.round(normalized) : Math.round(normalized * 100)
+  if (percent <= 0) {
+    return ''
+  }
+  return `匹配 ${percent}%`
+}
+
+const citationSnippet = (value?: string) => (value || '').replace(/\s+/g, ' ').trim()
+
 const urlLabelOf = (url?: string) => {
   if (!url) {
     return '网页引用'
@@ -1089,7 +1423,11 @@ const citationGroupsOf = (message: UiMessage) => {
 const privateCitationGroups = (message: UiMessage) => citationGroupsOf(message).privateGroups
 const webCitationGroups = (message: UiMessage) => citationGroupsOf(message).webGroups
 const privateCitationMeta = (group: CitationGroup) =>
-  [citationSourceLabel(group.sourceType), group.pageLabel].filter(Boolean).join(' · ') || '知识库引用'
+  [citationSourceLabel(group.sourceType), group.pageLabel, citationScoreLabel(group.representative.score)]
+    .filter(Boolean)
+    .join(' · ') || '知识库引用'
+const webCitationMeta = (group: CitationGroup) =>
+  [group.urlLabel || '网页引用', citationScoreLabel(group.representative.score)].filter(Boolean).join(' · ') || '网页引用'
 const visibleWebCitationGroups = (message: UiMessage) => {
   const groups = webCitationGroups(message)
   return message.citationsExpanded ? groups : groups.slice(0, 1)
@@ -1568,6 +1906,18 @@ const removeTempFile = async (file: AiTempFileView) => {
   }
 }
 
+const retryTempFileItem = async (file: AiTempFileView) => {
+  try {
+    await retryTempFile(file.id)
+    ElMessage.success(`已重新提交“${file.fileName}”的解析任务`)
+    if (activeSessionId.value) {
+      await refreshTempFiles(activeSessionId.value, false)
+    }
+  } catch (error) {
+    ElMessage.error(errorMessageOf(error))
+  }
+}
+
 const refreshSessions = async () => {
   sessions.value = await getSessions()
 }
@@ -1681,10 +2031,50 @@ const syncFromRoute = async () => {
   networkError.value = ''
 }
 
-const resetConversation = async () => {
+const buildResetDraftSummary = () => {
+  const parts = [
+    messages.value.length ? `${messages.value.length} 条消息` : '',
+    selectedAttachments.value.length ? `${selectedAttachments.value.length} 项知识库上下文` : '',
+    tempFiles.value.length ? `${tempFiles.value.length} 个临时文件` : '',
+    question.value.trim() ? '未发送的问题草稿' : '',
+  ].filter(Boolean)
+  return parts.join('、')
+}
+
+// const confirmResetConversation = async () => {
+//   if (!hasConversationDraft.value) {
+//     return true
+//   }
+//   try {
+//     await ElMessageBox.confirm(
+//       `开始新对话后，当前${buildResetDraftSummary() || '内容'}将被清空。是否继续？`,
+//       '新建对话',
+//       {
+//         type: 'warning',
+//         confirmButtonText: '继续新建',
+//         cancelButtonText: '先保留当前内容',
+//       },
+//     )
+//     return true
+//   } catch (error) {
+//     if (error === 'cancel' || error === 'close') {
+//       return false
+//     }
+//     throw error
+//   }
+// }
+
+const resetConversation = async (force?: boolean | Event) => {
+  const shouldForce = typeof force === 'boolean' ? force : false
   if (sending.value) {
     return
   }
+  // if (!shouldForce) {
+  //   const confirmed = await confirmResetConversation()
+  //   if (!confirmed) {
+  //     return
+  //   }
+  // }
   const preservedProjectId = activeProjectId.value
   activeSessionId.value = undefined
   messages.value = []
@@ -1708,14 +2098,29 @@ const openSession = async (sessionId: number) => {
 }
 
 const removeSession = async (sessionId: number) => {
-  await ElMessageBox.confirm('删除后无法恢复，确定继续吗？', '删除会话', { type: 'warning' })
-  await deleteSession(sessionId)
-  removeAttachmentState(sessionId)
-  removeStoredMessageAssets(sessionId)
-  ElMessage.success('会话已删除')
-  await refreshSessions()
-  if (sessionId === activeSessionId.value) {
-    await resetConversation()
+  const session = sessions.value.find((item) => item.id === sessionId)
+  try {
+    await ElMessageBox.confirm(
+      `确定删除会话“${session?.title || `#${sessionId}`}”吗？删除后将无法恢复其消息、临时文件与上下文记录。`,
+      '删除会话',
+      {
+        type: 'warning',
+        confirmButtonText: '确认删除',
+        cancelButtonText: '暂不删除',
+      },
+    )
+    await deleteSession(sessionId)
+    removeAttachmentState(sessionId)
+    removeStoredMessageAssets(sessionId)
+    ElMessage.success('会话已删除')
+    await refreshSessions()
+    if (sessionId === activeSessionId.value) {
+      await resetConversation(true)
+    }
+  } catch (error) {
+    if (error !== 'cancel' && error !== 'close') {
+      ElMessage.error(errorMessageOf(error))
+    }
   }
 }
 
@@ -1732,6 +2137,7 @@ const streamChat = async (
     onChunk?: (chunk: string) => void
     onDone?: (payload: StreamDonePayload) => Promise<void> | void
   },
+  signal?: AbortSignal,
 ) => {
   const token = localStorage.getItem('erise-access-token')
   const response = await fetch(resolveApiUrl('/v1/ai/chat/stream'), {
@@ -1741,6 +2147,7 @@ const streamChat = async (
       ...(token ? { Authorization: `Bearer ${token}` } : {}),
     },
     body: JSON.stringify(payload),
+    signal,
   })
 
   if (!response.ok) {
@@ -1849,17 +2256,33 @@ const markSendFailed = (userMessage: UiMessage, assistantMessage: UiMessage, mes
  * 若无进行中的请求则直接返回。
  */
 const stopGeneration = async () => {
-  if (!currentRequestId.value) {
+  if (!sending.value || (!currentRequestId.value && !streamAbortController.value)) {
     return
+  }
+  try {
+    await ElMessageBox.confirm('停止后本轮生成会立即中断，但已返回的内容会保留在当前会话中。是否继续？', '停止生成', {
+      type: 'warning',
+      confirmButtonText: '立即停止',
+      cancelButtonText: '继续生成',
+    })
+  } catch (error) {
+    if (error === 'cancel' || error === 'close') {
+      return
+    }
+    throw error
   }
   const requestId = currentRequestId.value
   currentRequestId.value = ''
+  const controller = streamAbortController.value
+  streamAbortController.value = null
+  controller?.abort()
   try {
-    await cancelChat(requestId)
+    if (requestId) {
+      await cancelChat(requestId)
+    }
     ElMessage.success('已发送停止请求')
   } catch (error) {
-    currentRequestId.value = requestId
-    ElMessage.error(errorMessageOf(error))
+    ElMessage.warning(errorMessageOf(error))
   }
 }
 
@@ -1967,6 +2390,8 @@ const send = async (presetQuestion?: string) => {
       return
     }
 
+    const controller = new AbortController()
+    streamAbortController.value = controller
     await streamChat(payload, {
       onOpen: () => {
         opened = true
@@ -2015,9 +2440,20 @@ const send = async (presetQuestion?: string) => {
         }
         await refreshSessions()
       },
-    })
+    }, controller.signal)
   } catch (error) {
     const message = errorMessageOf(error)
+    if (error instanceof DOMException && error.name === 'AbortError') {
+      userMessage.status = 'sent'
+      assistantMessage.status = 'failed'
+      assistantMessage.streamStartedAt = undefined
+      assistantMessage.errorMessage = '已停止生成'
+      if (!assistantMessage.content) {
+        assistantMessage.content = '已停止生成'
+      }
+      networkError.value = ''
+      return
+    }
     if (/cancel|取消|停止/i.test(message)) {
       userMessage.status = 'sent'
       assistantMessage.status = 'failed'
@@ -2039,6 +2475,7 @@ const send = async (presetQuestion?: string) => {
     }
   } finally {
     currentRequestId.value = ''
+    streamAbortController.value = null
     sending.value = false
     sendStartedAt.value = undefined
     stopClock()

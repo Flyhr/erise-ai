@@ -1,13 +1,19 @@
 from __future__ import annotations
 
+import logging
 import re
 from dataclasses import dataclass
 from io import BytesIO
 from typing import Iterable
 
 from src.app.core.exceptions import AiServiceError
+from src.app.extractor import unstructured_adapter
+from src.app.schemas.file_extract import FileCapabilityMatrixView, FileTypeCapabilityView
 from src.app.schemas.rag import RagChunkPayload
 from src.app.services.ocr_service import ocr_service
+
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(slots=True)
@@ -24,9 +30,22 @@ class FileExtractResult:
     parser: str
     used_ocr: bool
     page_count: int
+    parse_status: str = 'SUCCESS'
+    primary_parser: str = ''
+    fallback_parser: str | None = None
+    fallback_used: bool = False
+    error_code: str | None = None
+    error_message: str | None = None
+    retryable: bool = False
 
 
 class FileExtractService:
+    PARSE_STATUS_SUCCESS = 'SUCCESS'
+    PARSE_STATUS_FALLBACK = 'FALLBACK'
+    PARSE_STATUS_FAILED = 'FAILED'
+    PRIMARY_PARSER = 'unstructured'
+    PRIMARY_MAX_ATTEMPTS = 2
+
     TARGET_CHUNK_SIZE = 900
     MAX_CHUNK_SIZE = 1200
     OVERLAP_SIZE = 120
@@ -47,6 +66,93 @@ class FileExtractService:
             raise AiServiceError('AI_FILE_EMPTY', 'File payload is empty', status_code=400)
 
         extension = self._normalize_extension(file_ext, file_name)
+        primary_error = self._extract_with_primary_error(file_bytes, file_name, extension)
+        if isinstance(primary_error, FileExtractResult):
+            return primary_error
+        legacy_result = self._extract_with_legacy_parsers(file_bytes, extension)
+        if primary_error is None:
+            return legacy_result
+        return self._mark_fallback_result(legacy_result, primary_error)
+
+    def _extract_with_primary_error(
+        self,
+        file_bytes: bytes,
+        file_name: str | None,
+        extension: str,
+    ) -> FileExtractResult | AiServiceError | None:
+        if not unstructured_adapter.supports(extension):
+            return None
+        last_error: AiServiceError | None = None
+        for attempt in range(1, self.PRIMARY_MAX_ATTEMPTS + 1):
+            try:
+                extracted = unstructured_adapter.extract(file_bytes, file_name, extension)
+                return self._result_from_text(
+                    extracted.plain_text,
+                    parser=extracted.parser,
+                    used_ocr=extracted.used_ocr,
+                    page_count=extracted.page_count,
+                    parse_status=self.PARSE_STATUS_SUCCESS,
+                    primary_parser=self.PRIMARY_PARSER,
+                )
+            except AiServiceError as exc:
+                last_error = exc
+                if not self._should_retry_primary(exc, attempt):
+                    break
+                logger.warning(
+                    'Primary extractor failed for `%s` on attempt %s/%s, retrying: %s',
+                    extension or 'unknown',
+                    attempt,
+                    self.PRIMARY_MAX_ATTEMPTS,
+                    exc.message,
+                )
+            except Exception as exc:
+                last_error = AiServiceError('AI_FILE_PARSE_FAILED', f'Unstructured parsing failed: {exc}', status_code=422)
+                if not self._should_retry_primary(last_error, attempt):
+                    break
+                logger.warning(
+                    'Primary extractor raised unexpected error for `%s` on attempt %s/%s, retrying: %s',
+                    extension or 'unknown',
+                    attempt,
+                    self.PRIMARY_MAX_ATTEMPTS,
+                    exc,
+                )
+        if last_error is not None:
+            logger.warning(
+                'Primary extractor failed for `%s`, falling back to legacy parser: %s',
+                extension or 'unknown',
+                last_error.message,
+            )
+        return last_error
+
+    def _should_retry_primary(self, exc: AiServiceError, attempt: int) -> bool:
+        if attempt >= self.PRIMARY_MAX_ATTEMPTS:
+            return False
+        normalized = (exc.message or '').lower()
+        return (
+            exc.status_code >= 500
+            and 'dependency is unavailable' not in normalized
+        ) or any(token in normalized for token in ('timeout', 'temporarily unavailable', 'connection reset'))
+
+    def _mark_fallback_result(self, result: FileExtractResult, primary_error: AiServiceError) -> FileExtractResult:
+        return FileExtractResult(
+            plain_text=result.plain_text,
+            chunks=result.chunks,
+            parser=result.parser,
+            used_ocr=result.used_ocr,
+            page_count=result.page_count,
+            parse_status=self.PARSE_STATUS_FALLBACK,
+            primary_parser=self.PRIMARY_PARSER,
+            fallback_parser=result.parser,
+            fallback_used=True,
+            error_code=primary_error.error_code,
+            error_message=primary_error.message,
+            retryable=self._is_retryable_status(primary_error),
+        )
+
+    def _is_retryable_status(self, exc: AiServiceError) -> bool:
+        return exc.status_code >= 500 and exc.error_code != 'AI_FILE_UNAVAILABLE'
+
+    def _extract_with_legacy_parsers(self, file_bytes: bytes, extension: str) -> FileExtractResult:
         if extension == 'pdf':
             return self._extract_pdf(file_bytes)
         if extension == 'docx':
@@ -101,6 +207,8 @@ class FileExtractService:
             parser='pymupdf-text+rapidocr' if result.used_ocr else 'pymupdf-text',
             used_ocr=result.used_ocr,
             page_count=result.page_count,
+            parse_status=self.PARSE_STATUS_SUCCESS,
+            primary_parser='legacy',
         )
 
     def _extract_docx(self, file_bytes: bytes) -> FileExtractResult:
@@ -128,6 +236,8 @@ class FileExtractService:
             parser='python-docx',
             used_ocr=False,
             page_count=0,
+            parse_status=self.PARSE_STATUS_SUCCESS,
+            primary_parser='legacy',
         )
 
     def _extract_doc(self, file_bytes: bytes) -> FileExtractResult:
@@ -170,9 +280,20 @@ class FileExtractService:
             parser='olefile',
             used_ocr=False,
             page_count=0,
+            parse_status=self.PARSE_STATUS_SUCCESS,
+            primary_parser='legacy',
         )
 
-    def _result_from_text(self, plain_text: str, parser: str) -> FileExtractResult:
+    def _result_from_text(
+        self,
+        plain_text: str,
+        parser: str,
+        *,
+        used_ocr: bool = False,
+        page_count: int = 0,
+        parse_status: str = PARSE_STATUS_SUCCESS,
+        primary_parser: str = 'legacy',
+    ) -> FileExtractResult:
         normalized = self._normalize_text(plain_text)
         if not normalized:
             raise AiServiceError('AI_FILE_PARSE_FAILED', 'No readable text content was extracted', status_code=422)
@@ -183,8 +304,62 @@ class FileExtractService:
             plain_text=normalized,
             chunks=chunks,
             parser=parser,
-            used_ocr=False,
-            page_count=0,
+            used_ocr=used_ocr,
+            page_count=page_count,
+            parse_status=parse_status,
+            primary_parser=primary_parser,
+        )
+
+    def capability_matrix(self) -> FileCapabilityMatrixView:
+        statuses = [self.PARSE_STATUS_SUCCESS, self.PARSE_STATUS_FALLBACK, self.PARSE_STATUS_FAILED]
+        return FileCapabilityMatrixView(
+            parser_order=[self.PRIMARY_PARSER, 'legacy'],
+            parse_statuses=statuses,
+            file_types=[
+                FileTypeCapabilityView(
+                    extension='pdf',
+                    label='PDF',
+                    primary_parser=self.PRIMARY_PARSER,
+                    fallback_parser='pymupdf-text+rapidocr',
+                    supports_ocr=True,
+                    supports_pages=True,
+                    parse_statuses=statuses,
+                    retry_policy='Retry primary parser for transient 5xx/timeout errors, then fallback to legacy PDF text/OCR parser.',
+                    notes='Fallback preserves page numbers when possible.',
+                ),
+                FileTypeCapabilityView(
+                    extension='docx',
+                    label='Word DOCX',
+                    primary_parser=self.PRIMARY_PARSER,
+                    fallback_parser='python-docx',
+                    supports_ocr=False,
+                    supports_pages=False,
+                    parse_statuses=statuses,
+                    retry_policy='Retry primary parser for transient 5xx/timeout errors, then fallback to python-docx.',
+                    notes='Fallback preserves heading-derived section paths.',
+                ),
+                FileTypeCapabilityView(
+                    extension='txt',
+                    label='Plain Text',
+                    primary_parser=self.PRIMARY_PARSER,
+                    fallback_parser='text-decoder',
+                    supports_ocr=False,
+                    supports_pages=False,
+                    parse_statuses=statuses,
+                    retry_policy='Retry primary parser for transient 5xx/timeout errors, then fallback to deterministic text decoding.',
+                ),
+                FileTypeCapabilityView(
+                    extension='md',
+                    label='Markdown',
+                    primary_parser=self.PRIMARY_PARSER,
+                    fallback_parser='markdown-decoder',
+                    supports_ocr=False,
+                    supports_pages=False,
+                    parse_statuses=statuses,
+                    retry_policy='Retry primary parser for transient 5xx/timeout errors, then fallback to markdown stripping.',
+                    notes='`markdown` extension follows the same path as `md`.',
+                ),
+            ],
         )
 
     def chunk_text(self, plain_text: str, page_no: int | None = None) -> list[RagChunkPayload]:

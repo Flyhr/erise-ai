@@ -20,6 +20,7 @@ os.environ.setdefault('XDG_CACHE_HOME', str(RUNTIME_DIR / 'cache'))
 os.environ.setdefault('OPENAI_API_KEY', 'test-openai-key')
 os.environ.setdefault('DEFAULT_MODEL_CODE', 'gpt-4.1-mini')
 os.environ.setdefault('SQLITE_ECHO', 'false')
+os.environ.setdefault('ACTION_CONFIRMATION_REQUIRED', 'false')
 
 from src.app.adapters.llm.base import AdapterResult, AdapterStreamEvent, AdapterUsage  # noqa: E402
 from src.app.core.config import get_settings  # noqa: E402

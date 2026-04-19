@@ -76,6 +76,44 @@ services:
       timeout: 5s
       retries: 12
 
+  ollama:
+    image: ollama/ollama:0.6.8
+    container_name: erise-ai-ollama-dev
+    restart: unless-stopped
+    environment:
+      OLLAMA_HOST: 0.0.0.0:11434
+    ports:
+      - "${OLLAMA_HOST_PORT:-11434}:11434"
+    volumes:
+      - ollama-data:/root/.ollama
+    command: ["serve"]
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      interval: 20s
+      timeout: 10s
+      retries: 10
+
+  ollama-init:
+    image: ollama/ollama:0.6.8
+    container_name: erise-ai-ollama-init-dev
+    restart: "no"
+    environment:
+      OLLAMA_HOST: http://ollama:11434
+      OLLAMA_CHAT_MODEL: ${OLLAMA_CHAT_MODEL:-qwen2.5:7b}
+      OLLAMA_EMBEDDING_MODEL: ${OLLAMA_EMBEDDING_MODEL:-nomic-embed-text}
+    depends_on:
+      ollama:
+        condition: service_healthy
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        set -eu
+        ollama pull "$${OLLAMA_CHAT_MODEL}"
+        if [ "$${OLLAMA_EMBEDDING_MODEL}" != "$${OLLAMA_CHAT_MODEL}" ]; then
+          ollama pull "$${OLLAMA_EMBEDDING_MODEL}"
+        fi
+        ollama list
+
   backend:
     build:
       context: ./erise-ai-backend
@@ -135,6 +173,11 @@ services:
       QDRANT_URL: http://qdrant:6333
       PYTHONUNBUFFERED: "1"
       PYTHONDONTWRITEBYTECODE: "1"
+      LANG: "C.UTF-8"
+      LC_ALL: "C.UTF-8"
+      PYTHONIOENCODING: "utf-8"
+      HF_ENDPOINT: https://hf-mirror.com
+
     depends_on:
       mysql:
         condition: service_healthy
@@ -144,6 +187,10 @@ services:
         condition: service_healthy
       backend:
         condition: service_healthy
+      ollama:
+        condition: service_healthy
+      ollama-init:
+        condition: service_completed_successfully
     volumes:
       - ./AiAssistant:/workspace
       - cloud-venv:/workspace/.venv
@@ -204,6 +251,7 @@ volumes:
   redis-data:
   minio-data:
   qdrant-data:
+  ollama-data:
   backend-target:
   maven-cache:
   cloud-venv:

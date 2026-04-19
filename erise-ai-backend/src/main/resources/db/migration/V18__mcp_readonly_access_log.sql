@@ -1,0 +1,23 @@
+CREATE TABLE IF NOT EXISTS mcp_access_log (
+  id BIGINT PRIMARY KEY AUTO_INCREMENT,
+  request_id VARCHAR(128) NOT NULL,
+  user_id BIGINT NOT NULL,
+  org_id BIGINT NOT NULL DEFAULT 0,
+  username VARCHAR(128) NULL,
+  role_code VARCHAR(32) NULL,
+  method VARCHAR(64) NOT NULL,
+  tool_name VARCHAR(128) NULL,
+  resource_uri VARCHAR(1000) NULL,
+  status_code INT NULL,
+  success_flag TINYINT NOT NULL DEFAULT 0,
+  error_code VARCHAR(64) NULL,
+  error_message VARCHAR(500) NULL,
+  request_payload_json LONGTEXT NULL,
+  response_payload_json LONGTEXT NULL,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  KEY idx_mcp_access_request (request_id),
+  KEY idx_mcp_access_user_method (user_id, method),
+  KEY idx_mcp_access_tool (tool_name),
+  KEY idx_mcp_access_resource (resource_uri(255))
+);

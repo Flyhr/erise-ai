@@ -1,0 +1,40 @@
+services:
+  litellm:
+    image: ghcr.io/berriai/litellm:main-stable
+    container_name: erise-ai-litellm-dev
+    restart: unless-stopped
+    command: ["--config", "/app/config.yaml", "--port", "4000", "--num_workers", "1"]
+    volumes:
+      - ./deploy/litellm/litellm.ollama.yaml:/app/config.yaml:ro
+    depends_on:
+      ollama:
+        condition: service_healthy
+      ollama-init:
+        condition: service_completed_successfully
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "python -c \"import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:4000/health/liveliness').status == 200 else 1)\"",
+        ]
+      interval: 15s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+    expose:
+      - "4000"
+
+  cloud:
+    environment:
+      MODEL_PROVIDER: LITELLM
+      MODEL_BASE_URL: http://litellm:4000/v1
+      MODEL_API_KEY: ${LITELLM_API_KEY:-}
+      LITELLM_BASE_URL: http://litellm:4000/v1
+      LITELLM_API_KEY: ${LITELLM_API_KEY:-}
+      DEFAULT_MODEL_CODE: ${OLLAMA_CHAT_MODEL:-qwen2.5:7b}
+      EMBEDDING_PROVIDER_CODE: LITELLM
+      EMBED_BASE_URL: http://litellm:4000/v1
+      EMBEDDING_MODEL: ${EMBEDDING_MODEL:-text-embedding-3-small}
+    depends_on:
+      litellm:
+        condition: service_healthy

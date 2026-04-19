@@ -40,6 +40,10 @@
               <span class="material-symbols-outlined">share</span>
               <span>分享</span>
             </el-button>
+            <el-button class="project-detail__action-button" @click="router.push(`/projects/${projectId}/ai`)">
+              <span class="material-symbols-outlined">smart_toy</span>
+              <span>项目 AI</span>
+            </el-button>
             <el-button type="primary" class="project-detail__action-button" @click="openEditDialog">
               <span class="material-symbols-outlined">edit</span>
               <span>修改项目</span>
@@ -120,79 +124,80 @@
         </div>
 
         <template v-else>
-        <div v-if="assetsLoading && assets.length" class="project-detail__refreshing">
-          <span class="material-symbols-outlined project-detail__refreshing-icon">progress_activity</span>
-          <span>正在刷新文件列表...</span>
-        </div>
+          <div v-if="assetsLoading && assets.length" class="project-detail__refreshing">
+            <span class="material-symbols-outlined project-detail__refreshing-icon">progress_activity</span>
+            <span>正在刷新文件列表...</span>
+          </div>
 
-        <div v-if="assets.length" class="project-assets-table">
-          <table>
-            <thead>
-              <tr>
-                <th>名称</th>
-                <th>类型</th>
-                <th>状态</th>
-                <th>大小</th>
-                <th>更新时间</th>
-                <th>上传时间</th>
-                <th class="project-assets-table__actions-head">操作</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr v-for="row in assets" :key="`${row.assetType}-${row.assetId}`" @click="openAsset(row)">
-                <td>
-                  <div class="project-assets-table__name">
-                    <div class="project-assets-table__icon" :class="`is-${assetTone(row)}`">
-                      <span class="material-symbols-outlined">{{ assetIcon(row) }}</span>
+          <div v-if="assets.length" class="project-assets-table">
+            <table>
+              <thead>
+                <tr>
+                  <th>名称</th>
+                  <th>类型</th>
+                  <th>状态</th>
+                  <th>大小</th>
+                  <th>更新时间</th>
+                  <th>上传时间</th>
+                  <th class="project-assets-table__actions-head">操作</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-for="row in assets" :key="`${row.assetType}-${row.assetId}`" @click="openAsset(row)">
+                  <td>
+                    <div class="project-assets-table__name">
+                      <div class="project-assets-table__icon" :class="`is-${assetTone(row)}`">
+                        <span class="material-symbols-outlined">{{ assetIcon(row) }}</span>
+                      </div>
+                      <div class="project-assets-table__copy app-table-name-copy">
+                        <strong class="app-table-name-copy__title">{{ row.title }}</strong>
+                        <small class="app-table-name-copy__meta">{{ secondaryLine(row) }}</small>
+                      </div>
                     </div>
-                    <div class="project-assets-table__copy app-table-name-copy">
-                      <strong class="app-table-name-copy__title">{{ row.title }}</strong>
-                      <small class="app-table-name-copy__meta">{{ secondaryLine(row) }}</small>
+                  </td>
+                  <td><span class="project-assets-table__type">{{ assetTypeLabel(row) }}</span></td>
+                  <td>
+                    <div class="project-assets-table__status-stack">
+                      <button v-if="isRetryableFailedFile(row)" type="button"
+                        class="project-assets-table__status is-clickable" :class="`is-${assetTone(row)}`"
+                        @click.stop="retryAssetFromStatus(row)">
+                        <span class="material-symbols-outlined">{{ assetStatusIcon(row) }}</span>
+                        <span>{{ assetStatusLabel(row) }}</span>
+                      </button>
+                      <span v-else class="project-assets-table__status" :class="`is-${assetTone(row)}`">
+                        <span class="material-symbols-outlined">{{ assetStatusIcon(row) }}</span>
+                        <span>{{ assetStatusLabel(row) }}</span>
+                      </span>
+                      <small v-if="shouldShowFailureReason(row)" class="project-assets-table__status-reason">
+                        {{ assetFailureReason(row) }}
+                      </small>
                     </div>
-                  </div>
-                </td>
-                <td><span class="project-assets-table__type">{{ assetTypeLabel(row) }}</span></td>
-                <td>
-                  <div class="project-assets-table__status-stack">
-                    <button v-if="isRetryableFailedFile(row)" type="button"
-                      class="project-assets-table__status is-clickable" :class="`is-${assetTone(row)}`"
-                      @click.stop="retryAssetFromStatus(row)">
-                      <span class="material-symbols-outlined">{{ assetStatusIcon(row) }}</span>
-                      <span>{{ assetStatusLabel(row) }}</span>
-                    </button>
-                    <span v-else class="project-assets-table__status" :class="`is-${assetTone(row)}`">
-                      <span class="material-symbols-outlined">{{ assetStatusIcon(row) }}</span>
-                      <span>{{ assetStatusLabel(row) }}</span>
-                    </span>
-                    <small v-if="shouldShowFailureReason(row)" class="project-assets-table__status-reason">
-                      {{ assetFailureReason(row) }}
-                    </small>
-                  </div>
-                </td>
-                <td class="project-assets-table__mono">{{ row.assetType === 'FILE' ? formatFileSize(row.fileSize) : '--'
-                }}
-                </td>
-                <td>{{ relativeTime(row.updatedAt) }}</td>
-                <td>{{ formatDateTime(row.createdAt) }}</td>
-                <td class="project-assets-table__actions-cell" @click.stop>
-                  <el-dropdown trigger="click" @command="handleRowCommand(row, $event)">
-                    <button type="button" class="project-assets-table__menu-trigger"
-                      @click.stop><span>···</span></button>
-                    <template #dropdown>
-                      <el-dropdown-menu>
-                        <el-dropdown-item command="preview">预览</el-dropdown-item>
-                        <el-dropdown-item v-if="canEditAsset(row)" command="edit">修改</el-dropdown-item>
-                        <el-dropdown-item v-if="canDownloadAsset(row)" command="download">下载</el-dropdown-item>
-                        <el-dropdown-item command="delete">删除</el-dropdown-item>
-                      </el-dropdown-menu>
-                    </template>
-                  </el-dropdown>
-                </td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-        <el-empty v-else :image-size="84" :description="`当前筛选下还没有${assetCollectionLabel}，可以通过右上角添加入口继续补充。`" />
+                  </td>
+                  <td class="project-assets-table__mono">{{ row.assetType === 'FILE' ? formatFileSize(row.fileSize) :
+                    '--'
+                  }}
+                  </td>
+                  <td>{{ relativeTime(row.updatedAt) }}</td>
+                  <td>{{ formatDateTime(row.createdAt) }}</td>
+                  <td class="project-assets-table__actions-cell" @click.stop>
+                    <el-dropdown trigger="click" @command="handleRowCommand(row, $event)">
+                      <button type="button" class="project-assets-table__menu-trigger"
+                        @click.stop><span>···</span></button>
+                      <template #dropdown>
+                        <el-dropdown-menu>
+                          <el-dropdown-item command="preview">预览</el-dropdown-item>
+                          <el-dropdown-item v-if="canEditAsset(row)" command="edit">修改</el-dropdown-item>
+                          <el-dropdown-item v-if="canDownloadAsset(row)" command="download">下载</el-dropdown-item>
+                          <el-dropdown-item command="delete">删除</el-dropdown-item>
+                        </el-dropdown-menu>
+                      </template>
+                    </el-dropdown>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+          <el-empty v-else :image-size="84" :description="`当前筛选下还没有${assetCollectionLabel}，可以通过右上角添加入口继续补充。`" />
         </template>
 
         <div v-if="!assetError" class="project-detail__table-footer">
@@ -218,7 +223,6 @@
         <div class="project-detail__export-dialog">
           <div class="project-detail__export-copy">
             <strong>{{ exportTarget?.title || '当前笔记' }}</strong>
-            <span>导出格式与文档编辑页保持一致。</span>
           </div>
           <div class="project-detail__export-actions">
             <el-button :loading="exporting" @click="exportDocumentAsset('doc')">导出 .doc</el-button>

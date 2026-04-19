@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "erise-readonly-direct": {
+      "transport": {
+        "type": "http",
+        "url": "http://localhost:8081/mcp",
+        "headers": {
+          "Authorization": "Bearer ${ERISE_ACCESS_TOKEN}"
+        }
+      }
+    }
+  }
+}

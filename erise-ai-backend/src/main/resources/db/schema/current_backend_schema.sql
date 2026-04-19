@@ -729,3 +729,118 @@ CREATE TABLE IF NOT EXISTS ai_message_feedback (
   KEY idx_ai_message_feedback_type_created (feedback_type, created_at DESC),
   KEY idx_ai_message_feedback_session (session_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS approval_request (
+  id BIGINT PRIMARY KEY AUTO_INCREMENT,
+  request_id VARCHAR(128) NOT NULL,
+  session_id BIGINT NULL,
+  initiated_user_id BIGINT NOT NULL,
+  confirmed_user_id BIGINT NULL,
+  executed_user_id BIGINT NULL,
+  org_id BIGINT NOT NULL DEFAULT 0,
+  project_id BIGINT NULL,
+  action_code VARCHAR(64) NOT NULL,
+  target_type VARCHAR(32) NULL,
+  target_id BIGINT NULL,
+  status VARCHAR(32) NOT NULL DEFAULT 'PENDING',
+  risk_level VARCHAR(32) NOT NULL DEFAULT 'HIGH',
+  plan_summary VARCHAR(1000) NOT NULL,
+  request_payload_json LONGTEXT NULL,
+  params_json LONGTEXT NULL,
+  resource_snapshot_json LONGTEXT NULL,
+  result_payload_json LONGTEXT NULL,
+  error_code VARCHAR(64) NULL,
+  error_message VARCHAR(500) NULL,
+  confirmed_at DATETIME NULL,
+  executed_at DATETIME NULL,
+  expires_at DATETIME NULL,
+  latency_ms INT NULL,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  KEY idx_approval_request_request (request_id),
+  KEY idx_approval_request_session (session_id),
+  KEY idx_approval_request_user_status (initiated_user_id, status),
+  KEY idx_approval_request_project (project_id),
+  KEY idx_approval_request_action (action_code, status)
+);
+
+CREATE TABLE IF NOT EXISTS admin_action_request (
+  id BIGINT PRIMARY KEY AUTO_INCREMENT,
+  approval_request_id BIGINT NOT NULL,
+  request_id VARCHAR(128) NOT NULL,
+  initiated_user_id BIGINT NOT NULL,
+  confirmed_user_id BIGINT NULL,
+  executed_user_id BIGINT NULL,
+  action_code VARCHAR(64) NOT NULL,
+  action_status VARCHAR(32) NOT NULL,
+  target_type VARCHAR(32) NULL,
+  target_id BIGINT NULL,
+  audit_payload_json LONGTEXT NULL,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  KEY idx_admin_action_approval (approval_request_id),
+  KEY idx_admin_action_request (request_id),
+  KEY idx_admin_action_initiator (initiated_user_id),
+  KEY idx_admin_action_status (action_code, action_status)
+);
+
+CREATE TABLE IF NOT EXISTS mcp_access_log (
+  id BIGINT PRIMARY KEY AUTO_INCREMENT,
+  request_id VARCHAR(128) NOT NULL,
+  user_id BIGINT NOT NULL,
+  org_id BIGINT NOT NULL DEFAULT 0,
+  username VARCHAR(128) NULL,
+  role_code VARCHAR(32) NULL,
+  method VARCHAR(64) NOT NULL,
+  tool_name VARCHAR(128) NULL,
+  resource_uri VARCHAR(1000) NULL,
+  status_code INT NULL,
+  success_flag TINYINT NOT NULL DEFAULT 0,
+  error_code VARCHAR(64) NULL,
+  error_message VARCHAR(500) NULL,
+  request_payload_json LONGTEXT NULL,
+  response_payload_json LONGTEXT NULL,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  KEY idx_mcp_access_request (request_id),
+  KEY idx_mcp_access_user_method (user_id, method),
+  KEY idx_mcp_access_tool (tool_name),
+  KEY idx_mcp_access_resource (resource_uri(255))
+);
+
+CREATE TABLE IF NOT EXISTS n8n_event_log (
+  id BIGINT PRIMARY KEY AUTO_INCREMENT,
+  request_id VARCHAR(128) NOT NULL,
+  event_type VARCHAR(64) NOT NULL,
+  workflow_hint VARCHAR(128) NULL,
+  approval_id BIGINT NULL,
+  session_id BIGINT NULL,
+  user_id BIGINT NULL,
+  project_id BIGINT NULL,
+  target_url VARCHAR(1000) NULL,
+  status_code INT NULL,
+  success_flag TINYINT NOT NULL DEFAULT 0,
+  error_message VARCHAR(500) NULL,
+  payload_json LONGTEXT NULL,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  KEY idx_n8n_event_request (request_id),
+  KEY idx_n8n_event_type (event_type),
+  KEY idx_n8n_event_workflow (workflow_hint)
+);
+
+CREATE TABLE IF NOT EXISTS automation_webhook_log (
+  id BIGINT PRIMARY KEY AUTO_INCREMENT,
+  request_id VARCHAR(128) NOT NULL,
+  workflow_code VARCHAR(128) NOT NULL,
+  event_type VARCHAR(64) NOT NULL,
+  status_code INT NULL,
+  success_flag TINYINT NOT NULL DEFAULT 0,
+  error_message VARCHAR(500) NULL,
+  request_payload_json LONGTEXT NULL,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  KEY idx_automation_webhook_request (request_id),
+  KEY idx_automation_webhook_workflow (workflow_code),
+  KEY idx_automation_webhook_event (event_type)
+);

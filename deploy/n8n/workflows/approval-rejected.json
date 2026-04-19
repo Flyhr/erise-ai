@@ -1,0 +1,53 @@
+{
+  "name": "Erise Approval Rejected Notify",
+  "nodes": [
+    {
+      "parameters": {
+        "path": "approval-rejected",
+        "httpMethod": "POST",
+        "responseMode": "lastNode"
+      },
+      "id": "ApprovalRejectedWebhook",
+      "name": "Approval Rejected Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [260, 260]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://host.docker.internal:8080/api/v1/automation/webhooks/notifications",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-N8N-Webhook-Secret",
+              "value": "={{$env.N8N_WEBHOOK_SECRET}}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ { requestId: $json.body.requestId, workflowCode: 'approval-rejected', eventType: 'approval.rejected', title: 'AI 写操作已拒绝', content: '审批编号 #' + $json.body.approvalId + ' 已被拒绝。', notificationType: 'N8N_EVENT', sendToAll: false, userIds: [$json.body.userId] } }}"
+      },
+      "id": "ApprovalRejectedNotify",
+      "name": "Approval Rejected Notify",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [620, 260]
+    }
+  ],
+  "connections": {
+    "Approval Rejected Webhook": {
+      "main": [
+        [
+          {
+            "node": "Approval Rejected Notify",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  }
+}

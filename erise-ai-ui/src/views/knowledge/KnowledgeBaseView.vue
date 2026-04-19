@@ -2,7 +2,7 @@
   <div class="page-shell knowledge-page">
     <section class="knowledge-toolbar">
       <div class="knowledge-toolbar__search">
-        <el-input v-model="keyword" clearable placeholder="搜索知识资料..." @clear="runSearch" @keyup.enter="runSearch">
+        <el-input v-model="keyword" clearable placeholder="知识文件..." @clear="runSearch" @keyup.enter="runSearch">
           <template #prefix>
             <span class="material-symbols-outlined">search</span>
           </template>
@@ -34,7 +34,7 @@
       </div>
 
       <div v-else-if="assetError && !assets.length" class="knowledge-table-shell__state">
-        <el-result icon="warning" title="知识资料加载失败" :sub-title="assetError">
+        <el-result icon="warning" title="文件加载失败" :sub-title="assetError">
           <template #extra>
             <el-button type="primary" @click="retryAssetLoad">重试加载</el-button>
           </template>
@@ -42,80 +42,81 @@
       </div>
 
       <template v-else>
-      <div v-if="assetsLoading && assets.length" class="knowledge-table-shell__refreshing">
-        <span class="material-symbols-outlined knowledge-table-shell__refreshing-icon">progress_activity</span>
-        <span>正在刷新文件列表...</span>
-      </div>
+        <div v-if="assetsLoading && assets.length" class="knowledge-table-shell__refreshing">
+          <span class="material-symbols-outlined knowledge-table-shell__refreshing-icon">progress_activity</span>
+          <span>正在刷新文件列表...</span>
+        </div>
 
-      <div v-if="assets.length" class="knowledge-assets-table">
-        <table>
-          <thead>
-            <tr>
-              <th>名称</th>
-              <th>类型</th>
-              <th>状态</th>
-              <th>大小</th>
-              <th>更新时间</th>
-              <th>上传时间</th>
-              <th class="knowledge-assets-table__actions-head">操作</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr v-for="row in assets" :key="`${row.assetType}-${row.assetId}`" @click="openAsset(row)">
-              <td>
-                <div class="knowledge-assets-table__name">
-                  <div class="knowledge-assets-table__icon" :class="`is-${assetTone(row)}`">
-                    <span class="material-symbols-outlined">{{ assetIcon(row) }}</span>
+        <div v-if="assets.length" class="knowledge-assets-table">
+          <table>
+            <thead>
+              <tr>
+                <th>名称</th>
+                <th>类型</th>
+                <th>状态</th>
+                <th>大小</th>
+                <th>更新时间</th>
+                <th>上传时间</th>
+                <th class="knowledge-assets-table__actions-head">操作</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="row in assets" :key="`${row.assetType}-${row.assetId}`" @click="openAsset(row)">
+                <td>
+                  <div class="knowledge-assets-table__name">
+                    <div class="knowledge-assets-table__icon" :class="`is-${assetTone(row)}`">
+                      <span class="material-symbols-outlined">{{ assetIcon(row) }}</span>
+                    </div>
+                    <div class="knowledge-assets-table__copy app-table-name-copy">
+                      <strong class="app-table-name-copy__title">{{ row.title }}</strong>
+                      <small class="app-table-name-copy__meta">{{ secondaryLine(row) }}</small>
+                    </div>
                   </div>
-                  <div class="knowledge-assets-table__copy app-table-name-copy">
-                    <strong class="app-table-name-copy__title">{{ row.title }}</strong>
-                    <small class="app-table-name-copy__meta">{{ secondaryLine(row) }}</small>
+                </td>
+                <td><span class="knowledge-assets-table__type">{{ assetTypeLabel(row) }}</span></td>
+                <td>
+                  <div class="knowledge-assets-table__status-stack">
+                    <button v-if="canRetryAsset(row)" type="button" class="knowledge-assets-table__status is-clickable"
+                      :class="`is-${assetTone(row)}`" @click.stop="retryAsset(row)">
+                      <span class="material-symbols-outlined">{{ assetStatusIcon(row) }}</span>
+                      <span>{{ assetStatusLabel(row) }}</span>
+                    </button>
+                    <span v-else class="knowledge-assets-table__status" :class="`is-${assetTone(row)}`">
+                      <span class="material-symbols-outlined">{{ assetStatusIcon(row) }}</span>
+                      <span>{{ assetStatusLabel(row) }}</span>
+                    </span>
+                    <small v-if="shouldShowFailureReason(row)" class="knowledge-assets-table__status-reason">
+                      {{ assetFailureReason(row) }}
+                    </small>
                   </div>
-                </div>
-              </td>
-              <td><span class="knowledge-assets-table__type">{{ assetTypeLabel(row) }}</span></td>
-              <td>
-                <div class="knowledge-assets-table__status-stack">
-                  <button v-if="canRetryAsset(row)" type="button" class="knowledge-assets-table__status is-clickable"
-                    :class="`is-${assetTone(row)}`" @click.stop="retryAsset(row)">
-                    <span class="material-symbols-outlined">{{ assetStatusIcon(row) }}</span>
-                    <span>{{ assetStatusLabel(row) }}</span>
-                  </button>
-                  <span v-else class="knowledge-assets-table__status" :class="`is-${assetTone(row)}`">
-                    <span class="material-symbols-outlined">{{ assetStatusIcon(row) }}</span>
-                    <span>{{ assetStatusLabel(row) }}</span>
-                  </span>
-                  <small v-if="shouldShowFailureReason(row)" class="knowledge-assets-table__status-reason">
-                    {{ assetFailureReason(row) }}
-                  </small>
-                </div>
-              </td>
-              <td class="knowledge-assets-table__mono">{{ row.assetType === 'FILE' ? formatFileSize(row.fileSize) : '--'
+                </td>
+                <td class="knowledge-assets-table__mono">{{ row.assetType === 'FILE' ? formatFileSize(row.fileSize) :
+                  '--'
                 }}
-              </td>
-              <td>{{ relativeTime(row.updatedAt) }}</td>
-              <td>{{ formatDateTime(row.createdAt) }}</td>
-              <td class="knowledge-assets-table__actions-cell" @click.stop>
-                <el-dropdown trigger="click" @command="handleRowCommand(row, $event)">
-                  <button type="button" class="knowledge-assets-table__menu-trigger"
-                    @click.stop><span>···</span></button>
-                  <template #dropdown>
-                    <el-dropdown-menu>
-                      <el-dropdown-item command="preview">预览</el-dropdown-item>
-                      <el-dropdown-item v-if="canEditAsset(row)" command="edit">修改</el-dropdown-item>
-                      <el-dropdown-item v-if="canDownloadAsset(row)" command="download">下载</el-dropdown-item>
-                      <el-dropdown-item v-if="canRetryAsset(row)" command="retry">重试</el-dropdown-item>
-                      <el-dropdown-item command="delete">删除</el-dropdown-item>
-                    </el-dropdown-menu>
-                  </template>
-                </el-dropdown>
-              </td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
+                </td>
+                <td>{{ relativeTime(row.updatedAt) }}</td>
+                <td>{{ formatDateTime(row.createdAt) }}</td>
+                <td class="knowledge-assets-table__actions-cell" @click.stop>
+                  <el-dropdown trigger="click" @command="handleRowCommand(row, $event)">
+                    <button type="button" class="knowledge-assets-table__menu-trigger"
+                      @click.stop><span>···</span></button>
+                    <template #dropdown>
+                      <el-dropdown-menu>
+                        <el-dropdown-item command="preview">预览</el-dropdown-item>
+                        <el-dropdown-item v-if="canEditAsset(row)" command="edit">修改</el-dropdown-item>
+                        <el-dropdown-item v-if="canDownloadAsset(row)" command="download">下载</el-dropdown-item>
+                        <el-dropdown-item v-if="canRetryAsset(row)" command="retry">重试</el-dropdown-item>
+                        <el-dropdown-item command="delete">删除</el-dropdown-item>
+                      </el-dropdown-menu>
+                    </template>
+                  </el-dropdown>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
 
-      <el-empty v-else :image-size="84" :description="`当前筛选下还没有${assetCollectionLabel}，可以通过右上角添加入口继续补充。`" />
+        <el-empty v-else :image-size="84" :description="`当前筛选下还没有${assetCollectionLabel}，可以通过右上角添加入口继续补充。`" />
       </template>
 
       <div v-if="!assetError" class="knowledge-table-shell__footer">
@@ -129,7 +130,6 @@
       <div class="knowledge-export-dialog">
         <div class="knowledge-export-dialog__copy">
           <strong>{{ exportTarget?.title || '当前文档' }}</strong>
-          <span>导出格式与文档编辑页保持一致。</span>
         </div>
         <div class="knowledge-export-dialog__actions">
           <el-button :loading="exporting" @click="exportDocumentAsset('doc')">导出 .doc</el-button>
@@ -220,7 +220,7 @@ const selectedKnowledgeType = computed<'FILE' | 'DOCUMENT' | 'CONTENT' | undefin
 })
 
 const assetCollectionLabel = computed(
-  () => ({ overview: '知识资料', files: '文件', documents: '文档', content: '表格内容' }[activeAssetTab.value]),
+  () => ({ overview: '文件信息', files: '文件', documents: '文档', content: '表格内容' }[activeAssetTab.value]),
 )
 
 const normalizeAssetTab = (value: unknown): KnowledgeAssetTab =>
@@ -322,7 +322,7 @@ const loadAssets = async () => {
     assets.value = page.records
     total.value = page.total
   } catch (error) {
-    assetError.value = resolveErrorMessage(error, '知识资料加载失败，请稍后重试')
+    assetError.value = resolveErrorMessage(error, '文件加载失败，请稍后重试')
   } finally {
     assetsLoading.value = false
   }

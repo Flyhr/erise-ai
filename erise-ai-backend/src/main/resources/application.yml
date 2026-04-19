@@ -69,6 +69,9 @@ erise:
     admin-username: ${ADMIN_USERNAME:admin}
     admin-password: ${ADMIN_PASSWORD:Admin123!}
     admin-display-name: ${ADMIN_DISPLAY_NAME:System Admin}
+  n8n:
+    enabled: ${N8N_ENABLED:false}
+    webhook-secret: ${N8N_WEBHOOK_SECRET:change-this-n8n-secret}
 
 logging:
   level:

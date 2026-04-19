@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from datetime import datetime
 
+from typing import Any
+
 from pydantic import Field
 
 from src.app.schemas.chat import AttachmentContext, ChatContext
@@ -14,6 +16,10 @@ class RagChunkPayload(CamelModel):
     chunk_text: str
     page_no: int | None = None
     section_path: str | None = None
+    chunk_id: str | None = None
+    chunk_hash: str | None = None
+    task_id: str | None = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
 
 
 class RagIndexUpsertRequest(CamelModel):
@@ -24,6 +30,10 @@ class RagIndexUpsertRequest(CamelModel):
     source_type: str
     source_id: int
     source_name: str
+    source_url: str | None = None
+    source_version: str | None = None
+    task_id: str | None = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
     chunks: list[RagChunkPayload] = Field(default_factory=list)
     updated_at: datetime | None = None
 
@@ -55,6 +65,14 @@ class RagQueryHit(CamelModel):
     page_no: int | None = None
     section_path: str | None = None
     url: str | None = None
+    project_id: int | None = None
+    session_id: int | None = None
+    chunk_num: int | None = None
+    chunk_id: str | None = None
+    chunk_hash: str | None = None
+    task_id: str | None = None
+    source_version: str | None = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
 
 
 class RagQueryResponse(CamelModel):

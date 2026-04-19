@@ -9,9 +9,20 @@
         @click="handleNavigate(item.event)">
         <span class="material-symbols-outlined">{{ item.icon }}</span>
       </button>
-      <button type="button" class="workspace-nav-rail__menu" title="展开导航" @click="navDrawerVisible = true">
-        <span class="material-symbols-outlined">menu</span>
-      </button>
+      <div class="workspace-nav-rail__tail">
+        <button
+          v-if="authStore.isAdmin"
+          type="button"
+          class="workspace-nav-rail__item workspace-nav-rail__item--admin"
+          title="管理后台"
+          @click="handleAdminNavigate"
+        >
+          <span class="material-symbols-outlined">shield_lock</span>
+        </button>
+        <button type="button" class="workspace-nav-rail__menu" title="展开导航" @click="navDrawerVisible = true">
+          <span class="material-symbols-outlined">menu</span>
+        </button>
+      </div>
     </aside>
 
     <section class="workspace-main-panel">
@@ -42,6 +53,16 @@
           </button>
         </nav>
 
+        <button
+          v-if="authStore.isAdmin"
+          type="button"
+          class="workspace-side-link workspace-side-link--admin"
+          @click="handleAdminNavigate"
+        >
+          <span class="material-symbols-outlined">shield_lock</span>
+          <span>管理后台</span>
+        </button>
+
         <div class="workspace-side-footer">
           <div class="workspace-avatar-placeholder">{{ footerAvatar }}</div>
           <div>
@@ -56,6 +77,7 @@
 
 <script setup lang="ts">
 import { ref } from 'vue'
+import { useAuthStore } from '@/stores/auth'
 
 type ActiveNav = 'dashboard' | 'projects' | 'knowledge' | 'ai'
 type NavigationEvent = 'navigate-dashboard' | 'navigate-projects' | 'navigate-knowledge' | 'navigate-ai'
@@ -97,12 +119,14 @@ const emit = defineEmits<{
   (e: 'navigate-projects'): void
   (e: 'navigate-knowledge'): void
   (e: 'navigate-ai'): void
+  (e: 'navigate-admin'): void
   (e: 'search'): void
   (e: 'notify'): void
   (e: 'settings'): void
   (e: 'profile'): void
 }>()
 
+const authStore = useAuthStore()
 const navDrawerVisible = ref(false)
 
 const navItems: Array<{ key: ActiveNav; label: string; icon: string; event: NavigationEvent }> = [
@@ -123,6 +147,11 @@ const handleNavigate = (event: NavigationEvent) => {
   } else {
     emit('navigate-ai')
   }
+}
+
+const handleAdminNavigate = () => {
+  navDrawerVisible.value = false
+  emit('navigate-admin')
 }
 </script>
 
@@ -188,7 +217,20 @@ const handleNavigate = (event: NavigationEvent) => {
 }
 
 .workspace-nav-rail__menu {
+  margin-top: 0;
+}
+
+.workspace-nav-rail__tail {
   margin-top: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  align-items: center;
+}
+
+.workspace-nav-rail__item--admin {
+  color: #7a4b00;
+  background: rgba(255, 255, 255, 0.48);
 }
 
 .workspace-nav-drawer :deep(.el-drawer) {
@@ -273,6 +315,11 @@ const handleNavigate = (event: NavigationEvent) => {
   background: #fff;
   color: #0060a9;
   box-shadow: 0 10px 24px rgba(15, 23, 42, 0.05);
+}
+
+.workspace-side-link--admin {
+  color: #7a4b00;
+  background: rgba(255, 250, 240, 0.72);
 }
 
 .workspace-side-footer {

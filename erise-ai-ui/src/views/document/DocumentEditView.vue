@@ -1,6 +1,7 @@
 <template>
   <div class="page-shell">
-    <AppPageHeader :title="form.title || (isPreview ? '文档浏览' : '文档编辑')" show-back back-label="返回文档列表" :back-to="documentBackTarget">
+    <AppPageHeader :title="form.title || (isPreview ? '文档浏览' : '文档编辑')" show-back back-label="返回文档列表"
+      :back-to="documentBackTarget">
       <template #actions>
         <el-button plain @click="toggleToc">{{ tocVisible ? '隐藏目录' : '显示目录' }}</el-button>
         <el-dropdown trigger="click" @command="handleExportCommand">
@@ -23,12 +24,13 @@
       </template>
     </AppPageHeader>
 
-    <ProjectSubnav v-if="projectId" :project-id="projectId" />
+    <!-- <ProjectSubnav v-if="projectId" :project-id="projectId" /> -->
 
     <div class="document-editor-grid" :class="{ 'is-toc-hidden': !tocVisible }">
       <section class="section-stack document-editor-main">
         <template v-if="isPreview">
-          <AppSectionCard title="文档信息" :description="isNewDraft ? '当前为本地草稿预览，发布后才会真正创建文档。' : '浏览态只展示已保存内容，不复用可编辑编辑器外壳。'">
+          <AppSectionCard title="文档信息"
+            :description="isNewDraft ? '当前为本地草稿预览，发布后才会真正创建文档。' : '浏览态只展示已保存内容，不复用可编辑编辑器外壳。'">
             <div class="preview-meta">
               <AppStatusTag :label="documentStatusLabel(detailStatus)" :tone="documentStatusTone(detailStatus)" />
               <span>创建于 {{ formatDateTime(createdAt) }}</span>
@@ -43,7 +45,7 @@
         </template>
 
         <template v-else>
-          <AppSectionCard title="基础信息">
+          <AppSectionCard>
             <el-form :model="form" label-position="top">
               <el-form-item label="标题">
                 <el-input v-model="form.title" />
@@ -54,15 +56,9 @@
             </el-form>
           </AppSectionCard>
 
-          <AppSectionCard title="正文编辑器">
-            <OfficeEditor
-              ref="officeEditorRef"
-              v-model="contentHtml"
-              :readonly="false"
-              :height="760"
-              toolbar-locale="zh"
-              placeholder="在这里输入文档正文内容"
-            />
+          <AppSectionCard ">
+            <OfficeEditor ref=" officeEditorRef" v-model="contentHtml" :readonly="false" :height="760"
+            toolbar-locale="zh" placeholder="在这里输入文档正文内容" />
           </AppSectionCard>
         </template>
       </section>
@@ -71,26 +67,21 @@
         <div class="app-card__body section-stack">
           <div class="document-toc__header">
             <div>
-              <div class="app-eyebrow">目录</div>
-              <div class="document-toc__title">文档目录</div>
+              <!-- <div class="app-eyebrow">目录</div> -->
+              <div class="document-toc__title">目录</div>
             </div>
             <el-button text @click="toggleToc">收起</el-button>
           </div>
 
           <div v-if="tocItems.length" class="document-toc__list">
-            <button
-              v-for="item in tocItems"
-              :key="`${item.index}-${item.text}`"
-              type="button"
-              class="document-toc__item"
-              :style="{ paddingLeft: `${16 + (item.level - 1) * 14}px` }"
-              @click="focusHeading(item.index)"
-            >
+            <button v-for="item in tocItems" :key="`${item.index}-${item.text}`" type="button"
+              class="document-toc__item" :style="{ paddingLeft: `${16 + (item.level - 1) * 14}px` }"
+              @click="focusHeading(item.index)">
               <span>{{ item.text }}</span>
               <small>{{ item.tagName.toUpperCase() }}</small>
             </button>
           </div>
-          <AppEmptyState v-else title="还没有可导航的标题" description="补充 H1-H4 标题后，这里会自动生成目录。" />
+          <AppEmptyState v-else title="还没有可导航的标题" />
         </div>
       </aside>
     </div>
@@ -175,16 +166,16 @@ const htmlToText = (html: string) => {
 const buildEditorRoute = (preview = false) =>
   isNewDraft.value
     ? {
-        path: '/documents/new/edit',
-        query: {
-          projectId: projectId.value,
-          ...(preview ? { mode: 'preview' } : {}),
-        },
-      }
+      path: '/documents/new/edit',
+      query: {
+        projectId: projectId.value,
+        ...(preview ? { mode: 'preview' } : {}),
+      },
+    }
     : {
-        path: `/documents/${documentId.value}/edit`,
-        query: preview ? { mode: 'preview' } : {},
-      }
+      path: `/documents/${documentId.value}/edit`,
+      query: preview ? { mode: 'preview' } : {},
+    }
 
 const parseProjectId = () => {
   const parsed = Number(route.query.projectId)
@@ -364,7 +355,7 @@ const publish = async () => {
       })
       clearLocalDraft()
       showDocumentSyncFeedback(detail, '文档已发布')
-      await router.replace(`/documents/${detail.id}/edit`)
+      await router.replace(`/projects/${detail.projectId}/documents`)
       return
     }
 
@@ -381,6 +372,7 @@ const publish = async () => {
     detailStatus.value = detail.docStatus
     updatedAt.value = detail.updatedAt
     showDocumentSyncFeedback(detail, '文档已发布')
+    await router.replace(`/projects/${detail.projectId}/documents`)
   } catch (error) {
     ElMessage.error(resolveErrorMessage(error, '发布失败，请稍后重试'))
   } finally {

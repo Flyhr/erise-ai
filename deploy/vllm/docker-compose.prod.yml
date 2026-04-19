@@ -1,0 +1,109 @@
+services:
+  vllm:
+    image: vllm/vllm-openai:${VLLM_IMAGE_TAG:-v0.8.5}
+    container_name: erise-ai-vllm
+    restart: unless-stopped
+    profiles: ["vllm"]
+    gpus: all
+    shm_size: "${VLLM_SHM_SIZE:-16gb}"
+    ipc: host
+    environment:
+      HUGGING_FACE_HUB_TOKEN: ${HUGGING_FACE_HUB_TOKEN:-}
+      HF_HOME: /root/.cache/huggingface
+      CUDA_VISIBLE_DEVICES: ${VLLM_CUDA_VISIBLE_DEVICES:-0}
+      NVIDIA_VISIBLE_DEVICES: ${VLLM_NVIDIA_VISIBLE_DEVICES:-all}
+    command:
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8000"
+      - --model
+      - ${VLLM_MODEL}
+      - --served-model-name
+      - ${VLLM_SERVED_MODEL_NAME}
+      - --tensor-parallel-size
+      - ${VLLM_TENSOR_PARALLEL_SIZE:-1}
+      - --max-model-len
+      - ${VLLM_MAX_MODEL_LEN:-32768}
+      - --gpu-memory-utilization
+      - ${VLLM_GPU_MEMORY_UTILIZATION:-0.90}
+      - --max-num-seqs
+      - ${VLLM_MAX_NUM_SEQS:-16}
+      - --trust-remote-code
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "python -c \"import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/health').status == 200 else 1)\"",
+        ]
+      interval: 20s
+      timeout: 10s
+      retries: 20
+      start_period: 180s
+    expose:
+      - "8000"
+    volumes:
+      - vllm-model-cache:/root/.cache/huggingface
+
+  vllm-embed:
+    image: vllm/vllm-openai:${VLLM_IMAGE_TAG:-v0.8.5}
+    container_name: erise-ai-vllm-embed
+    restart: unless-stopped
+    profiles: ["vllm"]
+    gpus: all
+    shm_size: "${VLLM_EMBED_SHM_SIZE:-8gb}"
+    ipc: host
+    environment:
+      HUGGING_FACE_HUB_TOKEN: ${HUGGING_FACE_HUB_TOKEN:-}
+      HF_HOME: /root/.cache/huggingface
+      CUDA_VISIBLE_DEVICES: ${VLLM_EMBED_CUDA_VISIBLE_DEVICES:-1}
+      NVIDIA_VISIBLE_DEVICES: ${VLLM_EMBED_NVIDIA_VISIBLE_DEVICES:-all}
+    command:
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8001"
+      - --model
+      - ${VLLM_EMBED_MODEL}
+      - --served-model-name
+      - ${VLLM_EMBED_SERVED_MODEL_NAME}
+      - --task
+      - embed
+      - --gpu-memory-utilization
+      - ${VLLM_EMBED_GPU_MEMORY_UTILIZATION:-0.85}
+      - --max-model-len
+      - ${VLLM_EMBED_MAX_MODEL_LEN:-8192}
+      - --trust-remote-code
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "python -c \"import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8001/health').status == 200 else 1)\"",
+        ]
+      interval: 20s
+      timeout: 10s
+      retries: 20
+      start_period: 180s
+    expose:
+      - "8001"
+    volumes:
+      - vllm-model-cache:/root/.cache/huggingface
+
+  cloud:
+    environment:
+      MODEL_PROVIDER: VLLM
+      MODEL_BASE_URL: http://vllm:8000/v1
+      MODEL_API_KEY: ${VLLM_API_KEY:-}
+      VLLM_BASE_URL: http://vllm:8000/v1
+      VLLM_API_KEY: ${VLLM_API_KEY:-}
+      EMBEDDING_PROVIDER_CODE: VLLM
+      EMBED_BASE_URL: ${EMBED_BASE_URL:-http://vllm-embed:8001/v1}
+      EMBEDDING_MODEL: ${EMBEDDING_MODEL:-text-embedding-3-small}
+    depends_on:
+      vllm:
+        condition: service_healthy
+      vllm-embed:
+        condition: service_healthy
+
+volumes:
+  vllm-model-cache:
