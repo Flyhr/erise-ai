@@ -17,15 +17,18 @@ import jakarta.annotation.PostConstruct;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.Email;
 import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.Size;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.Base64;
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import lombok.Data;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.http.HttpStatus;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Component;
 import org.springframework.stereotype.Service;
@@ -106,6 +109,10 @@ class AuthService {
     private static final String CAPTCHA_PREFIX = "auth:captcha:";// 验证码Redis键前缀
     private static final String REFRESH_PREFIX = "auth:refresh:";// 刷新令牌Redis键前缀
     private static final char[] CAPTCHA_CHARS = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789".toCharArray(); // 验证码字符集（排除0/O、1/I等易混淆字符）
+    private static final int REGISTER_USERNAME_MIN_LENGTH = 4;
+    private static final int REGISTER_USERNAME_MAX_LENGTH = 20;
+    private static final int REGISTER_PASSWORD_MIN_LENGTH = 6;
+    private static final int REGISTER_PASSWORD_MAX_LENGTH = 20;
 
     // 依赖注入的核心组件
     private final UserMapper userMapper; // 用户数据操作
@@ -116,6 +123,7 @@ class AuthService {
     private final StringRedisTemplate redisTemplate; // Redis缓存操作
     private final AuditLogService auditLogService; // 审计日志服务
     private final EriseProperties properties; // 系统配置（如JWT过期时间）
+    private final JdbcTemplate jdbcTemplate; // 数据库操作（用于补发历史系统通知）
 
     // 生成图形验证码：生成随机验证码 → 存储到Redis（5分钟过期） → 生成SVG图像 → Base64编码 → 返回验证码ID和图像数据
     /**
@@ -141,15 +149,23 @@ class AuthService {
 
     // 处理用户注册：验证验证码 → 检查用户名唯一性 → 创建用户记录 → 创建用户资料记录 → 记录注册审计日志 → 返回认证信息
     AuthTokenResponse register(RegisterRequest request) {
+        String username = normalizeUsername(request.username());
+        String email = normalizeEmail(request.email());
+        String password = normalizePassword(request.password());
+        String displayName = normalizeDisplayName(request.displayName());
         ensureCaptcha(request.captchaId(), request.captchaCode());
         if (userMapper.selectOne(
-                new LambdaQueryWrapper<UserEntity>().eq(UserEntity::getUsername, request.username())) != null) {
-            throw new BizException(ErrorCodes.CONFLICT, "Username already exists", HttpStatus.CONFLICT);
+                new LambdaQueryWrapper<UserEntity>().eq(UserEntity::getUsername, username)) != null) {
+            throw new BizException(ErrorCodes.CONFLICT, "用户名已存在", HttpStatus.CONFLICT);
+        }
+        if (userMapper.selectOne(
+                new LambdaQueryWrapper<UserEntity>().eq(UserEntity::getEmail, email)) != null) {
+            throw new BizException(ErrorCodes.CONFLICT, "邮箱已被使用", HttpStatus.CONFLICT);
         }
         UserEntity entity = new UserEntity();
-        entity.setUsername(request.username());
-        entity.setEmail(request.email());
-        entity.setPasswordHash(passwordEncoder.encode(request.password()));
+        entity.setUsername(username);
+        entity.setEmail(email);
+        entity.setPasswordHash(passwordEncoder.encode(password));
         entity.setRoleCode("USER");
         entity.setStatus("ACTIVE");
         entity.setEnabled(1);
@@ -159,10 +175,13 @@ class AuthService {
 
         UserProfileEntity profile = new UserProfileEntity();
         profile.setUserId(entity.getId());
-        profile.setDisplayName(StringUtils.hasText(request.displayName()) ? request.displayName() : request.username());
+        profile.setDisplayName(displayName != null ? displayName : username);
         profile.setCreatedBy(entity.getId());
         profile.setUpdatedBy(entity.getId());
         userProfileMapper.insert(profile);
+
+        // 将历史的全量系统通知（ADMIN_NOTICE 类型）补发给新注册用户
+        copyHistoricalAdminNotificationsTo(entity.getId());
 
         CurrentUser currentUser = new CurrentUser(entity.getId(), entity.getUsername(), entity.getRoleCode());
         auditLogService.log(currentUser, "AUTH_REGISTER", "USER", entity.getId(),
@@ -179,10 +198,10 @@ class AuthService {
                 .last("limit 1"));
         if (user == null || !passwordEncoder.matches(request.password(), user.getPasswordHash())) {
             insertLoginLog(null, request.username(), ip, userAgent, false);
-            throw new BizException(ErrorCodes.UNAUTHORIZED, "Invalid username or password", HttpStatus.UNAUTHORIZED);
+            throw new BizException(ErrorCodes.UNAUTHORIZED, "用户名或密码错误", HttpStatus.UNAUTHORIZED);
         }
         if (!Integer.valueOf(1).equals(user.getEnabled())) {
-            throw new BizException(ErrorCodes.FORBIDDEN, "User is disabled", HttpStatus.FORBIDDEN);
+            throw new BizException(ErrorCodes.FORBIDDEN, "账号已被禁用，请联系管理员", HttpStatus.FORBIDDEN);
         }
         UserProfileEntity profile = profileByUserId(user.getId());
         CurrentUser currentUser = new CurrentUser(user.getId(), user.getUsername(), user.getRoleCode());
@@ -260,9 +279,57 @@ class AuthService {
     private void ensureCaptcha(String captchaId, String captchaCode) {
         String expected = redisTemplate.opsForValue().get(CAPTCHA_PREFIX + captchaId);
         if (expected == null || !expected.equalsIgnoreCase(captchaCode)) {
-            throw new BizException(ErrorCodes.BAD_REQUEST, "Invalid captcha");
+            throw new BizException(ErrorCodes.BAD_REQUEST, "验证码错误或已过期");
         }
         redisTemplate.delete(CAPTCHA_PREFIX + captchaId);
+    }
+
+    private String normalizeUsername(String value) {
+        String normalized = trimToNull(value);
+        if (normalized == null) {
+            throw new BizException(ErrorCodes.BAD_REQUEST, "请输入用户名", HttpStatus.BAD_REQUEST);
+        }
+        if (normalized.contains(" ")) {
+            throw new BizException(ErrorCodes.BAD_REQUEST, "用户名不能包含空格", HttpStatus.BAD_REQUEST);
+        }
+        if (normalized.length() < REGISTER_USERNAME_MIN_LENGTH || normalized.length() > REGISTER_USERNAME_MAX_LENGTH) {
+            throw new BizException(ErrorCodes.BAD_REQUEST, "用户名长度需为 4-20 位", HttpStatus.BAD_REQUEST);
+        }
+        return normalized;
+    }
+
+    private String normalizeEmail(String value) {
+        String normalized = trimToNull(value);
+        if (normalized == null || !normalized.matches("^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$")) {
+            throw new BizException(ErrorCodes.BAD_REQUEST, "请输入正确的邮箱地址", HttpStatus.BAD_REQUEST);
+        }
+        return normalized;
+    }
+
+    private String normalizePassword(String value) {
+        if (!StringUtils.hasText(value)) {
+            throw new BizException(ErrorCodes.BAD_REQUEST, "请输入密码", HttpStatus.BAD_REQUEST);
+        }
+        if (value.length() < REGISTER_PASSWORD_MIN_LENGTH || value.length() > REGISTER_PASSWORD_MAX_LENGTH) {
+            throw new BizException(ErrorCodes.BAD_REQUEST, "密码长度需为 6-20 位", HttpStatus.BAD_REQUEST);
+        }
+        return value;
+    }
+
+    private String normalizeDisplayName(String value) {
+        String normalized = trimToNull(value);
+        if (normalized != null && normalized.length() > 128) {
+            throw new BizException(ErrorCodes.BAD_REQUEST, "显示名称不能超过 128 个字符", HttpStatus.BAD_REQUEST);
+        }
+        return normalized;
+    }
+
+    private String trimToNull(String value) {
+        if (!StringUtils.hasText(value)) {
+            return null;
+        }
+        String normalized = value.trim();
+        return normalized.isEmpty() ? null : normalized;
     }
 
     /**
@@ -287,6 +354,37 @@ class AuthService {
         entity.setCreatedBy(userId == null ? 0L : userId);
         entity.setUpdatedBy(userId == null ? 0L : userId);
         userLoginLogMapper.insert(entity);
+    }
+
+    private void copyHistoricalAdminNotificationsTo(Long newUserId) {
+        // 仅补发管理员发送给“全部用户”的系统通知，不补发定向通知
+        List<Long> templateIds = jdbcTemplate.query("""
+                select n.id
+                from ea_user_notification n
+                inner join (
+                    select min(id) as id
+                    from ea_user_notification
+                    where deleted = 0
+                      and notification_type = 'ADMIN_NOTICE'
+                      and broadcast_flag = 1
+                      and user_id != ?
+                    group by title, content
+                ) dedup on dedup.id = n.id
+                order by n.id asc
+                """,
+                (rs, rowNum) -> rs.getLong("id"),
+                newUserId);
+
+        for (Long templateId : templateIds) {
+            jdbcTemplate.update(
+                    """
+                            insert into ea_user_notification (user_id, notification_type, title, content, read_flag, broadcast_flag, created_by, updated_by)
+                            select ?, notification_type, title, content, 0, broadcast_flag, created_by, created_by
+                            from ea_user_notification
+                            where id = ? and deleted = 0
+                            """,
+                    newUserId, templateId);
+        }
     }
 }
 
@@ -374,19 +472,19 @@ class UserLoginLogEntity extends AuditableEntity {
 }
 
 record RegisterRequest(
-        @NotBlank String username,
-        @NotBlank @Email String email,
-        @NotBlank String password,
+        @NotBlank(message = "请输入用户名") String username,
+        @NotBlank(message = "请输入邮箱地址") @Email(message = "请输入正确的邮箱地址") String email,
+        @NotBlank(message = "请输入密码") String password,
         String displayName,
-        @NotBlank String captchaId,
-        @NotBlank String captchaCode) {
+        @NotBlank(message = "验证码已失效，请刷新后重试") String captchaId,
+        @NotBlank(message = "请输入验证码") @Size(min = 4, max = 4, message = "请输入4位验证码") String captchaCode) {
 }
 
 record LoginRequest(
-        @NotBlank String username,
-        @NotBlank String password,
-        @NotBlank String captchaId,
-        @NotBlank String captchaCode) {
+        @NotBlank(message = "请输入用户名") String username,
+        @NotBlank(message = "请输入密码") String password,
+        @NotBlank(message = "验证码已失效，请刷新后重试") String captchaId,
+        @NotBlank(message = "请输入验证码") @Size(min = 4, max = 4, message = "请输入4位验证码") String captchaCode) {
 }
 
 record RefreshRequest(@NotBlank String refreshToken) {

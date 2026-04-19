@@ -13,6 +13,7 @@ class CitationView(CamelModel):
     source_title: str
     snippet: str | None = None
     page_no: int | None = None
+    section_path: str | None = None
     score: float | None = None
     url: str | None = None
 

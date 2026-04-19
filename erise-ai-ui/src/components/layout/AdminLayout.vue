@@ -2,13 +2,14 @@
   <div class="app-shell">
     <aside class="app-sidebar">
       <div class="app-sidebar__brand">
-        <span class="app-brand-mark">A</span>
-        <div>
-          <div class="app-eyebrow">管理后台</div>
-          <div class="app-brand-title">运营控制台</div>
-          <div class="app-brand-copy">面向用户、任务、模型与审计信号的高密度后台工作区。</div>
+        <div class="admin-brand-mark">
+          <span class="material-symbols-outlined">auto_awesome</span>
         </div>
-        <AppStatusTag label="管理模式" tone="primary" />
+
+        <div>
+          <div class="app-brand-title">AI 管理后台</div>
+          <div class="app-brand-copy">运维、配置与审计</div>
+        </div>
       </div>
 
       <el-menu :default-active="activeNavIndex" router class="shell-menu">
@@ -35,9 +36,8 @@
         </div>
 
         <div class="app-topbar__actions">
-          <el-button plain @click="router.push('/workspace')">返回工作台</el-button>
-          <el-button plain @click="router.push('/settings/profile')">个人资料</el-button>
-          <!-- <el-button plain @click="themeDrawerVisible = true">主题</el-button> -->
+          <NotificationCenterDrawer admin-mode show-label button-label="通知" />
+          <el-button plain @click="router.push('/admin/profile')">个人资料</el-button>
           <el-button type="danger" plain @click="handleLogout">退出登录</el-button>
         </div>
       </header>
@@ -50,7 +50,12 @@
     <el-drawer v-model="sidebarVisible" direction="ltr" size="280px" title="后台导航">
       <AppDrawerPanel>
         <el-menu :default-active="activeNavIndex" router class="shell-menu">
-          <el-menu-item v-for="item in navItems" :key="item.index" :index="item.index" @click="sidebarVisible = false">
+          <el-menu-item
+            v-for="item in navItems"
+            :key="item.index"
+            :index="item.index"
+            @click="sidebarVisible = false"
+          >
             <el-icon>
               <component :is="item.icon" />
             </el-icon>
@@ -62,7 +67,7 @@
 
     <el-drawer v-model="themeDrawerVisible" title="主题" size="420px">
       <AppDrawerPanel>
-        <ThemePanel description="后台与主工作台共用同一套主题变量和视觉规则。" />
+        <ThemePanel description="后台与工作台共用同一套主题变量与视觉规则。" />
       </AppDrawerPanel>
     </el-drawer>
   </div>
@@ -71,10 +76,21 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { Menu } from '@element-plus/icons-vue'
+import {
+  ChatDotRound,
+  CollectionTag,
+  Cpu,
+  DataAnalysis,
+  Document,
+  DocumentCopy,
+  Files,
+  Histogram,
+  Menu,
+  User,
+} from '@element-plus/icons-vue'
 import { useAuthStore } from '@/stores/auth'
 import AppDrawerPanel from '@/components/common/AppDrawerPanel.vue'
-import AppStatusTag from '@/components/common/AppStatusTag.vue'
+import NotificationCenterDrawer from '@/components/common/NotificationCenterDrawer.vue'
 import ThemePanel from '@/components/common/ThemePanel.vue'
 
 const route = useRoute()
@@ -84,26 +100,63 @@ const sidebarVisible = ref(false)
 const themeDrawerVisible = ref(false)
 
 const navItems = [
-  { index: '/admin', label: '总览', icon: 'DataAnalysis' },
-  { index: '/admin/users', label: '用户', icon: 'User' },
-  { index: '/admin/tasks', label: '任务', icon: 'List' },
-  { index: '/admin/ai-models', label: 'AI 模型', icon: 'Cpu' },
-  { index: '/admin/audit-logs', label: '审计日志', icon: 'DocumentCopy' },
+  { index: '/admin', label: '仪表盘', icon: DataAnalysis },
+  { index: '/admin/users', label: '用户管理', icon: User },
+  { index: '/admin/project-files', label: '项目文件', icon: Files },
+  { index: '/admin/ai/models', label: '模型配置', icon: Cpu },
+  { index: '/admin/ai/prompts', label: 'Prompt 模板', icon: CollectionTag },
+  { index: '/admin/ai/request-logs', label: '请求日志', icon: Histogram },
+  { index: '/admin/ai/feedback', label: '用户反馈', icon: ChatDotRound },
+  { index: '/admin/ai/index-tasks', label: '索引任务', icon: Document },
+  { index: '/admin/logs', label: '审计日志', icon: DocumentCopy },
 ]
 
 const activeNavIndex = computed(() => {
   if (route.path.startsWith('/admin/users')) return '/admin/users'
-  if (route.path.startsWith('/admin/tasks')) return '/admin/tasks'
-  if (route.path.startsWith('/admin/ai-models')) return '/admin/ai-models'
-  if (route.path.startsWith('/admin/audit-logs')) return '/admin/audit-logs'
+  if (
+    route.path.startsWith('/admin/project-files') ||
+    route.path.startsWith('/admin/files') ||
+    route.path.startsWith('/admin/documents') ||
+    route.path.startsWith('/admin/contents')
+  ) {
+    return '/admin/project-files'
+  }
+  if (route.path.startsWith('/admin/ai/models') || route.path === '/admin/models' || route.path === '/admin/ai-models') {
+    return '/admin/ai/models'
+  }
+  if (route.path.startsWith('/admin/ai/prompts')) return '/admin/ai/prompts'
+  if (route.path.startsWith('/admin/ai/request-logs')) return '/admin/ai/request-logs'
+  if (route.path.startsWith('/admin/ai/feedback')) return '/admin/ai/feedback'
+  if (route.path.startsWith('/admin/ai/index-tasks')) return '/admin/ai/index-tasks'
+  if (route.path.startsWith('/admin/logs') || route.path.startsWith('/admin/audit-logs')) return '/admin/logs'
   return '/admin'
 })
 
-const pageTitle = computed(() => (route.meta.title as string) || '运营控制台')
-const pageDescription = computed(() => (route.meta.description as string) || '追踪平台信号、后台任务与关键控制点。')
+const pageTitle = computed(() => (route.meta.title as string) || 'AI 管理后台')
+const pageDescription = computed(() => (route.meta.description as string) || '')
 
 const handleLogout = async () => {
   await authStore.logout()
   router.push('/login')
 }
 </script>
+
+<style scoped>
+.app-brand-copy {
+  margin-top: 4px;
+  color: rgba(245, 247, 250, 0.72);
+  font-size: 12px;
+}
+
+.admin-brand-mark {
+  width: 42px;
+  height: 42px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 16px;
+  color: #ffffff;
+  background: linear-gradient(135deg, #409eff 0%, #0060a9 100%);
+  box-shadow: 0 14px 30px rgba(64, 158, 255, 0.28);
+}
+</style>

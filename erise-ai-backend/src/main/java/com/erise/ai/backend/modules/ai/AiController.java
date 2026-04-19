@@ -60,6 +60,11 @@ public class AiController {
         return ApiResponse.success(aiService.sessions());
     }
 
+    @PostMapping("/sessions")
+    public ApiResponse<AiSessionSummaryView> createSession(@Valid @RequestBody AiSessionCreateRequest request) {
+        return ApiResponse.success(aiService.createSession(request));
+    }
+
     @GetMapping("/sessions/{id}")
     public ApiResponse<AiSessionDetailView> session(@PathVariable Long id) {
         return ApiResponse.success(aiService.session(id));
@@ -117,7 +122,8 @@ class AiService {
                 response.requestId(),
                 response.messageStatus(),
                 response.modelCode(),
-                response.providerCode()
+                response.providerCode(),
+                response.latencyMs()
         );
     }
 
@@ -137,7 +143,7 @@ class AiService {
                         event -> sendEvent(emitter, event),
                         error -> {
                             sendError(emitter, error.getMessage());
-                            emitter.completeWithError(error);
+                            emitter.complete();
                         },
                         emitter::complete
                 );
@@ -157,7 +163,23 @@ class AiService {
     List<AiSessionSummaryView> sessions() {
         CurrentUser currentUser = SecurityUtils.currentUser();
         CloudAiClient.PageResult<CloudAiClient.SessionSummaryResponse> page = cloudAiClient.sessions(currentUser, 1, 30, requestId());
-        return page.records().stream().map(this::toSummaryView).toList();
+        return page.records().stream().map(item -> toSummaryView(currentUser, item)).toList();
+    }
+
+    AiSessionSummaryView createSession(AiSessionCreateRequest request) {
+        CurrentUser currentUser = SecurityUtils.currentUser();
+        validateProjectAccess(request.projectId());
+        String scene = request.scene();
+        if (scene == null || scene.isBlank()) {
+            scene = request.projectId() == null ? "general_chat" : "project_chat";
+        }
+        CloudAiClient.SessionSummaryResponse response = cloudAiClient.createSession(
+                currentUser,
+                new CloudAiClient.SessionCreateRequest(request.projectId(), scene, request.title()),
+                requestId()
+        );
+        auditLogService.log(currentUser, "AI_SESSION_CREATE", "AI_SESSION", response.id(), Map.of("scene", scene));
+        return toSummaryView(currentUser, response);
     }
 
     AiSessionDetailView session(Long id) {
@@ -181,7 +203,7 @@ class AiService {
     List<AiModelView> models() {
         CurrentUser currentUser = SecurityUtils.currentUser();
         return cloudAiClient.models(currentUser, requestId()).stream()
-                .map(item -> new AiModelView(item.providerCode(), item.modelCode(), item.modelName(), item.supportStream(), item.maxContextTokens()))
+                .map(item -> new AiModelView(item.providerCode(), item.modelCode(), item.modelName(), item.isDefault(), item.supportStream(), item.maxContextTokens()))
                 .toList();
     }
 
@@ -279,8 +301,27 @@ class AiService {
         return attachmentType.trim().toUpperCase();
     }
 
-    private AiSessionSummaryView toSummaryView(CloudAiClient.SessionSummaryResponse item) {
-        return new AiSessionSummaryView(item.id(), item.projectId(), item.title(), item.lastMessageAt(), item.createdAt());
+    private AiSessionSummaryView toSummaryView(CurrentUser currentUser, CloudAiClient.SessionSummaryResponse item) {
+        long tempFileCount = aiTempFileService.countOwnedSessionTempFiles(currentUser.userId(), item.id());
+        return new AiSessionSummaryView(
+                item.id(),
+                item.projectId(),
+                item.title(),
+                item.lastMessageAt(),
+                item.createdAt(),
+                tempFileCount,
+                resolveRecentSourceType(item, tempFileCount)
+        );
+    }
+
+    private String resolveRecentSourceType(CloudAiClient.SessionSummaryResponse item, long tempFileCount) {
+        if (tempFileCount > 0) {
+            return "TEMP_FILE";
+        }
+        if (item.projectId() != null) {
+            return "PROJECT_KNOWLEDGE";
+        }
+        return null;
     }
 
     private AiMessageView toMessageView(CloudAiClient.MessageResponse message) {
@@ -294,7 +335,10 @@ class AiService {
                 message.createdAt(),
                 message.messageStatus(),
                 message.errorMessage(),
-                message.requestId()
+                message.requestId(),
+                message.modelCode(),
+                message.providerCode(),
+                message.latencyMs()
         );
     }
 
@@ -305,6 +349,7 @@ class AiService {
                 citation.sourceTitle(),
                 citation.snippet(),
                 citation.pageNo(),
+                citation.sectionPath(),
                 citation.score(),
                 citation.url()
         );
@@ -391,10 +436,13 @@ record AiChatRequest(Long projectId,
                      Integer topK) {
 }
 
+record AiSessionCreateRequest(Long projectId, String scene, String title) {
+}
+
 record AiAttachmentRequest(@NotBlank String attachmentType, @NotNull Long sourceId, Long projectId, String title) {
 }
 
-record AiCitationView(String sourceType, Long sourceId, String sourceTitle, String snippet, Integer pageNo, Double score, String url) {
+record AiCitationView(String sourceType, Long sourceId, String sourceTitle, String snippet, Integer pageNo, String sectionPath, Double score, String url) {
 }
 
 record AiChatResponse(
@@ -408,11 +456,20 @@ record AiChatResponse(
         String requestId,
         String messageStatus,
         String modelCode,
-        String providerCode
+        String providerCode,
+        Integer latencyMs
 ) {
 }
 
-record AiSessionSummaryView(Long id, Long projectId, String title, LocalDateTime lastMessageAt, LocalDateTime createdAt) {
+record AiSessionSummaryView(
+        Long id,
+        Long projectId,
+        String title,
+        LocalDateTime lastMessageAt,
+        LocalDateTime createdAt,
+        Long tempFileCount,
+        String recentSourceType
+) {
 }
 
 record AiMessageView(
@@ -425,14 +482,17 @@ record AiMessageView(
         LocalDateTime createdAt,
         String status,
         String errorMessage,
-        String requestId
+        String requestId,
+        String modelCode,
+        String providerCode,
+        Integer latencyMs
 ) {
 }
 
 record AiSessionDetailView(Long id, Long projectId, String title, List<AiMessageView> messages) {
 }
 
-record AiModelView(String providerCode, String modelCode, String modelName, boolean supportStream, Integer maxContextTokens) {
+record AiModelView(String providerCode, String modelCode, String modelName, boolean isDefault, boolean supportStream, Integer maxContextTokens) {
 }
 
 record ResolvedChatContext(Long projectId, List<CloudAiClient.AttachmentRef> attachments) {

@@ -90,6 +90,7 @@ class OfficeFileService {
     private final FileEditContentMapper fileEditContentMapper;
     private final ProjectService projectService;
     private final MinioStorageClient storageClient;
+    private final TextChunkingSupport textChunkingSupport;
     private final RagKnowledgeService ragKnowledgeService;
     private final AuditLogService auditLogService;
 
@@ -138,16 +139,51 @@ class OfficeFileService {
                 stored.getEditorType(), stored.getContentHtmlSnapshot(), stored.getPlainText(), file.getUpdatedAt());
     }
 
+    void internalUpdateContent(Long fileId, Long actorUserId, String plainText) {
+        FileEntity file = requireEditableFile(fileId, actorUserId);
+        String normalizedPlainText = plainText == null ? "" : plainText;
+        FileEditContentEntity stored = fileEditContentMapper.selectOne(new LambdaQueryWrapper<FileEditContentEntity>()
+                .eq(FileEditContentEntity::getFileId, fileId)
+                .last("limit 1"));
+        if (stored == null) {
+            stored = new FileEditContentEntity();
+            stored.setFileId(fileId);
+            stored.setEditorType("OFFICE_HTML");
+            stored.setCreatedBy(actorUserId);
+            stored.setUpdatedBy(actorUserId);
+            stored.setContentHtmlSnapshot(toAiEditableHtml(file, normalizedPlainText));
+            stored.setPlainText(normalizedPlainText);
+            fileEditContentMapper.insert(stored);
+        } else {
+            stored.setContentHtmlSnapshot(toAiEditableHtml(file, normalizedPlainText));
+            stored.setPlainText(normalizedPlainText);
+            stored.setUpdatedBy(actorUserId);
+            fileEditContentMapper.updateById(stored);
+        }
+        syncKnowledge(file, normalizedPlainText, actorUserId);
+        auditLogService.log(actorUserId, "FILE_CONTENT_UPDATE_BY_AI", "FILE", fileId, java.util.Map.of("plainTextLength", normalizedPlainText.length()));
+    }
+
     ResponseEntity<InputStreamResource> preview(Long fileId) {
         FileEntity file = requireEditableFile(fileId);
         EditableOfficeFileView detail = detail(fileId);
+        String snapshotHtml = detail.contentHtmlSnapshot() == null ? "" : detail.contentHtmlSnapshot();
+        var parsed = Jsoup.parse(snapshotHtml);
+        var article = parsed.selectFirst("main > article");
+        if (article != null) {
+            article.select(".docx-meta, .eyebrow").remove();
+        }
+        String previewBody = article != null ? article.html() : parsed.body().html();
+        String previewHtml = wrapOfficeDocumentStart(stripExtension(file.getFileName()), "文件在线预览")
+                + (previewBody == null || previewBody.isBlank() ? "<p>暂无正文内容</p>" : previewBody)
+                + "</article></main></body></html>";
         ContentDisposition disposition = ContentDisposition.inline()
                 .filename(stripExtension(file.getFileName()) + ".html", StandardCharsets.UTF_8)
                 .build();
         return ResponseEntity.ok()
                 .header(HttpHeaders.CONTENT_DISPOSITION, disposition.toString())
-                .contentType(MediaType.TEXT_HTML)
-                .body(new InputStreamResource(new ByteArrayInputStream(detail.contentHtmlSnapshot().getBytes(StandardCharsets.UTF_8))));
+                .contentType(MediaType.parseMediaType("text/html;charset=UTF-8"))
+                .body(new InputStreamResource(new ByteArrayInputStream(previewHtml.getBytes(StandardCharsets.UTF_8))));
     }
 
     private void syncKnowledge(FileEntity file, String plainText, Long operatorUserId) {
@@ -158,7 +194,7 @@ class OfficeFileService {
                     "FILE",
                     file.getId(),
                     file.getFileName(),
-                    ragKnowledgeService.splitText(plainText, null)
+                    textChunkingSupport.chunkText(file.getOwnerUserId(), "file-" + file.getId(), plainText, null)
             );
         } catch (RuntimeException ignored) {
         }
@@ -176,6 +212,22 @@ class OfficeFileService {
         }
         projectService.requireAccessibleProject(file.getProjectId());
         if (!currentUser.isAdmin() && !currentUser.userId().equals(file.getOwnerUserId())) {
+            throw new BizException(ErrorCodes.FORBIDDEN, "No permission", HttpStatus.FORBIDDEN);
+        }
+        String extension = file.getFileExt() == null ? "" : file.getFileExt().toLowerCase(Locale.ROOT);
+        if (!"doc".equals(extension) && !"docx".equals(extension) && !"txt".equals(extension)) {
+            throw new BizException(ErrorCodes.BAD_REQUEST, "Only doc/docx/txt files support online editing", HttpStatus.BAD_REQUEST);
+        }
+        return file;
+    }
+
+    private FileEntity requireEditableFile(Long fileId, Long actorUserId) {
+        FileEntity file = fileMapper.selectById(fileId);
+        if (file == null) {
+            throw new BizException(ErrorCodes.NOT_FOUND, "File not found", HttpStatus.NOT_FOUND);
+        }
+        projectService.requireAccessibleProject(file.getProjectId(), actorUserId);
+        if (actorUserId == null || !actorUserId.equals(file.getOwnerUserId())) {
             throw new BizException(ErrorCodes.FORBIDDEN, "No permission", HttpStatus.FORBIDDEN);
         }
         String extension = file.getFileExt() == null ? "" : file.getFileExt().toLowerCase(Locale.ROOT);
@@ -240,6 +292,29 @@ class OfficeFileService {
                 + "<pre style=\"white-space:pre-wrap;word-break:break-word;font-family:'Consolas','Cascadia Code','Microsoft YaHei',monospace;font-size:14px;\">"
                 + escapeHtml(textValue)
                 + "</pre></article></main></body></html>";
+    }
+
+    private String toAiEditableHtml(FileEntity file, String plainText) {
+        return wrapOfficeDocumentStart(stripExtension(file.getFileName()), "AI 正文更新")
+                + plainTextToHtml(plainText)
+                + "</article></main></body></html>";
+    }
+
+    private String plainTextToHtml(String plainText) {
+        if (plainText == null || plainText.isBlank()) {
+            return "<p></p>";
+        }
+        StringBuilder builder = new StringBuilder();
+        for (String paragraph : plainText.replace("\r\n", "\n").split("\\n\\s*\\n")) {
+            String normalized = paragraph.trim();
+            if (normalized.isBlank()) {
+                continue;
+            }
+            builder.append("<p>")
+                    .append(escapeHtml(normalized).replace("\n", "<br />"))
+                    .append("</p>");
+        }
+        return builder.length() == 0 ? "<p></p>" : builder.toString();
     }
 
     private String wrapOfficeDocumentStart(String title, String eyebrow) {

@@ -34,9 +34,9 @@ public class WorkspaceController {
 
     @GetMapping("/recent")
     public ApiResponse<PageResponse<WorkspaceRecentItemView>> recent(@RequestParam String mode,
-                                                                     @RequestParam(required = false) String assetType,
-                                                                     @RequestParam(defaultValue = "1") long pageNum,
-                                                                     @RequestParam(defaultValue = "10") long pageSize) {
+            @RequestParam(required = false) String assetType,
+            @RequestParam(defaultValue = "1") long pageNum,
+            @RequestParam(defaultValue = "10") long pageSize) {
         return ApiResponse.success(workspaceService.recent(mode, assetType, pageNum, pageSize));
     }
 
@@ -52,11 +52,9 @@ public class WorkspaceController {
 class WorkspaceService {
 
     private static final List<String> VIEW_ACTIONS = List.of(
-            "FILE_PREVIEW", "FILE_DETAIL_OPEN", "FILE_EDIT_OPEN", "DOCUMENT_VIEW", "DOCUMENT_EDIT_OPEN"
-    );
+            "FILE_PREVIEW", "FILE_DETAIL_OPEN", "FILE_EDIT_OPEN", "DOCUMENT_VIEW", "DOCUMENT_EDIT_OPEN");
     private static final List<String> EDIT_ACTIONS = List.of(
-            "FILE_EDIT_SAVE", "DOCUMENT_SAVE", "DOCUMENT_PUBLISH"
-    );
+            "FILE_EDIT_SAVE", "DOCUMENT_SAVE", "DOCUMENT_PUBLISH");
 
     private final JdbcTemplate jdbcTemplate;
     private final AuditLogService auditLogService;
@@ -87,10 +85,8 @@ class WorkspaceService {
                         rs.getString("action_code"),
                         rs.getString("resource_type"),
                         rs.getLong("resource_id"),
-                        rs.getTimestamp("created_at").toLocalDateTime()
-                ),
-                params.toArray()
-        );
+                        rs.getTimestamp("created_at").toLocalDateTime()),
+                params.toArray());
 
         Map<String, WorkspaceRecentItemView> deduplicated = new LinkedHashMap<>();
         for (AuditRecentRow row : rows) {
@@ -122,73 +118,111 @@ class WorkspaceService {
             case "DOCUMENT" -> documentService.detail(request.assetId());
             default -> throw new BizException(ErrorCodes.BAD_REQUEST, "Unsupported asset type: " + request.assetType());
         }
-        auditLogService.log(currentUser, request.actionCode().trim().toUpperCase(), request.assetType().trim().toUpperCase(), request.assetId(), null);
+        auditLogService.log(currentUser, request.actionCode().trim().toUpperCase(),
+                request.assetType().trim().toUpperCase(), request.assetId(), null);
     }
 
     private WorkspaceRecentItemView loadFileRecent(Long userId, boolean admin, AuditRecentRow row) {
         List<WorkspaceRecentItemView> records = jdbcTemplate.query("""
-                        select
-                          'FILE' as asset_type,
-                          f.id as asset_id,
-                          f.project_id,
-                          f.file_name as title,
-                          null as summary,
-                          ? as action_code,
-                          ? as last_action_at,
-                          f.file_ext,
-                          f.mime_type,
-                          f.file_size,
-                          null as doc_status
-                        from ea_file f
-                        where f.deleted = 0 and f.id = ?
-                        """ + (admin ? "" : " and f.owner_user_id = ? "),
-                (rs, rowNum) -> mapRecent(rs),
+                select
+                  'FILE' as asset_type,
+                  f.id as asset_id,
+                  f.project_id,
+                  f.file_name as title,
+                  null as summary,
+                  f.file_ext,
+                  f.mime_type,
+                  f.file_size,
+                  null as doc_status,
+                  f.parse_status,
+                  f.index_status,
+                  (
+                    select t.last_error
+                    from ea_file_parse_task t
+                    where t.deleted = 0
+                      and t.file_id = f.id
+                    order by t.updated_at desc, t.id desc
+                    limit 1
+                  ) as parse_error_message
+                from ea_file f
+                where f.deleted = 0 and f.id = ?
+                """ + (admin ? "" : " and f.owner_user_id = ? "),
+                (rs, rowNum) -> mapRecent(rs, row),
                 admin
-                        ? new Object[]{row.actionCode(), row.createdAt(), row.resourceId()}
-                        : new Object[]{row.actionCode(), row.createdAt(), row.resourceId(), userId}
-        );
+                        ? new Object[] { row.resourceId() }
+                        : new Object[] { row.resourceId(), userId });
         return records.isEmpty() ? null : records.get(0);
     }
 
     private WorkspaceRecentItemView loadDocumentRecent(Long userId, boolean admin, AuditRecentRow row) {
         List<WorkspaceRecentItemView> records = jdbcTemplate.query("""
-                        select
-                          'DOCUMENT' as asset_type,
-                          d.id as asset_id,
-                          d.project_id,
-                          d.title as title,
-                          d.summary as summary,
-                          ? as action_code,
-                          ? as last_action_at,
-                          null as file_ext,
-                          'DOCUMENT' as mime_type,
-                          null as file_size,
-                          d.doc_status
-                        from ea_document d
-                        where d.deleted = 0 and d.id = ?
-                        """ + (admin ? "" : " and d.owner_user_id = ? "),
-                (rs, rowNum) -> mapRecent(rs),
+                select
+                  'DOCUMENT' as asset_type,
+                  d.id as asset_id,
+                  d.project_id,
+                  d.title as title,
+                  d.summary as summary,
+                  null as file_ext,
+                  'DOCUMENT' as mime_type,
+                  null as file_size,
+                  d.doc_status,
+                  'SKIPPED' as parse_status,
+                  coalesce((
+                    select case
+                      when upper(coalesce(s.status, '')) = 'READY' then 'READY'
+                      when upper(coalesce(s.status, '')) = 'PROCESSING' then 'PROCESSING'
+                      when upper(coalesce(s.status, '')) in ('FAILED', 'NEEDS_REPAIR') then 'FAILED'
+                      when upper(coalesce(s.status, '')) = 'DELETED' then 'DELETED'
+                      else 'PENDING'
+                    end
+                    from ea_rag_source s
+                    where s.deleted = 0
+                      and s.scope_type = 'KB'
+                      and s.source_type = 'DOCUMENT'
+                      and s.source_id = d.id
+                      and s.owner_user_id = d.owner_user_id
+                      and coalesce(s.session_id, 0) = 0
+                    order by s.updated_at desc, s.id desc
+                    limit 1
+                  ), 'PENDING') as index_status,
+                  (
+                    select s.last_error
+                    from ea_rag_source s
+                    where s.deleted = 0
+                      and s.scope_type = 'KB'
+                      and s.source_type = 'DOCUMENT'
+                      and s.source_id = d.id
+                      and s.owner_user_id = d.owner_user_id
+                      and coalesce(s.session_id, 0) = 0
+                    order by s.updated_at desc, s.id desc
+                    limit 1
+                  ) as parse_error_message
+                from ea_document d
+                where d.deleted = 0 and d.id = ?
+                """ + (admin ? "" : " and d.owner_user_id = ? "),
+                (rs, rowNum) -> mapRecent(rs, row),
                 admin
-                        ? new Object[]{row.actionCode(), row.createdAt(), row.resourceId()}
-                        : new Object[]{row.actionCode(), row.createdAt(), row.resourceId(), userId}
-        );
+                        ? new Object[] { row.resourceId() }
+                        : new Object[] { row.resourceId(), userId });
         return records.isEmpty() ? null : records.get(0);
     }
 
-    private WorkspaceRecentItemView mapRecent(ResultSet rs) throws SQLException {
+    private WorkspaceRecentItemView mapRecent(ResultSet rs, AuditRecentRow row) throws SQLException {
         return new WorkspaceRecentItemView(
                 rs.getString("asset_type"),
                 rs.getLong("asset_id"),
                 rs.getLong("project_id"),
                 rs.getString("title"),
                 rs.getString("summary"),
-                rs.getString("action_code"),
-                rs.getTimestamp("last_action_at").toLocalDateTime(),
+                row.actionCode(),
+                row.createdAt(),
                 rs.getString("file_ext"),
                 rs.getString("mime_type"),
                 rs.getObject("file_size") == null ? null : rs.getLong("file_size"),
-                rs.getString("doc_status")
-        );
+                rs.getString("doc_status"),
+                rs.getString("parse_status"),
+                rs.getString("index_status"),
+                rs.getString("parse_error_message"));
     }
 }
 
@@ -206,8 +240,10 @@ record WorkspaceRecentItemView(
         String fileExt,
         String mimeType,
         Long fileSize,
-        String docStatus
-) {
+        String docStatus,
+        String parseStatus,
+        String indexStatus,
+        String parseErrorMessage) {
 }
 
 record AuditRecentRow(String actionCode, String resourceType, Long resourceId, LocalDateTime createdAt) {

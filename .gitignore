@@ -1,3 +1,12 @@
+.env*
+.env.dev*
+!.env.example
+AGENTS.md
+
+docs/
+
+
+
 .idea/
 .vscode/
 *.iml
@@ -7,8 +16,6 @@
 .DS_Store
 .env
 .env.dev
-AiAssistant/.env.dev
-erise-ai-ui/.env.dev
 
 # Python
 __pycache__/
@@ -19,6 +26,18 @@ __pycache__/
 AiAssistant/*.db
 AiAssistant/.coverage
 AiAssistant/.venv/
+AiAssistant/.env.dev
+AiAssistant/tmp/
+Aissistant/docs/
+AiAssistant/INSTALL_NOTE.md
+AiAssistant/README.md
+AiAssistant/tests/
+!AiAssistant/tests/
+# AiAssistant/tests/__pycache__/
+# !AiAssistant/tests/__init__.py
+# !AiAssistant/tests/support.py
+# !AiAssistant/tests/test_ai_baseline.py
+AiAssistant/.test-runtime/
 # Node
 node_modules/
 dist/
@@ -33,9 +52,12 @@ test-results/
 build/
 target/
 erise-ai-backend/target/
+erise-ai-cloud/
 erise-ai-cloud/target/
+erise-ai-ui/tests/
+.erise-ai-backend/docs/
 
-# Docker / local runtime
+# Docker 
 data/
 docker-data/
 
@@ -47,5 +69,12 @@ erise-ai-ui/coverage/
 erise-ai-ui/playwright-report/
 erise-ai-ui/test-results/
 erise-ai-ui/tests/
+erise-ai-ui/.env.dev
+.erise-ai-ui/docs/
+
 # Deployment
 deploy/env/*.local
+
+AiAssistant/tmp_ocr_test/scan_like.pdf
+erise-ai-backend/src/test/java/com/erise/ai/backend/BackendApplicationSmokeTest.java
+erise-ai-backend/src/test/java/com/erise/ai/backend/modules/RagIngestSupportTest.java

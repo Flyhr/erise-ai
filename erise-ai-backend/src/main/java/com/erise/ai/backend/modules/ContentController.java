@@ -41,9 +41,10 @@ public class ContentController {
     @GetMapping
     public ApiResponse<PageResponse<ContentItemSummaryView>> page(@RequestParam Long projectId,
                                                                   @RequestParam(required = false) String itemType,
+                                                                  @RequestParam(required = false) String q,
                                                                   @RequestParam(defaultValue = "1") long pageNum,
                                                                   @RequestParam(defaultValue = "20") long pageSize) {
-        return ApiResponse.success(contentItemService.page(projectId, itemType, pageNum, pageSize));
+        return ApiResponse.success(contentItemService.page(projectId, itemType, q, pageNum, pageSize));
     }
 
     @PostMapping
@@ -74,17 +75,25 @@ class ContentItemService {
 
     private final ContentItemMapper contentItemMapper;
     private final ProjectService projectService;
-    private final KnowledgeService knowledgeService;
+    private final TextChunkingSupport textChunkingSupport;
+    private final RagKnowledgeService ragKnowledgeService;
     private final AuditLogService auditLogService;
 
-    PageResponse<ContentItemSummaryView> page(Long projectId, String itemType, long pageNum, long pageSize) {
+    PageResponse<ContentItemSummaryView> page(Long projectId, String itemType, String keyword, long pageNum, long pageSize) {
         projectService.requireAccessibleProject(projectId);
         String normalizedType = itemType == null || itemType.isBlank() ? null : normalizeType(itemType);
-        Page<ContentItemEntity> page = contentItemMapper.selectPage(Page.of(pageNum, pageSize),
-                new LambdaQueryWrapper<ContentItemEntity>()
-                        .eq(ContentItemEntity::getProjectId, projectId)
-                        .eq(normalizedType != null, ContentItemEntity::getItemType, normalizedType)
-                        .orderByDesc(ContentItemEntity::getUpdatedAt));
+        String normalizedKeyword = keyword == null || keyword.isBlank() ? null : keyword.trim();
+        LambdaQueryWrapper<ContentItemEntity> wrapper = new LambdaQueryWrapper<ContentItemEntity>()
+                .eq(ContentItemEntity::getProjectId, projectId)
+                .eq(normalizedType != null, ContentItemEntity::getItemType, normalizedType)
+                .orderByDesc(ContentItemEntity::getUpdatedAt);
+        wrapper.and(normalizedKeyword != null, query -> query
+                .like(ContentItemEntity::getTitle, normalizedKeyword)
+                .or()
+                .like(ContentItemEntity::getSummary, normalizedKeyword)
+                .or()
+                .like(ContentItemEntity::getPlainText, normalizedKeyword));
+        Page<ContentItemEntity> page = contentItemMapper.selectPage(Page.of(pageNum, pageSize), wrapper);
         return PageResponse.of(page.getRecords().stream().map(this::toSummary).toList(), pageNum, pageSize, page.getTotal());
     }
 
@@ -131,18 +140,23 @@ class ContentItemService {
         var currentUser = SecurityUtils.currentUser();
         ContentItemEntity entity = requireAccessibleItem(id);
         contentItemMapper.deleteById(id);
-        knowledgeService.deleteForSource(entity.getProjectId(), entity.getItemType(), id);
+        ragKnowledgeService.deleteKbSource(entity.getOwnerUserId(), entity.getProjectId(), entity.getItemType(), id);
         auditLogService.log(currentUser, "CONTENT_DELETE", entity.getItemType(), id, null);
     }
 
     private void syncKnowledge(ContentItemEntity entity) {
-        knowledgeService.replaceForSource(
+        ragKnowledgeService.replaceKbSource(
                 entity.getOwnerUserId(),
                 entity.getProjectId(),
                 entity.getItemType(),
                 entity.getId(),
                 entity.getTitle(),
-                knowledgeService.splitText(joinText(entity.getSummary(), entity.getPlainText()), null)
+                textChunkingSupport.chunkText(
+                        entity.getOwnerUserId(),
+                        entity.getItemType() + "-" + entity.getId(),
+                        joinText(entity.getSummary(), entity.getPlainText()),
+                        null
+                )
         );
     }
 

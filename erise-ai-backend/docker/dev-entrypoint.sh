@@ -4,7 +4,7 @@ set -eu
 cd /workspace
 
 checksum() {
-  find pom.xml src -type f \( -name '*.java' -o -name '*.xml' -o -name '*.yml' -o -name '*.yaml' -o -name '*.properties' \) -print \
+  find pom.xml src -type f \( -name '*.java' -o -name '*.xml' -o -name '*.yml' -o -name '*.yaml' -o -name '*.properties' -o -name '*.sql' \) -print \
     | sort \
     | xargs cat 2>/dev/null \
     | sha1sum \

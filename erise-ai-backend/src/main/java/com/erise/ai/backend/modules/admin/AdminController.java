@@ -10,22 +10,37 @@ import com.erise.ai.backend.common.api.ApiResponse;
 import com.erise.ai.backend.common.api.PageResponse;
 import com.erise.ai.backend.common.config.EriseProperties;
 import com.erise.ai.backend.common.entity.AuditableEntity;
+import com.erise.ai.backend.common.exception.BizException;
+import com.erise.ai.backend.common.exception.ErrorCodes;
 import com.erise.ai.backend.common.util.SecurityUtils;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.validation.Valid;
+import jakarta.validation.constraints.Email;
+import jakarta.validation.constraints.DecimalMin;
+import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.Size;
 import java.sql.Timestamp;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.LocalTime;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 import lombok.Data;
 import lombok.RequiredArgsConstructor;
+import org.springframework.format.annotation.DateTimeFormat;
+import org.springframework.http.HttpStatus;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
@@ -50,13 +65,26 @@ public class AdminController {
 
     @GetMapping("/users")
     public ApiResponse<PageResponse<AdminUserView>> users(@RequestParam(defaultValue = "1") long pageNum,
-                                                          @RequestParam(defaultValue = "10") long pageSize) {
-        return ApiResponse.success(adminService.users(pageNum, pageSize));
+                                                          @RequestParam(defaultValue = "10") long pageSize,
+                                                          @RequestParam(required = false) String q,
+                                                          @RequestParam(required = false) String roleCode) {
+        return ApiResponse.success(adminService.users(pageNum, pageSize, q, roleCode));
     }
 
     @PostMapping("/users/{id}/status")
     public ApiResponse<Void> changeStatus(@PathVariable Long id, @Valid @RequestBody AdminUserStatusRequest request) {
         adminService.changeUserStatus(id, request.status());
+        return ApiResponse.success("success", null);
+    }
+
+    @PutMapping("/users/{id}")
+    public ApiResponse<AdminUserView> updateUser(@PathVariable Long id, @Valid @RequestBody AdminUserUpdateRequest request) {
+        return ApiResponse.success(adminService.updateUser(id, request));
+    }
+
+    @DeleteMapping("/users/{id}")
+    public ApiResponse<Void> deleteUser(@PathVariable Long id) {
+        adminService.deleteUser(id);
         return ApiResponse.success("success", null);
     }
 
@@ -66,15 +94,44 @@ public class AdminController {
         return ApiResponse.success(adminService.tasks(pageNum, pageSize));
     }
 
+    @PostMapping("/tasks/{taskOrigin}/{id}/retry")
+    public ApiResponse<Void> retryTask(@PathVariable String taskOrigin, @PathVariable Long id) {
+        adminService.retryTask(taskOrigin, id);
+        return ApiResponse.success("success", null);
+    }
+
     @GetMapping("/audit-logs")
     public ApiResponse<PageResponse<AdminAuditLogView>> auditLogs(@RequestParam(defaultValue = "1") long pageNum,
-                                                                  @RequestParam(defaultValue = "10") long pageSize) {
-        return ApiResponse.success(adminService.auditLogs(pageNum, pageSize));
+                                                                  @RequestParam(defaultValue = "10") long pageSize,
+                                                                  @RequestParam(required = false) String q,
+                                                                  @RequestParam(required = false) String operatorUsername,
+                                                                  @RequestParam(required = false) String actionCode,
+                                                                  @RequestParam(required = false)
+                                                                  @DateTimeFormat(iso = DateTimeFormat.ISO.DATE)
+                                                                  LocalDate createdDate) {
+        return ApiResponse.success(adminService.auditLogs(pageNum, pageSize, q, operatorUsername, actionCode, createdDate));
     }
 
     @GetMapping("/ai/models")
     public ApiResponse<List<ModelConfigView>> aiModels() {
         return ApiResponse.success(adminService.aiModels());
+    }
+
+    @PostMapping("/ai/models")
+    public ApiResponse<ModelConfigView> createAiModel(@Valid @RequestBody ModelConfigCreateRequest request) {
+        return ApiResponse.success(adminService.createAiModel(request));
+    }
+
+    @PutMapping("/ai/models/{id}")
+    public ApiResponse<Void> updateAiModel(@PathVariable Long id, @Valid @RequestBody ModelConfigUpdateRequest request) {
+        adminService.updateAiModel(id, request);
+        return ApiResponse.success("success", null);
+    }
+
+    @PostMapping("/ai/models/{id}/default")
+    public ApiResponse<Void> switchDefaultAiModel(@PathVariable Long id) {
+        adminService.switchDefaultAiModel(id);
+        return ApiResponse.success("success", null);
     }
 }
 
@@ -82,13 +139,22 @@ public class AdminController {
 @RequiredArgsConstructor
 class AdminService {
 
+    private static final int DASHBOARD_TREND_DAYS = 7;
+    private static final Set<String> RETRYABLE_FAILURE_STATUSES = Set.of("FAILED", "NEEDS_REPAIR");
+
     private final UserMapper userMapper;
     private final UserProfileMapper userProfileMapper;
     private final FileParseTaskMapper fileParseTaskMapper;
+    private final RagTaskMapper ragTaskMapper;
+    private final TaskMapper taskMapper;
     private final AuditLogMapper auditLogMapper;
     private final JdbcTemplate jdbcTemplate;
     private final AuditLogService auditLogService;
     private final EriseProperties eriseProperties;
+    private final FileService fileService;
+    private final DocumentService documentService;
+    private final AiTempFileService aiTempFileService;
+    private final ObjectMapper objectMapper;
 
     AdminOverviewView overview() {
         long userCount = count("ea_user");
@@ -111,106 +177,640 @@ class AdminService {
         return new AdminDashboardView(
                 overview,
                 metrics,
-                loginTrend(7),
-                downloadTrend(7),
+                visitSeries(DASHBOARD_TREND_DAYS),
+                apiCallSeries(DASHBOARD_TREND_DAYS),
+                tokenSeries(DASHBOARD_TREND_DAYS),
+                tokenUsage(),
                 securityLogs(),
                 downloadLogs(),
                 topActions()
         );
     }
 
-    PageResponse<AdminUserView> users(long pageNum, long pageSize) {
-        Page<UserEntity> page = userMapper.selectPage(Page.of(pageNum, pageSize),
-                new LambdaQueryWrapper<UserEntity>().orderByDesc(UserEntity::getCreatedAt));
-        List<AdminUserView> records = page.getRecords().stream().map(user -> {
-            UserProfileEntity profile = userProfileMapper.selectOne(new LambdaQueryWrapper<UserProfileEntity>()
-                    .eq(UserProfileEntity::getUserId, user.getId())
-                    .last("limit 1"));
-            return new AdminUserView(user.getId(), user.getUsername(),
-                    profile == null ? user.getUsername() : profile.getDisplayName(),
-                    user.getEmail(), user.getRoleCode(), user.getStatus(), user.getEnabled(), user.getCreatedAt());
-        }).toList();
-        return PageResponse.of(records, pageNum, pageSize, page.getTotal());
+    PageResponse<AdminUserView> users(long pageNum, long pageSize, String keyword, String roleCode) {
+        long safePageNum = Math.max(pageNum, 1L);
+        long safePageSize = Math.max(pageSize, 1L);
+        long offset = (safePageNum - 1L) * safePageSize;
+
+        List<Object> params = new ArrayList<>();
+        String whereClause = userFilterClause(keyword, roleCode, params);
+        long total = scalar("""
+                select count(*)
+                from ea_user u
+                left join ea_user_profile up on up.user_id = u.id and up.deleted = 0
+                where u.deleted = 0
+                """ + whereClause, params.toArray());
+
+        List<Object> pageParams = new ArrayList<>(params);
+        pageParams.add(safePageSize);
+        pageParams.add(offset);
+        List<AdminUserView> records = jdbcTemplate.query("""
+                        select u.id,
+                               u.username,
+                               coalesce(up.display_name, u.username) as display_name,
+                               u.email,
+                               u.role_code,
+                               u.status,
+                               u.enabled,
+                               u.created_at
+                        from ea_user u
+                        left join ea_user_profile up on up.user_id = u.id and up.deleted = 0
+                        where u.deleted = 0
+                        """ + whereClause + """
+                        order by u.created_at desc, u.id desc
+                        limit ? offset ?
+                        """,
+                (rs, rowNum) -> new AdminUserView(
+                        rs.getLong("id"),
+                        rs.getString("username"),
+                        rs.getString("display_name"),
+                        rs.getString("email"),
+                        rs.getString("role_code"),
+                        rs.getString("status"),
+                        rs.getInt("enabled"),
+                        toLocalDateTime(rs.getTimestamp("created_at"))
+                ),
+                pageParams.toArray());
+        return PageResponse.of(records, safePageNum, safePageSize, total);
     }
 
     void changeUserStatus(Long userId, String status) {
         var currentUser = SecurityUtils.currentUser();
-        UserEntity user = userMapper.selectById(userId);
-        if (user == null) {
-            return;
+        UserEntity user = findUserOrThrow(userId);
+        String normalizedStatus = normalizeUserStatus(status);
+        if (currentUser.userId().equals(userId) && !"ACTIVE".equals(normalizedStatus)) {
+            throw new BizException(ErrorCodes.BAD_REQUEST, "不能禁用当前登录账号", HttpStatus.BAD_REQUEST);
         }
-        user.setStatus(status);
-        user.setEnabled("ACTIVE".equalsIgnoreCase(status) ? 1 : 0);
+        if ("ADMIN".equalsIgnoreCase(user.getRoleCode()) && !"ACTIVE".equals(normalizedStatus)) {
+            throw new BizException(ErrorCodes.BAD_REQUEST, "管理员账号不支持禁用", HttpStatus.BAD_REQUEST);
+        }
+        user.setStatus(normalizedStatus);
+        user.setEnabled("ACTIVE".equals(normalizedStatus) ? 1 : 0);
         user.setUpdatedBy(currentUser.userId());
         userMapper.updateById(user);
-        auditLogService.log(currentUser, "ADMIN_USER_STATUS", "USER", userId, status);
+        auditLogService.log(currentUser, "ADMIN_USER_STATUS", "USER", userId, normalizedStatus);
+    }
+
+    AdminUserView updateUser(Long userId, AdminUserUpdateRequest request) {
+        var currentUser = SecurityUtils.currentUser();
+        UserEntity user = findUserOrThrow(userId);
+        String username = normalizeManagedUsername(request.username());
+        String displayName = normalizeManagedDisplayName(request.displayName());
+        String email = normalizeManagedEmail(request.email());
+
+        UserEntity duplicatedUsername = userMapper.selectOne(new LambdaQueryWrapper<UserEntity>()
+                .eq(UserEntity::getUsername, username)
+                .ne(UserEntity::getId, userId)
+                .last("limit 1"));
+        if (duplicatedUsername != null) {
+            throw new BizException(ErrorCodes.CONFLICT, "用户名已存在", HttpStatus.CONFLICT);
+        }
+
+        UserEntity duplicatedEmail = userMapper.selectOne(new LambdaQueryWrapper<UserEntity>()
+                .eq(UserEntity::getEmail, email)
+                .ne(UserEntity::getId, userId)
+                .last("limit 1"));
+        if (duplicatedEmail != null) {
+            throw new BizException(ErrorCodes.CONFLICT, "邮箱已被使用", HttpStatus.CONFLICT);
+        }
+
+        user.setUsername(username);
+        user.setEmail(email);
+        user.setUpdatedBy(currentUser.userId());
+        userMapper.updateById(user);
+
+        UserProfileEntity profile = userProfileMapper.selectOne(new LambdaQueryWrapper<UserProfileEntity>()
+                .eq(UserProfileEntity::getUserId, userId)
+                .last("limit 1"));
+        if (profile == null) {
+            profile = new UserProfileEntity();
+            profile.setUserId(userId);
+            profile.setDisplayName(displayName);
+            profile.setCreatedBy(currentUser.userId());
+            profile.setUpdatedBy(currentUser.userId());
+            userProfileMapper.insert(profile);
+        } else {
+            profile.setDisplayName(displayName);
+            profile.setUpdatedBy(currentUser.userId());
+            userProfileMapper.updateById(profile);
+        }
+
+        auditLogService.log(currentUser, "ADMIN_USER_UPDATE", "USER", userId, Map.of(
+                "username", username,
+                "displayName", displayName,
+                "email", email));
+        return mapAdminUserView(userId);
+    }
+
+    void deleteUser(Long userId) {
+        var currentUser = SecurityUtils.currentUser();
+        UserEntity user = findUserOrThrow(userId);
+        if (currentUser.userId().equals(userId)) {
+            throw new BizException(ErrorCodes.BAD_REQUEST, "不能删除当前登录账号", HttpStatus.BAD_REQUEST);
+        }
+        if ("ADMIN".equalsIgnoreCase(user.getRoleCode())) {
+            throw new BizException(ErrorCodes.BAD_REQUEST, "管理员账号不支持删除", HttpStatus.BAD_REQUEST);
+        }
+        userProfileMapper.delete(new LambdaQueryWrapper<UserProfileEntity>()
+                .eq(UserProfileEntity::getUserId, userId));
+        userMapper.deleteById(userId);
+        auditLogService.log(currentUser, "ADMIN_USER_DELETE", "USER", userId, Map.of("username", user.getUsername()));
     }
 
     PageResponse<AdminTaskView> tasks(long pageNum, long pageSize) {
-        Page<FileParseTaskEntity> page = fileParseTaskMapper.selectPage(Page.of(pageNum, pageSize),
-                new LambdaQueryWrapper<FileParseTaskEntity>().orderByDesc(FileParseTaskEntity::getCreatedAt));
-        List<AdminTaskView> records = page.getRecords().stream()
-                .map(task -> new AdminTaskView(task.getId(), "FILE_PARSE", task.getTaskStatus(),
-                        task.getRetryCount(), task.getLastError(), task.getCreatedAt()))
-                .toList();
-        return PageResponse.of(records, pageNum, pageSize, page.getTotal());
+        long total = totalTaskCount();
+        long safePageNum = Math.max(pageNum, 1L);
+        long safePageSize = Math.max(pageSize, 1L);
+        long offset = (safePageNum - 1L) * safePageSize;
+        List<AdminTaskView> records = jdbcTemplate.query(taskPageSql(), (rs, rowNum) -> {
+                    String taskOrigin = rs.getString("task_origin");
+                    String taskType = rs.getString("task_type");
+                    String taskStatus = rs.getString("task_status");
+                    String resourceType = rs.getString("resource_type");
+                    Long resourceId = rs.getObject("resource_id") == null ? null : rs.getLong("resource_id");
+                    return new AdminTaskView(
+                            rs.getLong("id"),
+                            taskOrigin,
+                            taskType,
+                            taskStatus,
+                            resourceType,
+                            resourceId,
+                            rs.getString("resource_title"),
+                            rs.getObject("retry_count") == null ? 0 : rs.getInt("retry_count"),
+                            rs.getString("last_error"),
+                            isRetryableTask(taskOrigin, taskType, taskStatus, resourceType),
+                            toLocalDateTime(rs.getTimestamp("created_at"))
+                    );
+                },
+                safePageSize,
+                offset
+        );
+        return PageResponse.of(records, safePageNum, safePageSize, total);
     }
 
-    PageResponse<AdminAuditLogView> auditLogs(long pageNum, long pageSize) {
-        Page<AuditLogEntity> page = auditLogMapper.selectPage(Page.of(pageNum, pageSize),
-                new LambdaQueryWrapper<AuditLogEntity>().orderByDesc(AuditLogEntity::getCreatedAt));
-        List<AdminAuditLogView> records = page.getRecords().stream()
-                .map(log -> new AdminAuditLogView(log.getId(), log.getOperatorUsername(), log.getActionCode(),
-                        log.getResourceType(), log.getResourceId(), log.getDetailJson(), log.getCreatedAt()))
-                .toList();
-        return PageResponse.of(records, pageNum, pageSize, page.getTotal());
+    void retryTask(String taskOrigin, Long taskId) {
+        var currentUser = SecurityUtils.currentUser();
+        String normalizedOrigin = normalize(taskOrigin);
+        switch (normalizedOrigin) {
+            case "FILE_PARSE" -> retryFileParseTask(taskId);
+            case "RAG" -> retryRagTask(taskId);
+            case "TEMP_FILE_PARSE" -> retryTempFileParseTask(taskId);
+            default -> throw new BizException(ErrorCodes.BAD_REQUEST, "Unsupported task origin", HttpStatus.BAD_REQUEST);
+        }
+        auditLogService.log(currentUser, "ADMIN_TASK_RETRY", "ADMIN_TASK", taskId, Map.of("taskOrigin", normalizedOrigin));
+    }
+
+    PageResponse<AdminAuditLogView> auditLogs(long pageNum,
+                                              long pageSize,
+                                              String keyword,
+                                              String operatorUsername,
+                                              String actionCode,
+                                              LocalDate createdDate) {
+        long safePageNum = Math.max(pageNum, 1L);
+        long safePageSize = Math.max(pageSize, 1L);
+        long offset = (safePageNum - 1L) * safePageSize;
+
+        List<Object> params = new ArrayList<>();
+        String whereClause = auditLogFilterClause(keyword, operatorUsername, actionCode, createdDate, params);
+        long total = scalar("""
+                select count(*)
+                from ea_audit_log
+                where deleted = 0
+                """ + whereClause, params.toArray());
+
+        List<Object> pageParams = new ArrayList<>(params);
+        pageParams.add(safePageSize);
+        pageParams.add(offset);
+        List<AdminAuditLogView> records = jdbcTemplate.query("""
+                        select id, operator_username, action_code, resource_type, resource_id, detail_json, created_at
+                        from ea_audit_log
+                        where deleted = 0
+                        """ + whereClause + """
+                        order by created_at desc, id desc
+                        limit ? offset ?
+                        """,
+                (rs, rowNum) -> new AdminAuditLogView(
+                        rs.getLong("id"),
+                        rs.getString("operator_username"),
+                        rs.getString("action_code"),
+                        rs.getString("resource_type"),
+                        rs.getObject("resource_id", Long.class),
+                        rs.getString("detail_json"),
+                        toLocalDateTime(rs.getTimestamp("created_at"))
+                ),
+                pageParams.toArray());
+        return PageResponse.of(records, safePageNum, safePageSize, total);
     }
 
     List<ModelConfigView> aiModels() {
-        String defaultModelCode = eriseProperties.getCloud().getDefaultModelCode();
         return jdbcTemplate.query("""
-                        select id, model_code, model_name, provider_code, enabled, support_stream,
-                               max_context_tokens, priority_no, base_url, api_key_ref
+                        select id, model_code, model_name, provider_code, enabled, is_default, support_stream,
+                               max_context_tokens, input_price_per_million, output_price_per_million,
+                               currency_code, priority_no, base_url, api_key_ref
                         from ai_model_config
-                        order by priority_no asc, id asc
+                        order by is_default desc, priority_no asc, id asc
                         """,
-                (rs, rowNum) -> new ModelConfigView(
-                        rs.getLong("id"),
+                (rs, rowNum) -> mapModelConfigView(rs.getLong("id"),
                         rs.getString("model_code"),
                         rs.getString("model_name"),
                         rs.getString("provider_code"),
                         rs.getBoolean("enabled"),
-                        defaultModelCode.equals(rs.getString("model_code")),
+                        rs.getBoolean("is_default"),
                         rs.getBoolean("support_stream"),
                         rs.getObject("max_context_tokens", Integer.class),
+                        rs.getObject("input_price_per_million", Double.class),
+                        rs.getObject("output_price_per_million", Double.class),
+                        rs.getString("currency_code"),
                         rs.getObject("priority_no", Integer.class),
                         rs.getString("base_url"),
-                        rs.getString("api_key_ref")
-                ));
+                        rs.getString("api_key_ref")));
     }
 
-    private List<AdminTrendPointView> loginTrend(int days) {
-        return fillDailyTrend(days, jdbcTemplate.queryForList("""
-                select date(created_at) as point_date, count(*) as total
-                from ea_user_login_log
-                where deleted = 0 and success = 1 and created_at >= date_sub(curdate(), interval ? day)
-                group by date(created_at)
-                order by point_date asc
-                """, days, days));
+    ModelConfigView createAiModel(ModelConfigCreateRequest request) {
+        var currentUser = SecurityUtils.currentUser();
+
+        String modelCode = trimToNull(request.modelCode());
+        if (modelCode == null || modelCode.isBlank()) {
+            throw new BizException(ErrorCodes.BAD_REQUEST, "Model code is required", HttpStatus.BAD_REQUEST);
+        }
+        String modelName = trimToNull(request.modelName());
+        if (modelName == null || modelName.isBlank()) {
+            throw new BizException(ErrorCodes.BAD_REQUEST, "Model name is required", HttpStatus.BAD_REQUEST);
+        }
+        String providerCode = normalize(request.providerCode());
+        if (providerCode.isBlank()) {
+            throw new BizException(ErrorCodes.BAD_REQUEST, "Provider code is required", HttpStatus.BAD_REQUEST);
+        }
+
+        Long exists = jdbcTemplate.queryForObject(
+                "select count(*) from ai_model_config where model_code = ?", Long.class, modelCode);
+        if (exists != null && exists > 0) {
+            throw new BizException(ErrorCodes.CONFLICT, "Model code already exists", HttpStatus.CONFLICT);
+        }
+
+        Integer maxContextTokens = request.maxContextTokens();
+        if (maxContextTokens != null && maxContextTokens <= 0) {
+            maxContextTokens = null;
+        }
+        int priorityNo = request.priorityNo() != null ? Math.max(request.priorityNo(), 0) : 1;
+        boolean enabled = request.enabled() == null || request.enabled();
+        boolean isDefault = request.isDefault() != null && request.isDefault();
+        boolean supportStream = request.supportStream() == null || request.supportStream();
+        String baseUrl = trimToNull(request.baseUrl());
+        String apiKeyRef = trimToNull(request.apiKeyRef());
+        Double inputPricePerMillion = normalizePrice(request.inputPricePerMillion());
+        Double outputPricePerMillion = normalizePrice(request.outputPricePerMillion());
+        String currencyCode = normalizeCurrencyCode(request.currencyCode());
+
+        if (isDefault) {
+            jdbcTemplate.update("update ai_model_config set is_default = 0 where is_default = 1");
+        }
+
+        jdbcTemplate.update("""
+                        insert into ai_model_config (model_code, model_name, provider_code, enabled, is_default, support_stream,
+                                                     max_context_tokens, input_price_per_million, output_price_per_million,
+                                                     currency_code, priority_no, base_url, api_key_ref, created_at, updated_at)
+                        values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, current_timestamp(6), current_timestamp(6))
+                        """,
+                modelCode, modelName, providerCode,
+                enabled ? 1 : 0, isDefault ? 1 : 0, supportStream ? 1 : 0,
+                maxContextTokens, inputPricePerMillion, outputPricePerMillion, currencyCode, priorityNo,
+                baseUrl, apiKeyRef);
+
+        Long newId = jdbcTemplate.queryForObject(
+                "select id from ai_model_config where model_code = ? limit 1", Long.class, modelCode);
+
+        Map<String, Object> detail = new LinkedHashMap<>();
+        detail.put("modelCode", modelCode);
+        detail.put("modelName", modelName);
+        detail.put("providerCode", providerCode);
+        detail.put("isDefault", isDefault);
+        auditLogService.log(currentUser, "ADMIN_MODEL_CREATE", "AI_MODEL", newId, detail);
+
+        if (!isDefault) {
+            ensureOneDefaultModel();
+        }
+
+        return mapModelConfigView(newId, modelCode, modelName, providerCode, enabled, isDefault, supportStream,
+                maxContextTokens, inputPricePerMillion, outputPricePerMillion, currencyCode, priorityNo, baseUrl, apiKeyRef);
     }
 
-    private List<AdminTrendPointView> downloadTrend(int days) {
-        return fillDailyTrend(days, jdbcTemplate.queryForList("""
-                select date(created_at) as point_date, count(*) as total
-                from ea_audit_log
-                where deleted = 0 and action_code = 'FILE_DOWNLOAD' and created_at >= date_sub(curdate(), interval ? day)
-                group by date(created_at)
-                order by point_date asc
-                """, days, days));
+    void updateAiModel(Long id, ModelConfigUpdateRequest request) {
+        var currentUser = SecurityUtils.currentUser();
+        ModelConfigView current = aiModel(id);
+        if (current == null) {
+            throw new BizException(ErrorCodes.NOT_FOUND, "Model not found", HttpStatus.NOT_FOUND);
+        }
+
+        String modelName = trimToNull(request.modelName());
+        if (modelName == null) {
+            modelName = current.modelName();
+        }
+        if (modelName == null || modelName.isBlank()) {
+            throw new BizException(ErrorCodes.BAD_REQUEST, "Model name is required", HttpStatus.BAD_REQUEST);
+        }
+
+        String providerCode = trimToNull(request.providerCode());
+        if (providerCode == null) {
+            providerCode = current.providerCode();
+        }
+        providerCode = normalize(providerCode);
+        if (providerCode.isBlank()) {
+            throw new BizException(ErrorCodes.BAD_REQUEST, "Provider code is required", HttpStatus.BAD_REQUEST);
+        }
+
+        Boolean enabled = request.enabled() == null ? current.enabled() : request.enabled();
+        Boolean supportStream = request.supportStream() == null ? current.supportStream() : request.supportStream();
+        Integer maxContextTokens = request.maxContextTokens() == null ? current.maxContextTokens() : request.maxContextTokens();
+        Double inputPricePerMillion = request.inputPricePerMillion() == null
+                ? current.inputPricePerMillion()
+                : normalizePrice(request.inputPricePerMillion());
+        Double outputPricePerMillion = request.outputPricePerMillion() == null
+                ? current.outputPricePerMillion()
+                : normalizePrice(request.outputPricePerMillion());
+        String currencyCode = request.currencyCode() == null
+                ? current.currencyCode()
+                : normalizeCurrencyCode(request.currencyCode());
+        Integer priorityNo = request.priorityNo() == null ? current.priorityNo() : request.priorityNo();
+        if (priorityNo == null) {
+            priorityNo = 1;
+        }
+        if (priorityNo < 0) {
+            throw new BizException(ErrorCodes.BAD_REQUEST, "Priority must be zero or greater", HttpStatus.BAD_REQUEST);
+        }
+        if (maxContextTokens != null && maxContextTokens <= 0) {
+            throw new BizException(ErrorCodes.BAD_REQUEST, "Context tokens must be greater than zero", HttpStatus.BAD_REQUEST);
+        }
+
+        String baseUrl = request.baseUrl() == null ? current.baseUrl() : trimToNull(request.baseUrl());
+        String apiKeyRef = request.apiKeyRef() == null ? current.apiKeyRef() : trimToNull(request.apiKeyRef());
+
+        int updated = jdbcTemplate.update("""
+                        update ai_model_config
+                        set model_name = ?,
+                            provider_code = ?,
+                            enabled = ?,
+                            support_stream = ?,
+                            max_context_tokens = ?,
+                            input_price_per_million = ?,
+                            output_price_per_million = ?,
+                            currency_code = ?,
+                            priority_no = ?,
+                            base_url = ?,
+                            api_key_ref = ?,
+                            updated_at = current_timestamp(6)
+                        where id = ?
+                        """,
+                modelName,
+                providerCode,
+                Boolean.TRUE.equals(enabled) ? 1 : 0,
+                Boolean.TRUE.equals(supportStream) ? 1 : 0,
+                maxContextTokens,
+                inputPricePerMillion,
+                outputPricePerMillion,
+                currencyCode,
+                priorityNo,
+                baseUrl,
+                apiKeyRef,
+                id);
+        if (updated <= 0) {
+            throw new BizException(ErrorCodes.NOT_FOUND, "Model not found", HttpStatus.NOT_FOUND);
+        }
+
+        Map<String, Object> detail = new LinkedHashMap<>();
+        detail.put("modelCode", current.modelCode());
+        detail.put("modelName", modelName);
+        detail.put("providerCode", providerCode);
+        detail.put("enabled", Boolean.TRUE.equals(enabled));
+        detail.put("supportStream", Boolean.TRUE.equals(supportStream));
+        detail.put("maxContextTokens", maxContextTokens);
+        detail.put("inputPricePerMillion", inputPricePerMillion);
+        detail.put("outputPricePerMillion", outputPricePerMillion);
+        detail.put("currencyCode", currencyCode);
+        detail.put("priorityNo", priorityNo);
+        auditLogService.log(currentUser, "ADMIN_MODEL_UPDATE", "AI_MODEL", id, detail);
+
+        if (Boolean.TRUE.equals(request.isDefault())) {
+            switchDefaultAiModel(id);
+            return;
+        }
+        ensureOneDefaultModel();
+    }
+
+    void switchDefaultAiModel(Long id) {
+        var currentUser = SecurityUtils.currentUser();
+        ModelConfigView current = aiModel(id);
+        if (current == null) {
+            throw new BizException(ErrorCodes.NOT_FOUND, "Model not found", HttpStatus.NOT_FOUND);
+        }
+        if (!Boolean.TRUE.equals(current.enabled())) {
+            throw new BizException(ErrorCodes.BAD_REQUEST, "Only enabled models can be set as default", HttpStatus.BAD_REQUEST);
+        }
+        jdbcTemplate.update("update ai_model_config set is_default = 0 where is_default = 1");
+        jdbcTemplate.update("update ai_model_config set is_default = 1, updated_at = current_timestamp(6) where id = ?", id);
+        auditLogService.log(currentUser, "ADMIN_MODEL_SWITCH_DEFAULT", "AI_MODEL", id, Map.of("modelCode", current.modelCode()));
+    }
+
+    private void retryFileParseTask(Long taskId) {
+        FileParseTaskEntity task = fileParseTaskMapper.selectById(taskId);
+        if (task == null) {
+            throw new BizException(ErrorCodes.NOT_FOUND, "Task not found", HttpStatus.NOT_FOUND);
+        }
+        if (!isRetryableTask("FILE_PARSE", "FILE_PARSE", task.getTaskStatus(), "FILE")) {
+            throw new BizException(ErrorCodes.BAD_REQUEST, "This task cannot be retried", HttpStatus.BAD_REQUEST);
+        }
+        fileService.retryParse(task.getFileId());
+    }
+
+    private void retryRagTask(Long taskId) {
+        RagTaskEntity task = ragTaskMapper.selectById(taskId);
+        if (task == null) {
+            throw new BizException(ErrorCodes.NOT_FOUND, "Task not found", HttpStatus.NOT_FOUND);
+        }
+        if (!isRetryableTask("RAG", task.getTaskType(), task.getTaskStatus(), task.getSourceType())) {
+            throw new BizException(ErrorCodes.BAD_REQUEST, "This task cannot be retried", HttpStatus.BAD_REQUEST);
+        }
+        String sourceType = normalize(task.getSourceType());
+        switch (sourceType) {
+            case "FILE" -> fileService.retryParse(task.getSourceId());
+            case "DOCUMENT" -> documentService.retryIndex(task.getSourceId());
+            case "TEMP_FILE" -> aiTempFileService.retryByAdmin(task.getSourceId());
+            default -> throw new BizException(ErrorCodes.BAD_REQUEST, "Unsupported RAG resource type", HttpStatus.BAD_REQUEST);
+        }
+    }
+
+    private void retryTempFileParseTask(Long taskId) {
+        TaskEntity task = taskMapper.selectById(taskId);
+        if (task == null) {
+            throw new BizException(ErrorCodes.NOT_FOUND, "Task not found", HttpStatus.NOT_FOUND);
+        }
+        if (!isRetryableTask("TEMP_FILE_PARSE", task.getTaskType(), task.getTaskStatus(), "TEMP_FILE")) {
+            throw new BizException(ErrorCodes.BAD_REQUEST, "This task cannot be retried", HttpStatus.BAD_REQUEST);
+        }
+        TempFileParseTaskPayload payload;
+        try {
+            payload = objectMapper.readValue(task.getPayloadJson(), TempFileParseTaskPayload.class);
+        } catch (Exception exception) {
+            throw new BizException(ErrorCodes.BAD_REQUEST, "Task payload is invalid", HttpStatus.BAD_REQUEST);
+        }
+        if (payload == null || payload.tempFileId() == null) {
+            throw new BizException(ErrorCodes.BAD_REQUEST, "Task payload is invalid", HttpStatus.BAD_REQUEST);
+        }
+        aiTempFileService.retryByAdmin(payload.tempFileId());
+    }
+
+    private boolean isRetryableTask(String taskOrigin, String taskType, String taskStatus, String resourceType) {
+        String normalizedOrigin = normalize(taskOrigin);
+        String normalizedTaskType = normalize(taskType);
+        String normalizedStatus = normalize(taskStatus);
+        String normalizedResourceType = normalize(resourceType);
+        if (!RETRYABLE_FAILURE_STATUSES.contains(normalizedStatus)) {
+            return false;
+        }
+        return switch (normalizedOrigin) {
+            case "FILE_PARSE", "TEMP_FILE_PARSE" -> true;
+            case "RAG" -> "INDEX".equals(normalizedTaskType)
+                    && Set.of("FILE", "DOCUMENT", "TEMP_FILE").contains(normalizedResourceType);
+            default -> false;
+        };
+    }
+
+    private long totalTaskCount() {
+        Long value = jdbcTemplate.queryForObject("""
+                        select count(*) from (
+                            select fp.id
+                            from ea_file_parse_task fp
+                            where fp.deleted = 0
+                            union all
+                            select rt.id
+                            from ea_rag_task rt
+                            where rt.deleted = 0
+                            union all
+                            select t.id
+                            from ea_task t
+                            where t.deleted = 0
+                              and t.task_type = 'TEMP_FILE_PARSE'
+                        ) task_union
+                        """,
+                Long.class
+        );
+        return value == null ? 0L : value;
+    }
+
+    private String taskPageSql() {
+        return """
+                select *
+                from (
+                    select fp.id,
+                           'FILE_PARSE' as task_origin,
+                           'FILE_PARSE' as task_type,
+                           fp.task_status,
+                           'FILE' as resource_type,
+                           f.id as resource_id,
+                           f.file_name as resource_title,
+                           fp.retry_count,
+                           fp.last_error,
+                           fp.created_at
+                    from ea_file_parse_task fp
+                    left join ea_file f on f.id = fp.file_id and f.deleted = 0
+                    where fp.deleted = 0
+
+                    union all
+
+                    select rt.id,
+                           'RAG' as task_origin,
+                           rt.task_type,
+                           rt.task_status,
+                           rt.source_type as resource_type,
+                           rt.source_id as resource_id,
+                           coalesce(f.file_name, d.title, ci.title, tf.file_name, rs.source_title) as resource_title,
+                           rt.retry_count,
+                           rt.last_error,
+                           rt.created_at
+                    from ea_rag_task rt
+                    left join ea_rag_source rs on rs.id = rt.rag_source_id and rs.deleted = 0
+                    left join ea_file f on rt.source_type = 'FILE' and f.id = rt.source_id and f.deleted = 0
+                    left join ea_document d on rt.source_type = 'DOCUMENT' and d.id = rt.source_id and d.deleted = 0
+                    left join ea_content_item ci on rt.source_type in ('SHEET', 'BOARD', 'DATA_TABLE') and ci.id = rt.source_id and ci.deleted = 0
+                    left join ea_ai_temp_file tf on rt.source_type = 'TEMP_FILE' and tf.id = rt.source_id and tf.deleted = 0
+                    where rt.deleted = 0
+
+                    union all
+
+                    select t.id,
+                           'TEMP_FILE_PARSE' as task_origin,
+                           t.task_type,
+                           t.task_status,
+                           'TEMP_FILE' as resource_type,
+                           cast(json_unquote(json_extract(t.payload_json, '$.tempFileId')) as unsigned) as resource_id,
+                           coalesce(tf.file_name, json_unquote(json_extract(t.payload_json, '$.fileName'))) as resource_title,
+                           t.retry_count,
+                           t.last_error,
+                           t.created_at
+                    from ea_task t
+                    left join ea_ai_temp_file tf
+                      on tf.id = cast(json_unquote(json_extract(t.payload_json, '$.tempFileId')) as unsigned)
+                     and tf.deleted = 0
+                    where t.deleted = 0
+                      and t.task_type = 'TEMP_FILE_PARSE'
+                ) task_union
+                order by created_at desc, id desc
+                limit ? offset ?
+                """;
+    }
+
+    private List<AdminSeriesView> visitSeries(int days) {
+        LocalDateTime start = dashboardTrendStart(days);
+        return List.of(
+                new AdminSeriesView("pv", "浏览量（PV）", fillDailyTrend(days, jdbcTemplate.queryForList("""
+                        select date(created_at) as point_date, count(*) as total
+                        from ea_user_login_log
+                        where deleted = 0 and success = 1 and created_at >= ?
+                        group by date(created_at)
+                        order by point_date asc
+                        """, start))),
+                new AdminSeriesView("uv", "访客数（UV）", fillDailyTrend(days, jdbcTemplate.queryForList("""
+                        select date(created_at) as point_date, count(distinct user_id) as total
+                        from ea_user_login_log
+                        where deleted = 0 and success = 1 and user_id is not null and created_at >= ?
+                        group by date(created_at)
+                        order by point_date asc
+                        """, start)))
+        );
+    }
+
+    private List<AdminSeriesView> apiCallSeries(int days) {
+        return fillSeriesTrend(days, jdbcTemplate.queryForList("""
+                select date(r.created_at) as point_date,
+                       coalesce(nullif(r.model_code, ''), 'unknown-model') as series_key,
+                       coalesce(nullif(mc.model_name, ''), nullif(r.model_code, ''), '未识别模型') as series_label,
+                       count(*) as total
+                from ai_request_log r
+                left join ai_model_config mc on mc.model_code = r.model_code
+                where r.created_at >= ?
+                group by date(r.created_at), coalesce(nullif(r.model_code, ''), 'unknown-model'),
+                         coalesce(nullif(mc.model_name, ''), nullif(r.model_code, ''), '未识别模型')
+                order by point_date asc, total desc, series_label asc
+                """, dashboardTrendStart(days)));
+    }
+
+    private List<AdminSeriesView> tokenSeries(int days) {
+        return fillSeriesTrend(days, jdbcTemplate.queryForList("""
+                select date(r.created_at) as point_date,
+                       coalesce(nullif(r.model_code, ''), 'unknown-model') as series_key,
+                       coalesce(nullif(mc.model_name, ''), nullif(r.model_code, ''), '未识别模型') as series_label,
+                       coalesce(sum(coalesce(r.input_token_count, 0) + coalesce(r.output_token_count, 0)), 0) as total
+                from ai_request_log r
+                left join ai_model_config mc on mc.model_code = r.model_code
+                where r.created_at >= ?
+                group by date(r.created_at), coalesce(nullif(r.model_code, ''), 'unknown-model'),
+                         coalesce(nullif(mc.model_name, ''), nullif(r.model_code, ''), '未识别模型')
+                order by point_date asc, total desc, series_label asc
+                """, dashboardTrendStart(days)));
     }
 
     private List<AdminTrendPointView> fillDailyTrend(int days, List<Map<String, Object>> rows) {
-        Map<LocalDate, Long> values = new java.util.HashMap<>();
+        Map<LocalDate, Long> values = new LinkedHashMap<>();
         for (Map<String, Object> row : rows) {
             Object pointDate = row.get("point_date");
             LocalDate date = pointDate instanceof java.sql.Date sqlDate
@@ -225,6 +825,64 @@ class AdminService {
             trend.add(new AdminTrendPointView(date.toString(), values.getOrDefault(date, 0L)));
         }
         return trend;
+    }
+
+    private List<AdminSeriesView> fillSeriesTrend(int days, List<Map<String, Object>> rows) {
+        Map<String, String> labels = new LinkedHashMap<>();
+        Map<String, Map<LocalDate, Long>> seriesValues = new LinkedHashMap<>();
+        for (Map<String, Object> row : rows) {
+            Object pointDate = row.get("point_date");
+            LocalDate date = pointDate instanceof java.sql.Date sqlDate
+                    ? sqlDate.toLocalDate()
+                    : LocalDate.parse(String.valueOf(pointDate));
+            String seriesKey = String.valueOf(row.get("series_key"));
+            String seriesLabel = String.valueOf(row.get("series_label"));
+            labels.putIfAbsent(seriesKey, seriesLabel);
+            seriesValues.computeIfAbsent(seriesKey, ignored -> new LinkedHashMap<>())
+                    .put(date, ((Number) row.get("total")).longValue());
+        }
+        List<AdminSeriesView> series = new ArrayList<>();
+        LocalDate start = LocalDate.now().minusDays(days - 1L);
+        for (Map.Entry<String, String> entry : labels.entrySet()) {
+            List<AdminTrendPointView> points = new ArrayList<>();
+            Map<LocalDate, Long> values = seriesValues.getOrDefault(entry.getKey(), Map.of());
+            for (int i = 0; i < days; i++) {
+                LocalDate date = start.plusDays(i);
+                points.add(new AdminTrendPointView(date.toString(), values.getOrDefault(date, 0L)));
+            }
+            series.add(new AdminSeriesView(entry.getKey(), entry.getValue(), points));
+        }
+        return series;
+    }
+
+    private AdminTokenUsageView tokenUsage() {
+        Long promptTokens7d = scalar("""
+                select coalesce(sum(input_token_count), 0)
+                from ai_request_log
+                where created_at >= ?
+                """, trailingDaysStart(7));
+        Long completionTokens7d = scalar("""
+                select coalesce(sum(output_token_count), 0)
+                from ai_request_log
+                where created_at >= ?
+                """, trailingDaysStart(7));
+        Long totalTokens24h = scalar("""
+                select coalesce(sum(coalesce(input_token_count, 0) + coalesce(output_token_count, 0)), 0)
+                from ai_request_log
+                where created_at >= ?
+                """, LocalDateTime.now().minusHours(24));
+        Long apiCalls24h = scalar("""
+                select count(*)
+                from ai_request_log
+                where created_at >= ?
+                """, LocalDateTime.now().minusHours(24));
+        return new AdminTokenUsageView(
+                promptTokens7d == null ? 0L : promptTokens7d,
+                completionTokens7d == null ? 0L : completionTokens7d,
+                (promptTokens7d == null ? 0L : promptTokens7d) + (completionTokens7d == null ? 0L : completionTokens7d),
+                totalTokens24h == null ? 0L : totalTokens24h,
+                apiCalls24h == null ? 0L : apiCalls24h
+        );
     }
 
     private List<AdminSecurityLogView> securityLogs() {
@@ -263,12 +921,164 @@ class AdminService {
         return jdbcTemplate.query("""
                         select action_code, count(*) as total
                         from ea_audit_log
-                        where deleted = 0 and created_at >= date_sub(now(), interval 7 day)
+                        where deleted = 0 and created_at >= ?
                         group by action_code
                         order by total desc
-                        limit 8
+                        limit 20
                         """,
-                (rs, rowNum) -> new AdminActionMetricView(rs.getString("action_code"), rs.getLong("total")));
+                (rs, rowNum) -> new AdminActionMetricView(rs.getString("action_code"), rs.getLong("total")),
+                trailingDaysStart(7));
+    }
+
+    private String auditLogFilterClause(String keyword,
+                                        String operatorUsername,
+                                        String actionCode,
+                                        LocalDate createdDate,
+                                        List<Object> params) {
+        StringBuilder where = new StringBuilder();
+        String normalizedKeyword = trimToNull(keyword);
+        String normalizedOperator = trimToNull(operatorUsername);
+        String normalizedAction = trimToNull(actionCode);
+        if (normalizedKeyword != null) {
+            where.append("""
+                     and (
+                       coalesce(operator_username, '') like ?
+                       or action_code like ?
+                       or coalesce(resource_type, '') like ?
+                       or coalesce(cast(resource_id as char), '') like ?
+                       or coalesce(detail_json, '') like ?
+                     )
+                    """);
+            String fuzzy = "%" + normalizedKeyword + "%";
+            params.add(fuzzy);
+            params.add(fuzzy);
+            params.add(fuzzy);
+            params.add(fuzzy);
+            params.add(fuzzy);
+        }
+        if (normalizedOperator != null) {
+            where.append(" and coalesce(operator_username, '') like ? ");
+            params.add("%" + normalizedOperator + "%");
+        }
+        if (normalizedAction != null) {
+            where.append(" and action_code like ? ");
+            params.add("%" + normalizedAction + "%");
+        }
+        if (createdDate != null) {
+            where.append(" and created_at >= ? and created_at < ? ");
+            params.add(createdDate.atStartOfDay());
+            params.add(createdDate.plusDays(1L).atStartOfDay());
+        }
+        return where.toString();
+    }
+
+    private String userFilterClause(String keyword, String roleCode, List<Object> params) {
+        StringBuilder where = new StringBuilder();
+        String normalizedKeyword = keyword == null ? "" : keyword.trim();
+        String normalizedRole = roleCode == null ? "" : roleCode.trim().toUpperCase(Locale.ROOT);
+        if (!normalizedKeyword.isBlank()) {
+            where.append("""
+                     and (
+                       u.username like ?
+                       or coalesce(u.email, '') like ?
+                       or coalesce(up.display_name, '') like ?
+                     )
+                    """);
+            String fuzzy = "%" + normalizedKeyword + "%";
+            params.add(fuzzy);
+            params.add(fuzzy);
+            params.add(fuzzy);
+        }
+        if ("USER".equals(normalizedRole) || "ADMIN".equals(normalizedRole)) {
+            where.append(" and u.role_code = ? ");
+            params.add(normalizedRole);
+        }
+        return where.toString();
+    }
+
+    private UserEntity findUserOrThrow(Long userId) {
+        UserEntity user = userMapper.selectById(userId);
+        if (user == null) {
+            throw new BizException(ErrorCodes.NOT_FOUND, "用户不存在", HttpStatus.NOT_FOUND);
+        }
+        return user;
+    }
+
+    private String normalizeUserStatus(String value) {
+        String normalized = trimToNull(value);
+        if (normalized == null) {
+            throw new BizException(ErrorCodes.BAD_REQUEST, "用户状态不能为空", HttpStatus.BAD_REQUEST);
+        }
+        String upperCaseStatus = normalized.toUpperCase(Locale.ROOT);
+        if (!"ACTIVE".equals(upperCaseStatus) && !"DISABLED".equals(upperCaseStatus)) {
+            throw new BizException(ErrorCodes.BAD_REQUEST, "仅支持 ACTIVE 或 DISABLED 状态", HttpStatus.BAD_REQUEST);
+        }
+        return upperCaseStatus;
+    }
+
+    private String normalizeManagedUsername(String value) {
+        String normalized = trimToNull(value);
+        if (normalized == null) {
+            throw new BizException(ErrorCodes.BAD_REQUEST, "请输入用户名", HttpStatus.BAD_REQUEST);
+        }
+        if (normalized.length() > 64) {
+            throw new BizException(ErrorCodes.BAD_REQUEST, "用户名不能超过 64 个字符", HttpStatus.BAD_REQUEST);
+        }
+        if (normalized.contains(" ")) {
+            throw new BizException(ErrorCodes.BAD_REQUEST, "用户名不能包含空格", HttpStatus.BAD_REQUEST);
+        }
+        return normalized;
+    }
+
+    private String normalizeManagedDisplayName(String value) {
+        String normalized = trimToNull(value);
+        if (normalized == null) {
+            throw new BizException(ErrorCodes.BAD_REQUEST, "请输入显示名称", HttpStatus.BAD_REQUEST);
+        }
+        if (normalized.length() > 128) {
+            throw new BizException(ErrorCodes.BAD_REQUEST, "显示名称不能超过 128 个字符", HttpStatus.BAD_REQUEST);
+        }
+        return normalized;
+    }
+
+    private String normalizeManagedEmail(String value) {
+        String normalized = trimToNull(value);
+        if (normalized == null || !normalized.matches("^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$")) {
+            throw new BizException(ErrorCodes.BAD_REQUEST, "请输入正确的邮箱地址", HttpStatus.BAD_REQUEST);
+        }
+        if (normalized.length() > 128) {
+            throw new BizException(ErrorCodes.BAD_REQUEST, "邮箱不能超过 128 个字符", HttpStatus.BAD_REQUEST);
+        }
+        return normalized;
+    }
+
+    private AdminUserView mapAdminUserView(Long userId) {
+        return jdbcTemplate.queryForObject("""
+                        select u.id,
+                               u.username,
+                               coalesce(up.display_name, u.username) as display_name,
+                               u.email,
+                               u.role_code,
+                               u.status,
+                               u.enabled,
+                               u.created_at
+                        from ea_user u
+                        left join ea_user_profile up on up.user_id = u.id and up.deleted = 0
+                        where u.deleted = 0
+                          and u.id = ?
+                        limit 1
+                        """,
+                (rs, rowNum) -> new AdminUserView(
+                        rs.getLong("id"),
+                        rs.getString("username"),
+                        rs.getString("display_name"),
+                        rs.getString("email"),
+                        rs.getString("role_code"),
+                        rs.getString("status"),
+                        rs.getInt("enabled"),
+                        toLocalDateTime(rs.getTimestamp("created_at"))
+                ),
+                userId);
     }
 
     private long count(String table) {
@@ -277,12 +1087,129 @@ class AdminService {
     }
 
     private long scalar(String sql) {
-        Long value = jdbcTemplate.queryForObject(sql, Long.class);
+        return scalar(sql, new Object[0]);
+    }
+
+    private long scalar(String sql, Object... args) {
+        Long value = jdbcTemplate.queryForObject(sql, Long.class, args);
         return value == null ? 0 : value;
+    }
+
+    private ModelConfigView aiModel(Long id) {
+        List<ModelConfigView> records = jdbcTemplate.query("""
+                        select id, model_code, model_name, provider_code, enabled, is_default, support_stream,
+                               max_context_tokens, input_price_per_million, output_price_per_million,
+                               currency_code, priority_no, base_url, api_key_ref
+                        from ai_model_config
+                        where id = ?
+                        limit 1
+                        """,
+                (rs, rowNum) -> mapModelConfigView(rs.getLong("id"),
+                        rs.getString("model_code"),
+                        rs.getString("model_name"),
+                        rs.getString("provider_code"),
+                        rs.getBoolean("enabled"),
+                        rs.getBoolean("is_default"),
+                        rs.getBoolean("support_stream"),
+                        rs.getObject("max_context_tokens", Integer.class),
+                        rs.getObject("input_price_per_million", Double.class),
+                        rs.getObject("output_price_per_million", Double.class),
+                        rs.getString("currency_code"),
+                        rs.getObject("priority_no", Integer.class),
+                        rs.getString("base_url"),
+                        rs.getString("api_key_ref")),
+                id);
+        return records.isEmpty() ? null : records.get(0);
+    }
+
+    private ModelConfigView mapModelConfigView(Long id,
+                                               String modelCode,
+                                               String modelName,
+                                               String providerCode,
+                                               boolean enabled,
+                                               boolean isDefault,
+                                               boolean supportStream,
+                                               Integer maxContextTokens,
+                                               Double inputPricePerMillion,
+                                               Double outputPricePerMillion,
+                                               String currencyCode,
+                                               Integer priorityNo,
+                                               String baseUrl,
+                                               String apiKeyRef) {
+        return new ModelConfigView(
+                id,
+                modelCode,
+                modelName,
+                providerCode,
+                enabled,
+                isDefault,
+                supportStream,
+                maxContextTokens,
+                inputPricePerMillion,
+                outputPricePerMillion,
+                currencyCode == null || currencyCode.isBlank() ? "USD" : currencyCode,
+                priorityNo,
+                baseUrl,
+                apiKeyRef
+        );
+    }
+
+    private void ensureOneDefaultModel() {
+        Long defaultCount = jdbcTemplate.queryForObject(
+                "select count(*) from ai_model_config where is_default = 1",
+                Long.class
+        );
+        if (defaultCount != null && defaultCount > 0) {
+            return;
+        }
+        jdbcTemplate.update("""
+                update ai_model_config candidate
+                join (
+                    select id
+                    from ai_model_config
+                    where enabled = 1
+                    order by priority_no asc, id asc
+                    limit 1
+                ) picked on picked.id = candidate.id
+                set candidate.is_default = 1,
+                    candidate.updated_at = current_timestamp(6)
+                """);
+    }
+
+    private LocalDateTime dashboardTrendStart(int days) {
+        return LocalDate.now().minusDays(Math.max(days - 1L, 0L)).atStartOfDay();
+    }
+
+    private LocalDateTime trailingDaysStart(int days) {
+        return LocalDateTime.of(LocalDate.now().minusDays(Math.max(days - 1L, 0L)), LocalTime.MIN);
     }
 
     private LocalDateTime toLocalDateTime(Timestamp timestamp) {
         return timestamp == null ? null : timestamp.toLocalDateTime();
+    }
+
+    private String normalize(String value) {
+        return value == null ? "" : value.trim().toUpperCase(Locale.ROOT);
+    }
+
+    private String trimToNull(String value) {
+        if (value == null) {
+            return null;
+        }
+        String normalized = value.trim();
+        return normalized.isEmpty() ? null : normalized;
+    }
+
+    private Double normalizePrice(Double value) {
+        if (value == null || value <= 0) {
+            return null;
+        }
+        return value;
+    }
+
+    private String normalizeCurrencyCode(String value) {
+        String normalized = trimToNull(value);
+        return normalized == null ? "USD" : normalized.toUpperCase(Locale.ROOT);
     }
 }
 
@@ -322,8 +1249,10 @@ record AdminOperationalMetricsView(
 record AdminDashboardView(
         AdminOverviewView overview,
         AdminOperationalMetricsView metrics,
-        List<AdminTrendPointView> visitTrend,
-        List<AdminTrendPointView> downloadTrend,
+        List<AdminSeriesView> visitSeries,
+        List<AdminSeriesView> apiCallSeries,
+        List<AdminSeriesView> tokenSeries,
+        AdminTokenUsageView tokenUsage,
         List<AdminSecurityLogView> securityLogs,
         List<AdminDownloadLogView> downloadLogs,
         List<AdminActionMetricView> topActions
@@ -331,6 +1260,18 @@ record AdminDashboardView(
 }
 
 record AdminTrendPointView(String label, long value) {
+}
+
+record AdminSeriesView(String key, String label, List<AdminTrendPointView> points) {
+}
+
+record AdminTokenUsageView(
+        long promptTokens7d,
+        long completionTokens7d,
+        long totalTokens7d,
+        long totalTokens24h,
+        long apiCalls24h
+) {
 }
 
 record AdminSecurityLogView(String username, String loginIp, String userAgent, LocalDateTime createdAt) {
@@ -357,8 +1298,27 @@ record AdminUserView(
 record AdminUserStatusRequest(@NotBlank String status) {
 }
 
-record AdminTaskView(Long id, String taskType, String taskStatus, Integer retryCount, String lastError,
-                     LocalDateTime createdAt) {
+record AdminUserUpdateRequest(
+        @NotBlank(message = "请输入用户名") @Size(max = 64, message = "用户名不能超过 64 个字符") String username,
+        @NotBlank(message = "请输入显示名称") @Size(max = 128, message = "显示名称不能超过 128 个字符") String displayName,
+        @NotBlank(message = "请输入邮箱地址") @Email(message = "请输入正确的邮箱地址")
+        @Size(max = 128, message = "邮箱不能超过 128 个字符") String email
+) {
+}
+
+record AdminTaskView(
+        Long id,
+        String taskOrigin,
+        String taskType,
+        String taskStatus,
+        String resourceType,
+        Long resourceId,
+        String resourceTitle,
+        Integer retryCount,
+        String lastError,
+        Boolean retryable,
+        LocalDateTime createdAt
+) {
 }
 
 record AdminAuditLogView(
@@ -372,6 +1332,39 @@ record AdminAuditLogView(
 ) {
 }
 
+record ModelConfigUpdateRequest(
+        @Size(max = 120) String modelName,
+        @Size(max = 64) String providerCode,
+        Boolean enabled,
+        Boolean isDefault,
+        Boolean supportStream,
+        @Min(1) Integer maxContextTokens,
+        @Min(0) Integer priorityNo,
+        @Size(max = 255) String baseUrl,
+        @Size(max = 128) String apiKeyRef,
+        @DecimalMin(value = "0.0001", inclusive = true) Double inputPricePerMillion,
+        @DecimalMin(value = "0.0001", inclusive = true) Double outputPricePerMillion,
+        @Size(max = 16) String currencyCode
+) {
+}
+
+record ModelConfigCreateRequest(
+        @NotBlank @Size(max = 128) String modelCode,
+        @NotBlank @Size(max = 120) String modelName,
+        @NotBlank @Size(max = 64) String providerCode,
+        Boolean enabled,
+        Boolean isDefault,
+        Boolean supportStream,
+        @Min(1) Integer maxContextTokens,
+        @Min(0) Integer priorityNo,
+        @Size(max = 255) String baseUrl,
+        @Size(max = 128) String apiKeyRef,
+        @DecimalMin(value = "0.0001", inclusive = true) Double inputPricePerMillion,
+        @DecimalMin(value = "0.0001", inclusive = true) Double outputPricePerMillion,
+        @Size(max = 16) String currencyCode
+) {
+}
+
 record ModelConfigView(
         Long id,
         String modelCode,
@@ -381,6 +1374,9 @@ record ModelConfigView(
         Boolean isDefault,
         Boolean supportStream,
         Integer maxContextTokens,
+        Double inputPricePerMillion,
+        Double outputPricePerMillion,
+        String currencyCode,
         Integer priorityNo,
         String baseUrl,
         String apiKeyRef

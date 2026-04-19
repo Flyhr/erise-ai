@@ -15,10 +15,15 @@ import com.erise.ai.backend.common.util.SecurityUtils;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
+import java.util.ArrayList;
+import java.util.List;
 import lombok.Data;
 import lombok.RequiredArgsConstructor;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -28,6 +33,7 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.util.HtmlUtils;
 
 @RestController
 @RequestMapping("/api/v1/documents")
@@ -60,8 +66,19 @@ public class DocumentController {
     }
 
     @PostMapping("/{id}/publish")
-    public ApiResponse<DocumentDetailView> publish(@PathVariable Long id) {
-        return ApiResponse.success(documentService.publish(id));
+    public ApiResponse<DocumentDetailView> publish(@PathVariable Long id,
+                                                   @RequestBody(required = false) @Valid DocumentPublishRequest request) {
+        return ApiResponse.success(documentService.publish(id, request));
+    }
+
+    @PostMapping("/publish-new")
+    public ApiResponse<DocumentDetailView> publishNew(@Valid @RequestBody DocumentPublishNewRequest request) {
+        return ApiResponse.success(documentService.publishNew(request));
+    }
+
+    @PostMapping("/{id}/retry-index")
+    public ApiResponse<DocumentDetailView> retryIndex(@PathVariable Long id) {
+        return ApiResponse.success(documentService.retryIndex(id));
     }
 
     @GetMapping("/{id}/versions")
@@ -87,10 +104,15 @@ public class DocumentController {
 @RequiredArgsConstructor
 class DocumentService {
 
+    private static final Logger log = LoggerFactory.getLogger(DocumentService.class);
+
     private final DocumentMapper documentMapper;
     private final DocumentContentMapper documentContentMapper;
     private final DocumentVersionMapper documentVersionMapper;
+    private final TagMapper tagMapper;
+    private final DocumentTagRelMapper documentTagRelMapper;
     private final ProjectService projectService;
+    private final TextChunkingSupport textChunkingSupport;
     private final RagKnowledgeService ragKnowledgeService;
     private final AuditLogService auditLogService;
 
@@ -157,13 +179,108 @@ class DocumentService {
         return toInternalContext(document, content);
     }
 
-    InternalDocumentContextView internalUpdateTitle(Long id, String title) {
-        DocumentEntity document = requireExistingDocument(id);
+    InternalDocumentContextView internalUpdateTitle(Long id, Long actorUserId, String title) {
+        DocumentEntity document = requireAccessibleDocument(id, actorUserId);
         DocumentContentEntity content = contentByDocumentId(document.getId());
         document.setTitle(title);
-        document.setUpdatedBy(document.getOwnerUserId());
+        document.setUpdatedBy(actorUserId);
         documentMapper.updateById(document);
-        syncRagKnowledge(document, content.getPlainText());
+        syncRagKnowledge(document, content.getPlainText(), false);
+        auditLogService.log(actorUserId, "DOCUMENT_TITLE_UPDATE_BY_AI", "DOCUMENT", id, java.util.Map.of("title", title));
+        return toInternalContext(document, content);
+    }
+
+    InternalDocumentContextView internalUpdateSummary(Long id, Long actorUserId, String summary) {
+        DocumentEntity document = requireAccessibleDocument(id, actorUserId);
+        DocumentContentEntity content = contentByDocumentId(document.getId());
+        document.setSummary(summary);
+        document.setUpdatedBy(actorUserId);
+        documentMapper.updateById(document);
+        auditLogService.log(actorUserId, "DOCUMENT_SUMMARY_UPDATE_BY_AI", "DOCUMENT", id, java.util.Map.of("summary", summary));
+        return toInternalContext(document, content);
+    }
+
+    InternalDocumentContextView internalUpdateContent(Long id, Long actorUserId, String plainText) {
+        DocumentEntity document = requireAccessibleDocument(id, actorUserId);
+        DocumentContentEntity content = contentByDocumentId(document.getId());
+        String normalizedPlainText = plainText == null ? "" : plainText;
+        String htmlSnapshot = toHtmlSnapshot(normalizedPlainText);
+        content.setContentJson(toTinyMceContentJson(htmlSnapshot));
+        content.setContentHtmlSnapshot(htmlSnapshot);
+        content.setPlainText(normalizedPlainText);
+        content.setUpdatedBy(actorUserId);
+        documentContentMapper.updateById(content);
+        document.setUpdatedBy(actorUserId);
+        documentMapper.updateById(document);
+        syncRagKnowledge(document, normalizedPlainText, false);
+        auditLogService.log(actorUserId, "DOCUMENT_CONTENT_UPDATE_BY_AI", "DOCUMENT", id, java.util.Map.of("plainTextLength", normalizedPlainText.length()));
+        return toInternalContext(document, content);
+    }
+
+    List<TagView> internalUpdateTags(Long id, Long actorUserId, List<String> tags) {
+        requireAccessibleDocument(id, actorUserId);
+        documentTagRelMapper.delete(new LambdaQueryWrapper<DocumentTagRelEntity>().eq(DocumentTagRelEntity::getDocumentId, id));
+        List<TagView> result = new ArrayList<>();
+        for (String rawName : tags) {
+            String name = rawName == null ? "" : rawName.trim();
+            if (name.isBlank()) {
+                continue;
+            }
+            TagEntity tag = tagMapper.selectOne(new LambdaQueryWrapper<TagEntity>()
+                    .eq(TagEntity::getOwnerUserId, actorUserId)
+                    .eq(TagEntity::getName, name)
+                    .last("limit 1"));
+            if (tag == null) {
+                tag = new TagEntity();
+                tag.setOwnerUserId(actorUserId);
+                tag.setName(name);
+                tag.setCreatedBy(actorUserId);
+                tag.setUpdatedBy(actorUserId);
+                tagMapper.insert(tag);
+            }
+            DocumentTagRelEntity rel = new DocumentTagRelEntity();
+            rel.setDocumentId(id);
+            rel.setTagId(tag.getId());
+            rel.setCreatedBy(actorUserId);
+            rel.setUpdatedBy(actorUserId);
+            documentTagRelMapper.insert(rel);
+            result.add(new TagView(tag.getId(), tag.getName(), tag.getColor()));
+        }
+        auditLogService.log(actorUserId, "DOCUMENT_TAG_BIND_BY_AI", "DOCUMENT", id, tags);
+        return result;
+    }
+
+    @Transactional
+    InternalDocumentContextView internalCreateProjectWeeklyReportDraft(Long projectId, Long actorUserId, String title, String summary, String plainText) {
+        ProjectEntity project = projectService.requireAccessibleProject(projectId, actorUserId);
+        DocumentEntity document = new DocumentEntity();
+        document.setOwnerUserId(actorUserId);
+        document.setProjectId(projectId);
+        document.setTitle(title);
+        document.setSummary(summary);
+        document.setDocStatus("DRAFT");
+        document.setLatestVersionNo(0);
+        document.setEditorType("TIPTAP");
+        document.setCreatedBy(actorUserId);
+        document.setUpdatedBy(actorUserId);
+        documentMapper.insert(document);
+
+        DocumentContentEntity content = new DocumentContentEntity();
+        content.setDocumentId(document.getId());
+        content.setContentJson("{}");
+        content.setContentHtmlSnapshot(toHtmlSnapshot(plainText));
+        content.setPlainText(plainText == null ? "" : plainText);
+        content.setCreatedBy(actorUserId);
+        content.setUpdatedBy(actorUserId);
+        documentContentMapper.insert(content);
+
+        auditLogService.log(
+                actorUserId,
+                "PROJECT_WEEKLY_REPORT_DRAFT_CREATE_BY_AI",
+                "DOCUMENT",
+                document.getId(),
+                java.util.Map.of("projectId", project.getId(), "title", title)
+        );
         return toInternalContext(document, content);
     }
 
@@ -182,15 +299,28 @@ class DocumentService {
         content.setUpdatedBy(currentUser.userId());
         documentContentMapper.updateById(content);
 
-        syncRagKnowledge(document, request.plainText());
+        syncRagKnowledge(document, request.plainText(), false);
         auditLogService.log(currentUser, "DOCUMENT_SAVE", "DOCUMENT", id, request);
         return toDetail(document, content);
     }
 
-    DocumentDetailView publish(Long id) {
+    @Transactional
+    DocumentDetailView publish(Long id, DocumentPublishRequest request) {
         var currentUser = SecurityUtils.currentUser();
         DocumentEntity document = requireAccessibleDocument(id);
         DocumentContentEntity content = contentByDocumentId(id);
+        if (request != null) {
+            document.setTitle(request.title());
+            document.setSummary(request.summary());
+            document.setUpdatedBy(currentUser.userId());
+            documentMapper.updateById(document);
+
+            content.setContentJson(request.contentJson());
+            content.setContentHtmlSnapshot(request.contentHtmlSnapshot());
+            content.setPlainText(request.plainText());
+            content.setUpdatedBy(currentUser.userId());
+            documentContentMapper.updateById(content);
+        }
         int nextVersion = document.getLatestVersionNo() + 1;
 
         DocumentVersionEntity version = new DocumentVersionEntity();
@@ -210,9 +340,70 @@ class DocumentService {
         document.setUpdatedBy(currentUser.userId());
         documentMapper.updateById(document);
 
-        syncRagKnowledge(document, content.getPlainText());
-        auditLogService.log(currentUser, "DOCUMENT_PUBLISH", "DOCUMENT", id, java.util.Map.of("versionNo", nextVersion));
+        syncRagKnowledge(document, content.getPlainText(), false);
+        auditLogService.log(
+                currentUser,
+                "DOCUMENT_PUBLISH",
+                "DOCUMENT",
+                id,
+                java.util.Map.of(
+                        "versionNo", nextVersion,
+                        "updatedBeforePublish", request != null
+                )
+        );
         return detail(id);
+    }
+
+    DocumentDetailView retryIndex(Long id) {
+        var currentUser = SecurityUtils.currentUser();
+        DocumentEntity document = requireAccessibleDocument(id);
+        DocumentContentEntity content = contentByDocumentId(id);
+        syncRagKnowledge(document, content.getPlainText(), true);
+        auditLogService.log(currentUser, "DOCUMENT_INDEX_RETRY", "DOCUMENT", id, null);
+        return detail(id);
+    }
+
+    @Transactional
+    DocumentDetailView publishNew(DocumentPublishNewRequest request) {
+        var currentUser = SecurityUtils.currentUser();
+        projectService.requireAccessibleProject(request.projectId());
+
+        DocumentEntity document = new DocumentEntity();
+        document.setOwnerUserId(currentUser.userId());
+        document.setProjectId(request.projectId());
+        document.setTitle(request.title());
+        document.setSummary(request.summary());
+        document.setDocStatus("PUBLISHED");
+        document.setLatestVersionNo(1);
+        document.setEditorType("TIPTAP");
+        document.setCreatedBy(currentUser.userId());
+        document.setUpdatedBy(currentUser.userId());
+        documentMapper.insert(document);
+
+        DocumentContentEntity content = new DocumentContentEntity();
+        content.setDocumentId(document.getId());
+        content.setContentJson(request.contentJson());
+        content.setContentHtmlSnapshot(request.contentHtmlSnapshot());
+        content.setPlainText(request.plainText());
+        content.setCreatedBy(currentUser.userId());
+        content.setUpdatedBy(currentUser.userId());
+        documentContentMapper.insert(content);
+
+        DocumentVersionEntity version = new DocumentVersionEntity();
+        version.setDocumentId(document.getId());
+        version.setVersionNo(1);
+        version.setTitle(document.getTitle());
+        version.setContentJson(content.getContentJson());
+        version.setContentHtmlSnapshot(content.getContentHtmlSnapshot());
+        version.setPlainText(content.getPlainText());
+        version.setPublishedBy(currentUser.userId());
+        version.setCreatedBy(currentUser.userId());
+        version.setUpdatedBy(currentUser.userId());
+        documentVersionMapper.insert(version);
+
+        syncRagKnowledge(document, content.getPlainText(), false);
+        auditLogService.log(currentUser, "DOCUMENT_PUBLISH_NEW", "DOCUMENT", document.getId(), request);
+        return detail(document.getId());
     }
 
     PageResponse<DocumentVersionView> versions(Long id, long pageNum, long pageSize) {
@@ -246,7 +437,7 @@ class DocumentService {
         auditLogService.log(currentUser, "DOCUMENT_DELETE", "DOCUMENT", id, null);
     }
 
-    private void syncRagKnowledge(DocumentEntity document, String plainText) {
+    private void syncRagKnowledge(DocumentEntity document, String plainText, boolean propagateFailure) {
         try {
             ragKnowledgeService.replaceKbSource(
                     document.getOwnerUserId(),
@@ -254,9 +445,13 @@ class DocumentService {
                     "DOCUMENT",
                     document.getId(),
                     document.getTitle(),
-                    ragKnowledgeService.splitText(plainText, null)
+                    textChunkingSupport.chunkText(document.getOwnerUserId(), "document-" + document.getId(), plainText, null)
             );
-        } catch (RuntimeException ignored) {
+        } catch (RuntimeException exception) {
+            log.warn("Failed to sync document knowledge index, documentId={}", document.getId(), exception);
+            if (propagateFailure) {
+                throw exception;
+            }
         }
     }
 
@@ -271,6 +466,12 @@ class DocumentService {
     DocumentEntity requireAccessibleDocument(Long id) {
         DocumentEntity document = requireExistingDocument(id);
         projectService.requireAccessibleProject(document.getProjectId());
+        return document;
+    }
+
+    DocumentEntity requireAccessibleDocument(Long id, Long actorUserId) {
+        DocumentEntity document = requireExistingDocument(id);
+        projectService.requireAccessibleProject(document.getProjectId(), actorUserId);
         return document;
     }
 
@@ -290,6 +491,8 @@ class DocumentService {
     }
 
     private DocumentDetailView toDetail(DocumentEntity document, DocumentContentEntity content) {
+        RagKnowledgeService.KnowledgeSyncStatusView syncStatus =
+                ragKnowledgeService.kbSyncStatus(document.getOwnerUserId(), "DOCUMENT", document.getId());
         return new DocumentDetailView(
                 document.getId(),
                 document.getProjectId(),
@@ -300,6 +503,9 @@ class DocumentService {
                 content.getContentJson(),
                 content.getContentHtmlSnapshot(),
                 content.getPlainText(),
+                syncStatus.parseStatus(),
+                syncStatus.indexStatus(),
+                syncStatus.errorMessage(),
                 document.getCreatedAt(),
                 document.getUpdatedAt()
         );
@@ -320,6 +526,38 @@ class DocumentService {
         return new DocumentVersionView(entity.getVersionNo(), entity.getTitle(), entity.getContentJson(),
                 entity.getContentHtmlSnapshot(), entity.getPlainText(), entity.getCreatedAt());
     }
+
+    private String toHtmlSnapshot(String plainText) {
+        if (plainText == null || plainText.isBlank()) {
+            return "<p></p>";
+        }
+        StringBuilder builder = new StringBuilder();
+        for (String paragraph : plainText.replace("\r\n", "\n").split("\\n\\s*\\n")) {
+            String normalized = paragraph.trim();
+            if (normalized.isBlank()) {
+                continue;
+            }
+            builder.append("<p>")
+                    .append(HtmlUtils.htmlEscape(normalized).replace("\n", "<br />"))
+                    .append("</p>");
+        }
+        return builder.length() == 0 ? "<p></p>" : builder.toString();
+    }
+
+    private String toTinyMceContentJson(String htmlSnapshot) {
+        return "{\"type\":\"TINYMCE\",\"html\":\"" + escapeJson(htmlSnapshot) + "\"}";
+    }
+
+    private String escapeJson(String value) {
+        return value == null ? "" : value
+                .replace("\\", "\\\\")
+                .replace("\"", "\\\"")
+                .replace("\b", "\\b")
+                .replace("\f", "\\f")
+                .replace("\n", "\\n")
+                .replace("\r", "\\r")
+                .replace("\t", "\\t");
+    }
 }
 
 interface DocumentMapper extends BaseMapper<DocumentEntity> {
@@ -329,6 +567,9 @@ interface DocumentContentMapper extends BaseMapper<DocumentContentEntity> {
 }
 
 interface DocumentVersionMapper extends BaseMapper<DocumentVersionEntity> {
+}
+
+interface DocumentTagRelMapper extends BaseMapper<DocumentTagRelEntity> {
 }
 
 @Data
@@ -373,10 +614,39 @@ class DocumentVersionEntity extends AuditableEntity {
     private Long publishedBy;
 }
 
+@Data
+@TableName("ea_document_tag_rel")
+class DocumentTagRelEntity extends AuditableEntity {
+
+    @TableId(type = IdType.AUTO)
+    private Long id;
+    private Long documentId;
+    private Long tagId;
+}
+
 record DocumentCreateRequest(@NotNull Long projectId, @NotBlank String title, String summary) {
 }
 
 record DocumentUpdateRequest(
+        @NotBlank String title,
+        String summary,
+        @NotNull String contentJson,
+        @NotNull String contentHtmlSnapshot,
+        @NotNull String plainText
+) {
+}
+
+record DocumentPublishRequest(
+        @NotBlank String title,
+        String summary,
+        @NotNull String contentJson,
+        @NotNull String contentHtmlSnapshot,
+        @NotNull String plainText
+) {
+}
+
+record DocumentPublishNewRequest(
+        @NotNull Long projectId,
         @NotBlank String title,
         String summary,
         @NotNull String contentJson,
@@ -407,6 +677,9 @@ record DocumentDetailView(
         String contentJson,
         String contentHtmlSnapshot,
         String plainText,
+        String parseStatus,
+        String indexStatus,
+        String parseErrorMessage,
         java.time.LocalDateTime createdAt,
         java.time.LocalDateTime updatedAt
 ) {

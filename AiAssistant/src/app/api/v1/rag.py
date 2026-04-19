@@ -39,5 +39,6 @@ async def query_index(
         project_scope_ids=request.project_scope_ids,
         attachments=request.attachments,
         limit=request.limit,
+        query_rewrite_enabled=request.query_rewrite_enabled,
     )
     return {'code': 0, 'msg': 'ok', 'data': payload.model_dump(by_alias=True)}

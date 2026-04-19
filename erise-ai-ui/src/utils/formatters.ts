@@ -1,7 +1,10 @@
-﻿import dayjs from 'dayjs'
+import dayjs from 'dayjs'
+import type { AiModelView } from '@/types/models'
 
 export const formatDateTime = (value?: string, pattern = 'YYYY-MM-DD HH:mm') =>
   value ? dayjs(value).format(pattern) : '--'
+
+const trimDecimalTail = (value: string) => value.replace(/\.?0+$/, '')
 
 export const formatFileSize = (value?: number) => {
   if (!value || value <= 0) {
@@ -13,6 +16,31 @@ export const formatFileSize = (value?: number) => {
   }
   const kb = value / 1024
   return `${Math.max(kb, 0.1).toFixed(kb >= 10 ? 0 : 1)} KB`
+}
+
+export const formatTokenCountInK = (value?: number) => {
+  if (!value || value <= 0) {
+    return '--'
+  }
+  const inK = value / 1000
+  if (Number.isInteger(inK)) {
+    return `${inK}K`
+  }
+  if (inK >= 10) {
+    return `${trimDecimalTail(inK.toFixed(1))}K`
+  }
+  return `${trimDecimalTail(inK.toFixed(3))}K`
+}
+
+export const toEditableTokenCountK = (value?: number) => {
+  if (!value || value <= 0) {
+    return ''
+  }
+  const inK = value / 1000
+  if (Number.isInteger(inK)) {
+    return String(inK)
+  }
+  return trimDecimalTail(inK.toFixed(inK >= 10 ? 1 : 3))
 }
 
 export const normalizeFileTypeLabel = (fileExt?: string, mimeType?: string) => {
@@ -55,6 +83,92 @@ export const uploadStatusLabel = (status?: string) => ({
   READY: '已完成',
   FAILED: '失败',
 }[status || ''] || status || '未知')
+
+export type KnowledgeReadiness = 'ready' | 'pending' | 'processing' | 'failed' | 'unsupported'
+
+const READY_STATUSES = new Set(['READY', 'SUCCESS', 'INDEXED', 'COMPLETED'])
+const PROCESSING_STATUSES = new Set(['PROCESSING'])
+const PENDING_STATUSES = new Set(['INIT', 'PENDING', 'UPLOADING'])
+const FAILED_STATUSES = new Set(['FAILED', 'DELETED', 'NEEDS_REPAIR'])
+const UNSUPPORTED_STATUSES = new Set(['SKIPPED', 'UNSUPPORTED'])
+
+const normalizeStatus = (status?: string) => (status || '').trim().toUpperCase()
+
+export const resolveKnowledgeReadiness = (parseStatus?: string, indexStatus?: string): KnowledgeReadiness => {
+  const parse = normalizeStatus(parseStatus)
+  const index = normalizeStatus(indexStatus)
+  const statuses = [parse, index].filter(Boolean)
+
+  if (!statuses.length) {
+    return 'pending'
+  }
+  if (statuses.some((status) => FAILED_STATUSES.has(status))) {
+    return 'failed'
+  }
+  if (statuses.some((status) => PROCESSING_STATUSES.has(status))) {
+    return 'processing'
+  }
+  if (statuses.some((status) => READY_STATUSES.has(status))) {
+    return 'ready'
+  }
+  if (statuses.every((status) => UNSUPPORTED_STATUSES.has(status))) {
+    return 'unsupported'
+  }
+  if (statuses.some((status) => PENDING_STATUSES.has(status) || !status)) {
+    return 'pending'
+  }
+  return 'pending'
+}
+
+export const knowledgeReadinessLabel = (parseStatus?: string, indexStatus?: string) => ({
+  ready: '可引用',
+  pending: '待解析',
+  processing: '解析中',
+  failed: '解析失败',
+  unsupported: '不可引用',
+}[resolveKnowledgeReadiness(parseStatus, indexStatus)])
+
+export const knowledgeReadinessTone = (parseStatus?: string, indexStatus?: string) => ({
+  ready: 'success',
+  pending: 'warning',
+  processing: 'primary',
+  failed: 'danger',
+  unsupported: 'info',
+}[resolveKnowledgeReadiness(parseStatus, indexStatus)] || 'info') as 'primary' | 'success' | 'warning' | 'danger' | 'info'
+
+export const isKnowledgeReady = (parseStatus?: string, indexStatus?: string) =>
+  resolveKnowledgeReadiness(parseStatus, indexStatus) === 'ready'
+
+export const isKnowledgeFailed = (parseStatus?: string, indexStatus?: string) =>
+  resolveKnowledgeReadiness(parseStatus, indexStatus) === 'failed'
+
+const AI_PROVIDER_ORDER: Record<string, number> = {
+  DEEPSEEK: 0,
+  OPENAI: 1,
+}
+
+export const sortAiModelsByPreference = <T extends AiModelView>(models: T[]) =>
+  [...models].sort((left, right) => {
+    const defaultDiff = Number(Boolean(right.isDefault)) - Number(Boolean(left.isDefault))
+    if (defaultDiff !== 0) {
+      return defaultDiff
+    }
+    const providerDiff =
+      (AI_PROVIDER_ORDER[(left.providerCode || '').toUpperCase()] ?? 9) -
+      (AI_PROVIDER_ORDER[(right.providerCode || '').toUpperCase()] ?? 9)
+    if (providerDiff !== 0) {
+      return providerDiff
+    }
+    return (left.modelName || left.modelCode).localeCompare(right.modelName || right.modelCode)
+  })
+
+export const pickPreferredAiModel = <T extends AiModelView>(models: T[], selectedModelCode?: string | null) => {
+  const sorted = sortAiModelsByPreference(models)
+  if (!sorted.length) {
+    return undefined
+  }
+  return sorted.find((item) => item.modelCode === selectedModelCode) || sorted[0]
+}
 
 export const isOfficeEditableFile = (ext?: string) => ['doc', 'docx', 'txt'].includes((ext || '').toLowerCase())
 

@@ -1,6 +1,6 @@
 import { computed, ref } from 'vue'
 import { defineStore } from 'pinia'
-import { getMe, updateMe } from '@/api/user'
+import { deleteMe, getMe, updateMe } from '@/api/user'
 import { login as loginApi, logout as logoutApi, refresh as refreshApi } from '@/api/auth'
 import type { AuthTokenResponse, UserView } from '@/types/models'
 
@@ -56,6 +56,11 @@ export const useAuthStore = defineStore('auth', () => {
     localStorage.setItem(USER_KEY, JSON.stringify(user.value))
   }
 
+  async function deleteAccount(payload: { password: string }) {
+    await deleteMe(payload)
+    clear()
+  }
+
   async function logout() {
     if (refreshToken.value) {
       await logoutApi(refreshToken.value)
@@ -82,6 +87,7 @@ export const useAuthStore = defineStore('auth', () => {
     applySession,
     hydrate,
     updateProfile,
+    deleteAccount,
     logout,
     clear,
   }

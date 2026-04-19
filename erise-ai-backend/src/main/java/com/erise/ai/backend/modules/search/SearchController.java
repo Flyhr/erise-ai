@@ -6,18 +6,14 @@ import com.erise.ai.backend.common.entity.AuditableEntity;
 import com.erise.ai.backend.common.exception.BizException;
 import com.erise.ai.backend.common.exception.ErrorCodes;
 import com.erise.ai.backend.common.util.SecurityUtils;
-import java.sql.ResultSet;
-import java.sql.SQLException;
+import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
-import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -57,29 +53,31 @@ public class SearchController {
 @RequiredArgsConstructor
 class SearchService {
 
-    private static final Pattern KNOWLEDGE_TERM_PATTERN =
-            Pattern.compile("[\\p{IsHan}\\p{IsAlphabetic}\\p{IsDigit}][\\p{IsHan}\\p{IsAlphabetic}\\p{IsDigit}_\\-.]*");
+    private static final Set<String> PAGE_SEARCH_SOURCE_TYPES = Set.of("FILE", "DOCUMENT");
 
     private final JdbcTemplate jdbcTemplate;
     private final ProjectService projectService;
     private final SearchHistoryMapper searchHistoryMapper;
+    private final SparseKnowledgeSupport sparseKnowledgeSupport;
 
     PageResponse<SearchResultView> search(String keyword, Long projectId, long pageNum, long pageSize) {
         var currentUser = SecurityUtils.currentUser();
-        if (keyword == null || keyword.isBlank()) {
-            throw new BizException(ErrorCodes.SEARCH_ERROR, "Keyword is required", HttpStatus.BAD_REQUEST);
-        }
+        String normalizedKeyword = requireKeyword(keyword);
         if (projectId != null) {
             projectService.requireAccessibleProject(projectId);
         }
+
+        List<String> searchTerms = sparseKnowledgeSupport.queryTerms(normalizedKeyword);
         String projectSql = projectScopeSql(currentUser.userId(), currentUser.isAdmin(), projectId);
+
         List<SearchResultView> rawResults = new ArrayList<>();
-        rawResults.addAll(searchFiles(keyword, projectSql));
-        rawResults.addAll(searchDocuments(keyword, projectSql));
-        rawResults.addAll(searchContentItems(keyword, projectSql));
-        rawResults.addAll(searchChunks(keyword, projectSql));
-        List<SearchResultView> results = uniqueResults(rawResults);
-        recordHistory(currentUser.userId(), keyword, projectId);
+        rawResults.addAll(searchSparseKnowledge(currentUser.userId(), currentUser.isAdmin(), projectId, normalizedKeyword));
+        rawResults.addAll(searchFileTitleFallback(projectSql, normalizedKeyword, 20));
+        rawResults.addAll(searchDocumentTitleFallback(projectSql, normalizedKeyword, 20));
+
+        List<SearchResultView> results = uniqueResults(rawResults, normalizedKeyword, searchTerms);
+        recordHistory(currentUser.userId(), normalizedKeyword, projectId);
+
         int from = (int) Math.max(0, (pageNum - 1) * pageSize);
         int to = Math.min(results.size(), from + (int) pageSize);
         List<SearchResultView> pageRecords = from >= results.size() ? List.of() : results.subList(from, to);
@@ -89,7 +87,7 @@ class SearchService {
     List<String> suggest(String keyword, Long projectId) {
         var currentUser = SecurityUtils.currentUser();
         String baseSql = projectScopeSql(currentUser.userId(), currentUser.isAdmin(), projectId);
-        String like = "%" + keyword + "%";
+        String like = "%" + safeKeyword(keyword) + "%";
         List<String> values = new ArrayList<>();
         values.addAll(jdbcTemplate.queryForList(
                 "select distinct title from ea_document where deleted = 0 and title like ? and project_id in (" + baseSql + ") limit 5",
@@ -127,280 +125,395 @@ class SearchService {
                                              List<InternalKnowledgeAttachment> attachments,
                                              String keyword,
                                              int limit) {
+        String normalizedKeyword = requireKeyword(keyword);
         int safeLimit = Math.max(limit, 1);
-        List<String> searchTerms = knowledgeSearchTerms(keyword);
-        String chunkLikeClause = likeClause("c.chunk_text", searchTerms.size());
-        String titleLikeClause = likeClause("s.source_title", searchTerms.size());
-        List<Object> retrievalParams = new ArrayList<>();
-        retrievalParams.add(userId);
-        retrievalParams.addAll(likeArgs(searchTerms));
-        retrievalParams.addAll(likeArgs(searchTerms));
-        retrievalParams.add(Math.max(safeLimit * 10, 50));
-        List<KnowledgeRetrievalRow> rows = jdbcTemplate.query("""
-                        select c.source_type,
-                               c.source_id,
-                               c.project_id,
-                               c.session_id,
-                               s.source_title,
-                               left(c.chunk_text, 320) as snippet,
-                               c.updated_at,
-                               s.scope_type
-                        from ea_rag_chunk c
-                        join ea_rag_source s on s.id = c.rag_source_id and s.deleted = 0
-                        where c.deleted = 0
-                          and c.owner_user_id = ?
-                          and ((%s) or (%s))
-                        order by c.updated_at desc
-                        limit ?
-                        """.formatted(chunkLikeClause, titleLikeClause),
-                (rs, rowNum) -> mapRetrievalRow(rs),
-                retrievalParams.toArray()
-        );
-
-        List<InternalKnowledgeAttachment> safeAttachments = attachments == null ? List.of() : attachments;
+        List<String> searchTerms = sparseKnowledgeSupport.queryTerms(normalizedKeyword);
         Set<Long> projectSet = new HashSet<>(projectScopeIds == null ? List.of() : projectScopeIds);
-        List<SearchResultView> results = rows.stream()
-                .filter(row -> matchKnowledgeScope(row, projectSet, safeAttachments))
-                .map(row -> new SearchResultView(
-                        row.sourceType(),
-                        row.sourceId(),
-                        row.projectId(),
-                        row.sourceTitle(),
-                        "KNOWLEDGE",
-                        row.snippet(),
-                        row.updatedAt()
-                ))
+        List<InternalKnowledgeAttachment> safeAttachments = attachments == null ? List.of() : attachments;
+
+        List<SearchResultView> rawResults = new ArrayList<>();
+        rawResults.addAll(searchSparseKnowledgeForRetrieve(userId, projectSet, safeAttachments, normalizedKeyword, safeLimit));
+        List<SearchResultView> sparseResults = uniqueResults(rawResults, normalizedKeyword, searchTerms)
+                .stream()
                 .limit(safeLimit)
                 .toList();
-        if (!results.isEmpty()) {
-            return results;
+        if (!sparseResults.isEmpty()) {
+            return sparseResults;
         }
-        if (!projectSet.isEmpty()) {
-            List<SearchResultView> fallbacks = new ArrayList<>();
-            for (Long projectId : projectSet) {
-                fallbacks.addAll(searchDocumentKnowledge(userId, projectId, keyword, safeLimit));
-                fallbacks.addAll(searchContentKnowledge(userId, projectId, keyword, safeLimit));
-            }
-            return uniqueResults(fallbacks).stream().limit(safeLimit).toList();
+
+        List<SearchResultView> fallbackResults = new ArrayList<>();
+        for (Long projectId : projectSet) {
+            fallbackResults.addAll(searchDocumentKnowledgeFallback(userId, projectId, normalizedKeyword, safeLimit));
+            fallbackResults.addAll(searchContentKnowledgeFallback(userId, projectId, normalizedKeyword, safeLimit));
         }
-        return List.of();
+        fallbackResults.addAll(searchTempAttachmentFallback(userId, safeAttachments, normalizedKeyword, safeLimit));
+        return uniqueResults(fallbackResults, normalizedKeyword, searchTerms)
+                .stream()
+                .limit(safeLimit)
+                .toList();
     }
 
-    private List<SearchResultView> searchFiles(String keyword, String projectSql) {
+    private List<SearchResultView> searchSparseKnowledge(Long userId, boolean admin, Long projectId, String keyword) {
+        return sparseKnowledgeSupport.searchRows(
+                        userId,
+                        !admin,
+                        SparseKnowledgeSupport.SCOPE_KB,
+                        PAGE_SEARCH_SOURCE_TYPES,
+                        keyword,
+                        120
+                ).stream()
+                .filter(row -> projectId == null || (row.projectId() != null && projectId.equals(row.projectId())))
+                .map(this::toSearchResult)
+                .toList();
+    }
+
+    private List<SearchResultView> searchSparseKnowledgeForRetrieve(Long userId,
+                                                                    Set<Long> projectScopeIds,
+                                                                    List<InternalKnowledgeAttachment> attachments,
+                                                                    String keyword,
+                                                                    int limit) {
+        List<SearchResultView> results = new ArrayList<>();
+        results.addAll(sparseKnowledgeSupport.searchRows(
+                        userId,
+                        true,
+                        SparseKnowledgeSupport.SCOPE_KB,
+                        null,
+                        keyword,
+                        Math.max(limit * 8, 80)
+                ).stream()
+                .filter(row -> matchKnowledgeScope(row, projectScopeIds, attachments))
+                .map(this::toSearchResult)
+                .toList());
+        results.addAll(sparseKnowledgeSupport.searchRows(
+                        userId,
+                        true,
+                        SparseKnowledgeSupport.SCOPE_TEMP,
+                        Set.of("TEMP_FILE"),
+                        keyword,
+                        Math.max(limit * 4, 40)
+                ).stream()
+                .filter(row -> matchKnowledgeScope(row, projectScopeIds, attachments))
+                .map(this::toSearchResult)
+                .toList());
+        return results;
+    }
+
+    private List<SearchResultView> searchFileTitleFallback(String projectSql, String keyword, int limit) {
         return jdbcTemplate.query("""
-                        select id, project_id, file_name, mime_type, updated_at
+                        select id, project_id, file_name, file_ext, mime_type, file_size,
+                               upload_status, parse_status, index_status, updated_at
                         from ea_file
-                        where deleted = 0 and file_name like ? and project_id in (%s)
-                        order by updated_at desc
-                        limit 20
-                        """.formatted(projectSql),
-                (rs, rowNum) -> new SearchResultView("FILE", rs.getLong("id"), rs.getLong("project_id"),
-                        rs.getString("file_name"), rs.getString("mime_type"), null, rs.getTimestamp("updated_at").toLocalDateTime()),
-                "%" + keyword + "%");
-    }
-
-    private List<SearchResultView> searchDocuments(String keyword, String projectSql) {
-        return jdbcTemplate.query("""
-                        select d.id, d.project_id, d.title, left(c.plain_text, 200) as snippet, d.updated_at
-                        from ea_document d
-                        join ea_document_content c on c.document_id = d.id and c.deleted = 0
-                        where d.deleted = 0 and d.project_id in (%s) and (d.title like ? or c.plain_text like ?)
-                        order by d.updated_at desc
-                        limit 20
-                        """.formatted(projectSql),
-                (rs, rowNum) -> new SearchResultView("DOCUMENT", rs.getLong("id"), rs.getLong("project_id"),
-                        rs.getString("title"), "DOCUMENT", rs.getString("snippet"), rs.getTimestamp("updated_at").toLocalDateTime()),
-                "%" + keyword + "%", "%" + keyword + "%");
-    }
-
-    private List<SearchResultView> searchContentItems(String keyword, String projectSql) {
-        return jdbcTemplate.query("""
-                        select id, project_id, item_type, title, left(coalesce(nullif(plain_text, ''), summary), 220) as snippet, updated_at
-                        from ea_content_item
-                        where deleted = 0 and project_id in (%s) and (title like ? or summary like ? or plain_text like ?)
-                        order by updated_at desc
-                        limit 20
-                        """.formatted(projectSql),
-                (rs, rowNum) -> new SearchResultView(rs.getString("item_type"), rs.getLong("id"), rs.getLong("project_id"),
-                        rs.getString("title"), rs.getString("item_type"), rs.getString("snippet"), rs.getTimestamp("updated_at").toLocalDateTime()),
-                "%" + keyword + "%", "%" + keyword + "%", "%" + keyword + "%");
-    }
-
-    private List<SearchResultView> searchChunks(String keyword, String projectSql) {
-        return jdbcTemplate.query("""
-                        select source_type, source_id, project_id, source_title, left(chunk_text, 200) as snippet, updated_at
-                        from ea_knowledge_chunk
-                        where deleted = 0 and project_id in (%s) and chunk_text like ?
-                        order by updated_at desc
-                        limit 20
-                        """.formatted(projectSql),
-                (rs, rowNum) -> new SearchResultView(rs.getString("source_type"), rs.getLong("source_id"), rs.getLong("project_id"),
-                        rs.getString("source_title"), "KNOWLEDGE", rs.getString("snippet"), rs.getTimestamp("updated_at").toLocalDateTime()),
-                "%" + keyword + "%");
-    }
-
-    private List<SearchResultView> searchDocumentKnowledge(Long userId, Long projectId, String keyword, int limit) {
-        List<String> searchTerms = knowledgeSearchTerms(keyword);
-        String titleLikeClause = likeClause("d.title", searchTerms.size());
-        String textLikeClause = likeClause("c.plain_text", searchTerms.size());
-        List<Object> params = new ArrayList<>();
-        params.add(userId);
-        params.add(projectId);
-        params.addAll(likeArgs(searchTerms));
-        params.addAll(likeArgs(searchTerms));
-        params.add(Math.max(limit, 1));
-        return jdbcTemplate.query("""
-                        select d.id, d.project_id, d.title, left(c.plain_text, 300) as snippet, d.updated_at
-                        from ea_document d
-                        join ea_document_content c on c.document_id = d.id and c.deleted = 0
-                        where d.deleted = 0 and d.owner_user_id = ? and d.project_id = ? and ((%s) or (%s))
-                        order by d.updated_at desc
-                        limit ?
-                        """.formatted(titleLikeClause, textLikeClause),
-                (rs, rowNum) -> new SearchResultView("DOCUMENT", rs.getLong("id"), rs.getLong("project_id"),
-                        rs.getString("title"), "DOCUMENT", rs.getString("snippet"), rs.getTimestamp("updated_at").toLocalDateTime()),
-                params.toArray());
-    }
-
-    private List<SearchResultView> searchContentKnowledge(Long userId, Long projectId, String keyword, int limit) {
-        List<String> searchTerms = knowledgeSearchTerms(keyword);
-        String titleLikeClause = likeClause("title", searchTerms.size());
-        String summaryLikeClause = likeClause("summary", searchTerms.size());
-        String textLikeClause = likeClause("plain_text", searchTerms.size());
-        List<Object> params = new ArrayList<>();
-        params.add(userId);
-        params.add(projectId);
-        params.addAll(likeArgs(searchTerms));
-        params.addAll(likeArgs(searchTerms));
-        params.addAll(likeArgs(searchTerms));
-        params.add(Math.max(limit, 1));
-        return jdbcTemplate.query("""
-                        select id, project_id, item_type, title, left(coalesce(nullif(plain_text, ''), summary), 300) as snippet, updated_at
-                        from ea_content_item
-                        where deleted = 0 and owner_user_id = ? and project_id = ? and ((%s) or (%s) or (%s))
+                        where deleted = 0
+                          and file_name like ?
+                          and project_id in (%s)
+                          and coalesce(index_status, 'PENDING') <> 'SUCCESS'
                         order by updated_at desc
                         limit ?
-                        """.formatted(titleLikeClause, summaryLikeClause, textLikeClause),
-                (rs, rowNum) -> new SearchResultView(rs.getString("item_type"), rs.getLong("id"), rs.getLong("project_id"),
-                        rs.getString("title"), rs.getString("item_type"), rs.getString("snippet"), rs.getTimestamp("updated_at").toLocalDateTime()),
-                params.toArray());
-    }
-
-    private SearchResultView mapChunk(ResultSet rs) throws SQLException {
-        return new SearchResultView(
-                rs.getString("source_type"),
-                rs.getLong("source_id"),
-                rs.getLong("project_id"),
-                rs.getString("source_title"),
-                "KNOWLEDGE",
-                rs.getString("chunk_text"),
-                null
+                        """.formatted(projectSql),
+                (rs, rowNum) -> new SearchResultView(
+                        "FILE",
+                        rs.getLong("id"),
+                        rs.getLong("project_id"),
+                        rs.getString("file_name"),
+                        rs.getString("mime_type"),
+                        null,
+                        rs.getTimestamp("updated_at").toLocalDateTime(),
+                        null,
+                        null,
+                        rs.getString("file_ext"),
+                        rs.getObject("file_size") == null ? null : rs.getLong("file_size"),
+                        rs.getString("upload_status"),
+                        rs.getString("parse_status"),
+                        rs.getString("index_status"),
+                        null
+                ),
+                "%" + keyword + "%",
+                limit
         );
     }
 
-    private KnowledgeRetrievalRow mapRetrievalRow(ResultSet rs) throws SQLException {
-        Long projectId = rs.getObject("project_id") == null ? null : rs.getLong("project_id");
-        Long sessionId = rs.getObject("session_id") == null ? null : rs.getLong("session_id");
-        return new KnowledgeRetrievalRow(
-                rs.getString("scope_type"),
-                rs.getString("source_type"),
-                rs.getLong("source_id"),
+    private List<SearchResultView> searchDocumentTitleFallback(String projectSql, String keyword, int limit) {
+        return jdbcTemplate.query("""
+                        select d.id,
+                               d.project_id,
+                               d.title,
+                               d.doc_status,
+                               left(c.plain_text, 220) as snippet,
+                               d.updated_at
+                        from ea_document d
+                        left join ea_document_content c on c.document_id = d.id and c.deleted = 0
+                        left join ea_rag_source rs
+                          on rs.scope_type = 'KB'
+                         and rs.source_type = 'DOCUMENT'
+                         and rs.source_id = d.id
+                         and rs.deleted = 0
+                        where d.deleted = 0
+                          and d.project_id in (%s)
+                          and d.title like ?
+                          and (rs.id is null or rs.status <> 'READY')
+                        order by d.updated_at desc
+                        limit ?
+                        """.formatted(projectSql),
+                (rs, rowNum) -> new SearchResultView(
+                        "DOCUMENT",
+                        rs.getLong("id"),
+                        rs.getLong("project_id"),
+                        rs.getString("title"),
+                        "DOCUMENT",
+                        rs.getString("snippet"),
+                        rs.getTimestamp("updated_at").toLocalDateTime(),
+                        null,
+                        null,
+                        null,
+                        null,
+                        null,
+                        null,
+                        null,
+                        rs.getString("doc_status")
+                ),
+                "%" + keyword + "%",
+                limit
+        );
+    }
+
+    private List<SearchResultView> searchDocumentKnowledgeFallback(Long userId, Long projectId, String keyword, int limit) {
+        return jdbcTemplate.query("""
+                        select d.id,
+                               d.project_id,
+                               d.title,
+                               left(c.plain_text, 300) as snippet,
+                               d.updated_at
+                        from ea_document d
+                        left join ea_document_content c on c.document_id = d.id and c.deleted = 0
+                        left join ea_rag_source rs
+                          on rs.scope_type = 'KB'
+                         and rs.source_type = 'DOCUMENT'
+                         and rs.source_id = d.id
+                         and rs.deleted = 0
+                        where d.deleted = 0
+                          and d.owner_user_id = ?
+                          and d.project_id = ?
+                          and d.title like ?
+                          and (rs.id is null or rs.status <> 'READY')
+                        order by d.updated_at desc
+                        limit ?
+                        """,
+                (rs, rowNum) -> new SearchResultView(
+                        "DOCUMENT",
+                        rs.getLong("id"),
+                        rs.getLong("project_id"),
+                        rs.getString("title"),
+                        "DOCUMENT",
+                        rs.getString("snippet"),
+                        rs.getTimestamp("updated_at").toLocalDateTime(),
+                        null,
+                        null,
+                        null,
+                        null,
+                        null,
+                        null,
+                        null,
+                        null
+                ),
+                userId,
                 projectId,
-                sessionId,
-                rs.getString("source_title"),
-                rs.getString("snippet"),
-                rs.getTimestamp("updated_at") == null ? null : rs.getTimestamp("updated_at").toLocalDateTime()
+                "%" + keyword + "%",
+                Math.max(limit, 1)
         );
     }
 
-    private boolean matchKnowledgeScope(KnowledgeRetrievalRow row,
+    private List<SearchResultView> searchContentKnowledgeFallback(Long userId, Long projectId, String keyword, int limit) {
+        return jdbcTemplate.query("""
+                        select id, project_id, item_type, title, left(coalesce(summary, ''), 300) as snippet, updated_at
+                        from ea_content_item
+                        where deleted = 0
+                          and owner_user_id = ?
+                          and project_id = ?
+                          and title like ?
+                        order by updated_at desc
+                        limit ?
+                        """,
+                (rs, rowNum) -> new SearchResultView(
+                        rs.getString("item_type"),
+                        rs.getLong("id"),
+                        rs.getLong("project_id"),
+                        rs.getString("title"),
+                        rs.getString("item_type"),
+                        rs.getString("snippet"),
+                        rs.getTimestamp("updated_at").toLocalDateTime(),
+                        null,
+                        null,
+                        null,
+                        null,
+                        null,
+                        null,
+                        null,
+                        null
+                ),
+                userId,
+                projectId,
+                "%" + keyword + "%",
+                Math.max(limit, 1)
+        );
+    }
+
+    private List<SearchResultView> searchTempAttachmentFallback(Long userId,
+                                                                List<InternalKnowledgeAttachment> attachments,
+                                                                String keyword,
+                                                                int limit) {
+        List<InternalKnowledgeAttachment> tempAttachments = attachments.stream()
+                .filter(item -> item != null && "TEMP_FILE".equalsIgnoreCase(item.attachmentType()))
+                .toList();
+        if (tempAttachments.isEmpty()) {
+            return List.of();
+        }
+        List<SearchResultView> results = new ArrayList<>();
+        for (InternalKnowledgeAttachment attachment : tempAttachments) {
+            results.addAll(jdbcTemplate.query("""
+                            select id, project_id, session_id, file_name, mime_type, file_size, updated_at
+                            from ea_ai_temp_file
+                            where deleted = 0
+                              and owner_user_id = ?
+                              and id = ?
+                              and file_name like ?
+                              and (? is null or session_id = ?)
+                            limit ?
+                            """,
+                    (rs, rowNum) -> new SearchResultView(
+                            "TEMP_FILE",
+                            rs.getLong("id"),
+                            rs.getObject("project_id") == null ? null : rs.getLong("project_id"),
+                            rs.getString("file_name"),
+                            rs.getString("mime_type"),
+                            null,
+                            rs.getTimestamp("updated_at").toLocalDateTime(),
+                            null,
+                            null,
+                            null,
+                            rs.getObject("file_size") == null ? null : rs.getLong("file_size"),
+                            null,
+                            null,
+                            null,
+                            null
+                    ),
+                    userId,
+                    attachment.sourceId(),
+                    "%" + keyword + "%",
+                    attachment.sessionId(),
+                    attachment.sessionId(),
+                    Math.max(limit, 1)
+            ));
+        }
+        return results;
+    }
+
+    private SearchResultView toSearchResult(SparseSearchRow row) {
+        return new SearchResultView(
+                row.sourceType(),
+                row.sourceId(),
+                row.projectId(),
+                row.title(),
+                "FILE".equalsIgnoreCase(row.sourceType()) ? row.mimeType() : row.sourceType(),
+                row.snippet(),
+                row.updatedAt(),
+                row.pageNo(),
+                row.sectionPath(),
+                row.fileExt(),
+                row.fileSize(),
+                row.uploadStatus(),
+                row.parseStatus(),
+                row.indexStatus(),
+                row.docStatus()
+        );
+    }
+
+    private boolean matchKnowledgeScope(SparseSearchRow row,
                                         Set<Long> projectScopeIds,
                                         List<InternalKnowledgeAttachment> attachments) {
-        if (!attachments.isEmpty() && matchesAttachment(row, attachments)) {
+        if (!attachments.isEmpty() && matchesAttachment(row.sourceType(), row.sourceId(), row.sessionId(), attachments)) {
             return true;
         }
-        if ("KB".equalsIgnoreCase(row.scopeType())) {
+        if (SparseKnowledgeSupport.SCOPE_KB.equalsIgnoreCase(row.scopeType())) {
             return projectScopeIds.isEmpty() || (row.projectId() != null && projectScopeIds.contains(row.projectId()));
         }
         return false;
     }
 
-    private boolean matchesAttachment(KnowledgeRetrievalRow row, List<InternalKnowledgeAttachment> attachments) {
+    private boolean matchesAttachment(String sourceType,
+                                      Long sourceId,
+                                      Long sessionId,
+                                      List<InternalKnowledgeAttachment> attachments) {
         return attachments.stream().anyMatch(attachment -> {
-            if (attachment == null || attachment.attachmentType() == null) {
+            if (attachment == null || attachment.attachmentType() == null || attachment.sourceId() == null) {
                 return false;
             }
-            if (!attachment.attachmentType().equalsIgnoreCase(row.sourceType())) {
+            if (!attachment.attachmentType().equalsIgnoreCase(sourceType)) {
                 return false;
             }
-            if (!attachment.sourceId().equals(row.sourceId())) {
+            if (!attachment.sourceId().equals(sourceId)) {
                 return false;
             }
-            return attachment.sessionId() == null || attachment.sessionId().equals(row.sessionId());
+            return attachment.sessionId() == null || attachment.sessionId().equals(sessionId);
         });
     }
 
-    private List<String> knowledgeSearchTerms(String keyword) {
-        String normalized = keyword == null ? "" : keyword.trim();
-        if (normalized.isBlank()) {
-            return List.of("");
+    private Comparator<SearchResultView> searchResultComparator(String keyword, List<String> searchTerms) {
+        Comparator<LocalDateTime> updatedAtComparator = Comparator.nullsLast(Comparator.reverseOrder());
+        return Comparator.comparingDouble((SearchResultView row) ->
+                        knowledgeMatchScore(row.title(), row.snippet(), row.sectionPath(), keyword, searchTerms))
+                .reversed()
+                .thenComparing(SearchResultView::updatedAt, updatedAtComparator);
+    }
+
+    private double knowledgeMatchScore(String title,
+                                       String snippet,
+                                       String sectionPath,
+                                       String keyword,
+                                       List<String> searchTerms) {
+        String normalizedKeyword = safeLower(keyword).trim();
+        String safeTitle = safeLower(title);
+        String safeSnippet = safeLower(snippet);
+        String safeSectionPath = safeLower(sectionPath);
+        double score = 0D;
+        if (!normalizedKeyword.isBlank()) {
+            if (safeTitle.contains(normalizedKeyword)) {
+                score += 12D;
+            }
+            if (safeSectionPath.contains(normalizedKeyword)) {
+                score += 7D;
+            }
+            if (safeSnippet.contains(normalizedKeyword)) {
+                score += 9D;
+            }
         }
-        Matcher matcher = KNOWLEDGE_TERM_PATTERN.matcher(normalized);
-        Set<String> terms = new LinkedHashSet<>();
-        while (matcher.find() && terms.size() < 6) {
-            String candidate = matcher.group().trim();
-            if (candidate.isBlank()) {
+        for (String term : searchTerms) {
+            String normalizedTerm = safeLower(term).trim();
+            if (normalizedTerm.isBlank()) {
                 continue;
             }
-            if (candidate.length() >= 2 || containsHan(candidate)) {
-                terms.add(candidate);
+            if (safeTitle.contains(normalizedTerm)) {
+                score += 3D + Math.min(normalizedTerm.length(), 6) * 0.2D;
+            }
+            if (safeSectionPath.contains(normalizedTerm)) {
+                score += 2.5D;
+            }
+            if (safeSnippet.contains(normalizedTerm)) {
+                score += 2D + Math.min(normalizedTerm.length(), 8) * 0.1D;
             }
         }
-        if (terms.isEmpty()) {
-            terms.add(normalized);
-        }
-        return List.copyOf(terms);
+        return score;
     }
 
-    private String likeClause(String columnName, int termCount) {
-        List<String> fragments = new ArrayList<>();
-        for (int i = 0; i < Math.max(termCount, 1); i++) {
-            fragments.add(columnName + " like ?");
-        }
-        return String.join(" or ", fragments);
-    }
-
-    private List<String> likeArgs(List<String> searchTerms) {
-        return searchTerms.stream().map(term -> "%" + term + "%").toList();
-    }
-
-    private boolean containsHan(String value) {
-        for (char current : value.toCharArray()) {
-            if (Character.UnicodeScript.of(current) == Character.UnicodeScript.HAN) {
-                return true;
-            }
-        }
-        return false;
-    }
-
-    private List<SearchResultView> uniqueResults(List<SearchResultView> rawResults) {
-        Comparator<SearchResultView> comparator = Comparator.comparing(SearchResultView::updatedAt,
-                Comparator.nullsLast(Comparator.reverseOrder()));
+    private List<SearchResultView> uniqueResults(List<SearchResultView> rawResults,
+                                                 String keyword,
+                                                 List<String> searchTerms) {
+        Comparator<SearchResultView> comparator = searchResultComparator(keyword, searchTerms);
         Map<String, SearchResultView> deduplicated = new LinkedHashMap<>();
         rawResults.stream().sorted(comparator).forEach(result -> {
             String key = result.sourceType() + ":" + result.sourceId();
-            SearchResultView existing = deduplicated.get(key);
-            if (existing == null || shouldReplace(existing, result)) {
-                deduplicated.put(key, result);
-            }
+            deduplicated.putIfAbsent(key, result);
         });
         return new ArrayList<>(deduplicated.values());
-    }
-
-    private boolean shouldReplace(SearchResultView existing, SearchResultView candidate) {
-        return (existing.snippet() == null || existing.snippet().isBlank())
-                && candidate.snippet() != null
-                && !candidate.snippet().isBlank();
     }
 
     private void recordHistory(Long userId, String keyword, Long projectId) {
@@ -421,6 +534,22 @@ class SearchService {
             return "select id from ea_project where deleted = 0";
         }
         return "select id from ea_project where deleted = 0 and owner_user_id = " + userId;
+    }
+
+    private String requireKeyword(String keyword) {
+        String normalized = safeKeyword(keyword);
+        if (normalized.isBlank()) {
+            throw new BizException(ErrorCodes.SEARCH_ERROR, "Keyword is required", HttpStatus.BAD_REQUEST);
+        }
+        return normalized;
+    }
+
+    private String safeKeyword(String keyword) {
+        return keyword == null ? "" : keyword.trim();
+    }
+
+    private String safeLower(String value) {
+        return value == null ? "" : value.toLowerCase();
     }
 }
 
@@ -445,21 +574,17 @@ record SearchResultView(
         String title,
         String mimeType,
         String snippet,
-        java.time.LocalDateTime updatedAt
+        LocalDateTime updatedAt,
+        Integer pageNo,
+        String sectionPath,
+        String fileExt,
+        Long fileSize,
+        String uploadStatus,
+        String parseStatus,
+        String indexStatus,
+        String docStatus
 ) {
 }
 
-record SearchHistoryView(String keyword, Long projectId, java.time.LocalDateTime createdAt) {
-}
-
-record KnowledgeRetrievalRow(
-        String scopeType,
-        String sourceType,
-        Long sourceId,
-        Long projectId,
-        Long sessionId,
-        String sourceTitle,
-        String snippet,
-        java.time.LocalDateTime updatedAt
-) {
+record SearchHistoryView(String keyword, Long projectId, LocalDateTime createdAt) {
 }

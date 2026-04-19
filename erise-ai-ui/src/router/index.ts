@@ -1,37 +1,54 @@
 import { createRouter, createWebHistory } from "vue-router";
 import { useAuthStore } from "@/stores/auth";
-import AuthLayout from "@/components/layout/AuthLayout.vue";
-import MainLayout from "@/components/layout/MainLayout.vue";
-import AdminLayout from "@/components/layout/AdminLayout.vue";
-import LoginView from "@/views/auth/LoginView.vue";
-import WorkspaceView from "@/views/workspace/WorkspaceView.vue";
-import ProjectsView from "@/views/project/ProjectsView.vue";
-import ProjectDetailView from "@/views/project/ProjectDetailView.vue";
-import FilesView from "@/views/file/FilesView.vue";
-import FileDetailView from "@/views/file/FileDetailView.vue";
-import OfficeFileEditView from "@/views/file/OfficeFileEditView.vue";
-import DocumentsView from "@/views/document/DocumentsView.vue";
-import DocumentEditView from "@/views/document/DocumentEditView.vue";
-// import ContentItemsView from "@/views/content/ContentItemsView.vue";
-import ContentItemsView from "@/views/content/ContentItemsView.vue";
+import {
+  cancelRouteLoading,
+  startRouteLoading,
+} from "@/composables/useRouteLoading";
 
-import ContentItemEditView from "@/views/content/ContentItemEditView.vue";
-import KnowledgeBaseView from "@/views/knowledge/KnowledgeBaseView.vue";
-import SearchView from "@/views/search/SearchView.vue";
-import AiView from "@/views/ai/AiView.vue";
-import ProfileView from "@/views/settings/ProfileView.vue";
-import AdminDashboardView from "@/views/admin/AdminDashboardView.vue";
-import AdminUsersView from "@/views/admin/AdminUsersView.vue";
-import AdminTasksView from "@/views/admin/AdminTasksView.vue";
-import AdminAuditLogsView from "@/views/admin/AdminAuditLogsView.vue";
-import AdminModelsView from "@/views/admin/AdminModelsView.vue";
-import NotFoundView from "@/views/admin/NotFoundView.vue";
-import WorkspaceShellLayout from "@/components/common/WorkspaceShellLayout.vue";
+const LoginView = () => import("@/views/auth/LoginView.vue");
+const WorkspaceView = () => import("@/views/workspace/WorkspaceView.vue");
+const ProjectsView = () => import("@/views/project/ProjectsView.vue");
+const ProjectDetailView = () => import("@/views/project/ProjectDetailView.vue");
+const FilesView = () => import("@/views/file/FilesView.vue");
+const FileDetailView = () => import("@/views/file/FileDetailView.vue");
+const OfficeFileEditView = () => import("@/views/file/OfficeFileEditView.vue");
+const DocumentsView = () => import("@/views/document/DocumentsView.vue");
+const DocumentEditView = () => import("@/views/document/DocumentEditView.vue");
+const ContentItemsView = () => import("@/views/content/ContentItemsView.vue");
+const ContentItemEditView = () =>
+  import("@/views/content/ContentItemEditView.vue");
+const KnowledgeBaseView = () =>
+  import("@/views/knowledge/KnowledgeBaseView.vue");
+const SearchView = () => import("@/views/search/SearchView.vue");
+const AiView = () => import("@/views/ai/AiView.vue");
+const ProfileView = () => import("@/views/settings/ProfileView.vue");
+const AdminLayout = () => import("@/components/layout/AdminLayout.vue");
+const AdminDashboardView = () => import("@/views/admin/AdminDashboardView.vue");
+const AdminProjectAssetsView = () =>
+  import("@/views/admin/AdminProjectAssetsView.vue");
+const AdminUsersView = () => import("@/views/admin/AdminUsersView.vue");
+const AdminTasksView = () => import("@/views/admin/AdminTasksView.vue");
+const AdminAuditLogsView = () => import("@/views/admin/AdminAuditLogsView.vue");
+const AdminModelsView = () => import("@/views/admin/AdminModelsView.vue");
+const AdminAiPromptsView = () => import("@/views/admin/AdminAiPromptsView.vue");
+const AdminAiRequestLogsView = () =>
+  import("@/views/admin/AdminAiRequestLogsView.vue");
+const AdminAiFeedbackView = () =>
+  import("@/views/admin/AdminAiFeedbackView.vue");
+const AdminAiIndexTasksView = () =>
+  import("@/views/admin/AdminAiIndexTasksView.vue");
+const NotFoundView = () => import("@/views/admin/NotFoundView.vue");
+const WorkspaceShellLayout = () =>
+  import("@/components/common/WorkspaceShellLayout.vue");
+
+const ROUTE_LOADING_TITLE_PREFIX = "正在打开 ";
+const ROUTE_LOADING_DEFAULT_TITLE = "正在进入页面";
+const ROUTE_LOADING_DESCRIPTION = "界面内容正在准备中，请稍候。";
+
 const router = createRouter({
   history: createWebHistory(),
   routes: [
     { path: "", redirect: "/login" },
-
     {
       path: "/login",
       component: LoginView,
@@ -49,14 +66,11 @@ const router = createRouter({
         description: "基于项目上下文和引用发起 AI 对话。",
       },
     },
-    // ======================
-    // 🔥 独立个人资料页
-    // ======================
     {
       path: "/settings/profile",
-      component: ProfileView, // 直接渲染，无布局包裹
+      component: ProfileView,
       meta: {
-        requiresAuth: true, // 必须登录
+        requiresAuth: true,
         title: "个人资料",
         description: "管理账号信息、密码和主题偏好。",
       },
@@ -84,7 +98,6 @@ const router = createRouter({
             description: "集中查看最近项目、文档、文件和 AI 会话。",
           },
         },
-
         {
           path: "/projects/:id",
           component: ProjectDetailView,
@@ -117,11 +130,10 @@ const router = createRouter({
           component: ContentItemsView,
           props: true,
           meta: {
-            title: "结构化内容",
+            title: "表格",
             description: "在项目内管理表格、画板和数据表。",
           },
         },
-
         {
           path: "/knowledge",
           component: KnowledgeBaseView,
@@ -131,9 +143,24 @@ const router = createRouter({
           },
         },
         {
+          path: "/search",
+          component: SearchView,
+          meta: {
+            title: "搜索",
+            description: "统一检索文件、文档与表格内容。",
+          },
+        },
+        {
+          path: "/workspace/search",
+          redirect: (to: any) => ({ path: "/search", query: to.query }),
+        },
+        {
           path: "/files",
           component: FilesView,
-          meta: { title: "文件", description: "跨项目浏览、筛选和上传文件。" },
+          meta: {
+            title: "文件",
+            description: "跨项目浏览、筛选和上传文件。",
+          },
         },
         {
           path: "/files/:id",
@@ -141,7 +168,6 @@ const router = createRouter({
           props: true,
           meta: {
             title: "文件详情",
-            description: "查看文件元数据、预览方式和编辑入口。",
           },
         },
         {
@@ -156,7 +182,19 @@ const router = createRouter({
         {
           path: "/documents",
           component: DocumentsView,
-          meta: { title: "文档", description: "跨项目浏览、创建和预览文档。" },
+          meta: {
+            title: "文档",
+            description: "跨项目浏览、创建和预览文档。",
+          },
+        },
+        {
+          path: "/documents/new/edit",
+          component: DocumentEditView,
+          props: true,
+          meta: {
+            title: "新建文档",
+            description: "在发布前先编辑本地草稿文档。",
+          },
         },
         {
           path: "/documents/:id/edit",
@@ -172,13 +210,12 @@ const router = createRouter({
           component: ContentItemEditView,
           props: true,
           meta: {
-            title: "结构化编辑",
+            title: "表格编辑",
             description: "编辑表格、画板和数据表。",
           },
         },
       ],
     },
-
     {
       path: "/admin",
       component: AdminLayout,
@@ -188,14 +225,95 @@ const router = createRouter({
           path: "",
           component: AdminDashboardView,
           meta: {
-            title: "管理后台",
-            description: "查看平台总览与后台运行情况。",
+            title: "仪表盘",
+          },
+        },
+        {
+          path: "project-files",
+          component: AdminProjectAssetsView,
+          meta: {
+            title: "项目文件管理",
+          },
+        },
+        {
+          path: "files/:id",
+          component: FileDetailView,
+          props: true,
+          meta: {
+            title: "文件详情",
+            admin: true,
+          },
+        },
+        {
+          path: "files/:id/edit",
+          component: OfficeFileEditView,
+          props: true,
+          meta: {
+            title: "文件编辑",
+            admin: true,
+          },
+        },
+        {
+          path: "profile",
+          component: ProfileView,
+          meta: {
+            title: "个人资料",
+            admin: true,
           },
         },
         {
           path: "users",
           component: AdminUsersView,
-          meta: { title: "用户", description: "管理账号状态与访问权限。" },
+          meta: {
+            title: "用户管理",
+          },
+        },
+        {
+          path: "logs",
+          component: AdminAuditLogsView,
+          meta: {
+            title: "日志管理",
+          },
+        },
+        {
+          path: "ai/models",
+          component: AdminModelsView,
+          meta: {
+            title: "AI 模型配置",
+            description: "管理模型启停、默认模型、优先级与计费配置。",
+          },
+        },
+        {
+          path: "ai/prompts",
+          component: AdminAiPromptsView,
+          meta: {
+            title: "Prompt 模板",
+            description: "查看 Prompt 模板版本、启停状态与发布历史。",
+          },
+        },
+        {
+          path: "ai/request-logs",
+          component: AdminAiRequestLogsView,
+          meta: {
+            title: "AI 请求日志",
+            description: "检索最近请求日志、错误记录与成本统计。",
+          },
+        },
+        {
+          path: "ai/feedback",
+          component: AdminAiFeedbackView,
+          meta: {
+            title: "用户反馈",
+            description: "查看用户对 AI 回复的点赞、点踩与备注。",
+          },
+        },
+        {
+          path: "ai/index-tasks",
+          component: AdminAiIndexTasksView,
+          meta: {
+            title: "索引任务",
+            description: "查看索引任务状态、失败原因与重试入口。",
+          },
         },
         {
           path: "tasks",
@@ -206,21 +324,26 @@ const router = createRouter({
           },
         },
         {
-          path: "audit-logs",
-          component: AdminAuditLogsView,
+          path: "documents/:id/edit",
+          component: DocumentEditView,
+          props: true,
           meta: {
-            title: "审计日志",
-            description: "查看后台关键操作和审计明细。",
+            title: "文档编辑",
+            admin: true,
           },
         },
         {
-          path: "ai-models",
-          component: AdminModelsView,
+          path: "contents/:id/edit",
+          component: ContentItemEditView,
+          props: true,
           meta: {
-            title: "AI 模型",
-            description: "查看已配置模型和提供方信息。",
+            title: "表格编辑",
+            admin: true,
           },
         },
+        { path: "models", redirect: "/admin/ai/models" },
+        { path: "ai-models", redirect: "/admin/ai/models" },
+        { path: "audit-logs", redirect: "/admin/logs" },
       ],
     },
     { path: "/:pathMatch(.*)*", component: NotFoundView },
@@ -228,6 +351,13 @@ const router = createRouter({
 });
 
 router.beforeEach(async (to) => {
+  startRouteLoading(to.fullPath, {
+    title: to.meta.title
+      ? `${ROUTE_LOADING_TITLE_PREFIX}${String(to.meta.title)}`
+      : ROUTE_LOADING_DEFAULT_TITLE,
+    description: ROUTE_LOADING_DESCRIPTION,
+  });
+
   const authStore = useAuthStore();
   if (authStore.accessToken && !authStore.user) {
     await authStore.hydrate();
@@ -237,15 +367,27 @@ router.beforeEach(async (to) => {
     return "/login";
   }
 
+  if (authStore.isAdmin && to.path === "/settings/profile") {
+    return "/admin/profile";
+  }
+
   if (to.meta.admin && !authStore.isAdmin) {
     return "/workspace";
   }
 
+  if (authStore.isAdmin && to.path === "/workspace") {
+    return "/admin";
+  }
+
   if (to.path === "/login" && authStore.isAuthenticated) {
-    return "/workspace";
+    return authStore.isAdmin ? "/admin" : "/workspace";
   }
 
   return true;
+});
+
+router.onError(() => {
+  cancelRouteLoading();
 });
 
 export default router;

@@ -1,3 +1,4 @@
+from src.app.models.ai_action_log import AiActionLog
 from src.app.models.ai_message import AiChatMessage
 from src.app.models.ai_message_citation import AiMessageCitation
 from src.app.models.ai_model_config import AiModelConfig
@@ -6,6 +7,7 @@ from src.app.models.ai_request_log import AiRequestLog
 from src.app.models.ai_session import AiChatSession
 
 __all__ = [
+    'AiActionLog',
     'AiChatMessage',
     'AiMessageCitation',
     'AiChatSession',

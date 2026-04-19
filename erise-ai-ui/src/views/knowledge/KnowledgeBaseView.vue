@@ -1,161 +1,336 @@
 <template>
   <div class="page-shell knowledge-page">
-    <AppFilterBar>
-      <el-input
-        v-model="keyword"
-        style="grid-column: span 6"
-        clearable
-        placeholder="按名称、标题或摘要搜索"
-        @keyup.enter="runSearch"
-      />
-      <el-select v-model="selectedProjectId" style="grid-column: span 4" clearable filterable placeholder="选择项目">
-        <el-option v-for="project in projects" :key="project.id" :label="project.name" :value="project.id" />
-      </el-select>
-      <div class="knowledge-count">共 {{ total }} 条{{ activeTab === 'files' ? '文件' : '文档' }}记录</div>
-      <template #actions>
-        <el-button type="primary" @click="runSearch">查询</el-button>
-        <el-button @click="resetFilters">重置</el-button>
-        <div class="knowledge-actions">
-          <el-upload
-            v-if="activeTab === 'files'"
-            :show-file-list="false"
-            :before-upload="beforeUpload"
-            :disabled="!selectedProjectId"
-            accept=".doc,.docx,.pdf,.md,.txt,text/plain,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-          >
-            <el-tooltip content="请先选择项目，再上传知识文件。" placement="top" :disabled="!!selectedProjectId">
-              <el-button type="primary" :disabled="!selectedProjectId">上传文件</el-button>
-            </el-tooltip>
-          </el-upload>
-          <el-button v-else type="primary" :disabled="!selectedProjectId" @click="createDoc">新建文档</el-button>
-        </div>
-      </template>
-    </AppFilterBar>
+    <section class="knowledge-toolbar">
+      <div class="knowledge-toolbar__search">
+        <el-input v-model="keyword" clearable placeholder="搜索知识资料..." @clear="runSearch" @keyup.enter="runSearch">
+          <template #prefix>
+            <span class="material-symbols-outlined">search</span>
+          </template>
+          <template #suffix>
+            <SearchSuffixButton @click="runSearch" />
+          </template>
+        </el-input>
+      </div>
+    </section>
 
-    <AppSectionCard :title="activeTab === 'files' ? '知识文件列表' : '在线文档列表'" :unpadded="true">
-      <div class="knowledge-tabs">
-        <button type="button" :class="['knowledge-tabs__item', { 'is-active': activeTab === 'files' }]" @click="switchTab('files')">
-          文件
-        </button>
-        <button type="button" :class="['knowledge-tabs__item', { 'is-active': activeTab === 'documents' }]" @click="switchTab('documents')">
-          文档
-        </button>
+    <section class="knowledge-subnav">
+      <ProjectSubnav :project-id="0" mode="value" :model-value="activeAssetTab" :items="knowledgeSubnavItems"
+        @update:modelValue="switchAssetTab" />
+    </section>
+
+    <section class="knowledge-table-shell">
+      <div v-if="assetsLoading && !assets.length" class="knowledge-table-shell__state">
+        <el-skeleton animated>
+          <template #template>
+            <el-skeleton-item variant="rect" style="width: 100%; height: 56px; border-radius: 18px;" />
+            <el-skeleton-item variant="rect"
+              style="width: 100%; height: 72px; margin-top: 14px; border-radius: 16px;" />
+            <el-skeleton-item variant="rect"
+              style="width: 100%; height: 72px; margin-top: 12px; border-radius: 16px;" />
+            <el-skeleton-item variant="rect"
+              style="width: 100%; height: 72px; margin-top: 12px; border-radius: 16px;" />
+          </template>
+        </el-skeleton>
       </div>
 
-      <AppDataTable v-if="assets.length" :data="assets" stripe>
-        <el-table-column label="名称" min-width="280">
-          <template #default="{ row }">
-            <div class="asset-title">
-              <strong>{{ row.title }}</strong>
-              <span>{{ row.summary || secondaryLine(row) }}</span>
-            </div>
+      <div v-else-if="assetError && !assets.length" class="knowledge-table-shell__state">
+        <el-result icon="warning" title="知识资料加载失败" :sub-title="assetError">
+          <template #extra>
+            <el-button type="primary" @click="retryAssetLoad">重试加载</el-button>
           </template>
-        </el-table-column>
-        <el-table-column label="所属项目" min-width="180">
-          <template #default="{ row }">{{ projectLabel(row.projectId) }}</template>
-        </el-table-column>
-        <el-table-column label="类型" width="160">
-          <template #default="{ row }">
-            <AppStatusTag :label="statusLabel(row)" :tone="row.assetType === 'FILE' ? 'info' : documentStatusTone(row.docStatus)" />
-          </template>
-        </el-table-column>
-        <el-table-column label="更新时间" min-width="180">
-          <template #default="{ row }">{{ formatDateTime(row.updatedAt) }}</template>
-        </el-table-column>
-        <el-table-column label="操作" min-width="240" fixed="right">
-          <template #default="{ row }">
-            <div class="table-actions">
-              <template v-if="row.assetType === 'FILE'">
-                <el-button text @click="router.push(`/files/${row.assetId}`)">详情</el-button>
-                <el-button text @click="previewAsset(row)">预览</el-button>
-                <el-button v-if="isOfficeEditableFile(row.fileExt)" text @click="router.push(`/files/${row.assetId}/edit`)">
-                  编辑
-                </el-button>
-                <el-popover placement="bottom" trigger="click" width="120">
-                  <template #reference>
-                    <el-button text>更多</el-button>
-                  </template>
-                  <div class="action-menu">
-                    <el-button link @click="deleteAsset(row)">删除</el-button>
-                  </div>
-                </el-popover>
-              </template>
-              <template v-else>
-                <el-button text @click="router.push({ path: `/documents/${row.assetId}/edit`, query: { mode: 'preview' } })">
-                  浏览
-                </el-button>
-                <el-button text @click="router.push(`/documents/${row.assetId}/edit`)">编辑</el-button>
-                <el-popover placement="bottom" trigger="click" width="120">
-                  <template #reference>
-                    <el-button text>更多</el-button>
-                  </template>
-                  <div class="action-menu">
-                    <el-button link @click="exportAsset(row)">导出 PDF</el-button>
-                    <el-button link @click="deleteAsset(row)">删除</el-button>
-                  </div>
-                </el-popover>
-              </template>
-            </div>
-          </template>
-        </el-table-column>
-      </AppDataTable>
-      <AppEmptyState
-        v-else
-        :title="activeTab === 'files' ? '还没有知识文件' : '还没有在线文档'"
-        :description="activeTab === 'files' ? '选择项目后即可上传 doc、docx、pdf、md、txt 文件。' : '选择项目后即可创建在线文档。'"
-      />
+        </el-result>
+      </div>
 
-      <template #footer>
-        <div class="knowledge-footer">
-          <span class="page-subtitle">每页最多展示 10 条记录</span>
-          <CompactPager :page-num="pageNum" :page-size="pageSize" :total="total" @change="handlePageChange" />
-        </div>
+      <template v-else>
+      <div v-if="assetsLoading && assets.length" class="knowledge-table-shell__refreshing">
+        <span class="material-symbols-outlined knowledge-table-shell__refreshing-icon">progress_activity</span>
+        <span>正在刷新文件列表...</span>
+      </div>
+
+      <div v-if="assets.length" class="knowledge-assets-table">
+        <table>
+          <thead>
+            <tr>
+              <th>名称</th>
+              <th>类型</th>
+              <th>状态</th>
+              <th>大小</th>
+              <th>更新时间</th>
+              <th>上传时间</th>
+              <th class="knowledge-assets-table__actions-head">操作</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="row in assets" :key="`${row.assetType}-${row.assetId}`" @click="openAsset(row)">
+              <td>
+                <div class="knowledge-assets-table__name">
+                  <div class="knowledge-assets-table__icon" :class="`is-${assetTone(row)}`">
+                    <span class="material-symbols-outlined">{{ assetIcon(row) }}</span>
+                  </div>
+                  <div class="knowledge-assets-table__copy app-table-name-copy">
+                    <strong class="app-table-name-copy__title">{{ row.title }}</strong>
+                    <small class="app-table-name-copy__meta">{{ secondaryLine(row) }}</small>
+                  </div>
+                </div>
+              </td>
+              <td><span class="knowledge-assets-table__type">{{ assetTypeLabel(row) }}</span></td>
+              <td>
+                <div class="knowledge-assets-table__status-stack">
+                  <button v-if="canRetryAsset(row)" type="button" class="knowledge-assets-table__status is-clickable"
+                    :class="`is-${assetTone(row)}`" @click.stop="retryAsset(row)">
+                    <span class="material-symbols-outlined">{{ assetStatusIcon(row) }}</span>
+                    <span>{{ assetStatusLabel(row) }}</span>
+                  </button>
+                  <span v-else class="knowledge-assets-table__status" :class="`is-${assetTone(row)}`">
+                    <span class="material-symbols-outlined">{{ assetStatusIcon(row) }}</span>
+                    <span>{{ assetStatusLabel(row) }}</span>
+                  </span>
+                  <small v-if="shouldShowFailureReason(row)" class="knowledge-assets-table__status-reason">
+                    {{ assetFailureReason(row) }}
+                  </small>
+                </div>
+              </td>
+              <td class="knowledge-assets-table__mono">{{ row.assetType === 'FILE' ? formatFileSize(row.fileSize) : '--'
+                }}
+              </td>
+              <td>{{ relativeTime(row.updatedAt) }}</td>
+              <td>{{ formatDateTime(row.createdAt) }}</td>
+              <td class="knowledge-assets-table__actions-cell" @click.stop>
+                <el-dropdown trigger="click" @command="handleRowCommand(row, $event)">
+                  <button type="button" class="knowledge-assets-table__menu-trigger"
+                    @click.stop><span>···</span></button>
+                  <template #dropdown>
+                    <el-dropdown-menu>
+                      <el-dropdown-item command="preview">预览</el-dropdown-item>
+                      <el-dropdown-item v-if="canEditAsset(row)" command="edit">修改</el-dropdown-item>
+                      <el-dropdown-item v-if="canDownloadAsset(row)" command="download">下载</el-dropdown-item>
+                      <el-dropdown-item v-if="canRetryAsset(row)" command="retry">重试</el-dropdown-item>
+                      <el-dropdown-item command="delete">删除</el-dropdown-item>
+                    </el-dropdown-menu>
+                  </template>
+                </el-dropdown>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <el-empty v-else :image-size="84" :description="`当前筛选下还没有${assetCollectionLabel}，可以通过右上角添加入口继续补充。`" />
       </template>
-    </AppSectionCard>
+
+      <div v-if="!assetError" class="knowledge-table-shell__footer">
+        <span class="knowledge-table-shell__count">共 {{ total }} 条{{ assetCollectionLabel }}</span>
+        <CompactPager variant="project" :page-num="pageNum" :page-size="pageSize" :total="total"
+          @change="handlePageChange" />
+      </div>
+    </section>
+
+    <el-dialog v-model="exportDialogVisible" title="选择导出格式" width="440px">
+      <div class="knowledge-export-dialog">
+        <div class="knowledge-export-dialog__copy">
+          <strong>{{ exportTarget?.title || '当前文档' }}</strong>
+          <span>导出格式与文档编辑页保持一致。</span>
+        </div>
+        <div class="knowledge-export-dialog__actions">
+          <el-button :loading="exporting" @click="exportDocumentAsset('doc')">导出 .doc</el-button>
+          <el-button :loading="exporting" @click="exportDocumentAsset('pdf')">导出 .pdf</el-button>
+          <el-button :loading="exporting" @click="exportDocumentAsset('markdown')">导出 .md</el-button>
+          <el-button :loading="exporting" @click="exportDocumentAsset('jpg')">导出 .jpg</el-button>
+        </div>
+      </div>
+      <template #footer>
+        <el-button @click="exportDialogVisible = false">取消</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
 <script setup lang="ts">
-import { onMounted, ref, watch } from 'vue'
+import dayjs from 'dayjs'
+import { computed, onMounted, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { useRoute, useRouter } from 'vue-router'
-import { createDocument, deleteDocument } from '@/api/document'
-import { completeUpload, deleteFile, initUpload, previewFileBinary, previewOfficeFile, uploadFileBinary } from '@/api/file'
+import { deleteContentItem } from '@/api/content'
+import { deleteDocument, getDocument, retryDocumentIndex } from '@/api/document'
+import { deleteFile, downloadFileContent, retryFileParse } from '@/api/file'
 import { getKnowledgeAssets } from '@/api/knowledge'
-import { getProjects } from '@/api/project'
-import AppDataTable from '@/components/common/AppDataTable.vue'
-import AppEmptyState from '@/components/common/AppEmptyState.vue'
-import AppFilterBar from '@/components/common/AppFilterBar.vue'
-import AppSectionCard from '@/components/common/AppSectionCard.vue'
-import AppStatusTag from '@/components/common/AppStatusTag.vue'
 import CompactPager from '@/components/common/CompactPager.vue'
-import type { KnowledgeAssetView, ProjectDetailView } from '@/types/models'
-import { documentStatusLabel, documentStatusTone, formatDateTime, formatFileSize, isOfficeEditableFile, normalizeFileTypeLabel, resolveErrorMessage } from '@/utils/formatters'
+import ProjectSubnav from '@/components/common/ProjectSubnav.vue'
+import SearchSuffixButton from '@/components/common/SearchSuffixButton.vue'
+import { useFilePreview } from '@/composables/useFilePreview'
+import { useProjectDirectory } from '@/composables/useProjectDirectory'
+import { useVisibleFileStatusPolling } from '@/composables/useVisibleFileStatusPolling'
+import type { FileView, KnowledgeAssetView } from '@/types/models'
+import {
+  contentTypeLabel,
+  formatDateTime,
+  formatFileSize,
+  isKnowledgeFailed,
+  isOfficeEditableFile,
+  knowledgeReadinessLabel,
+  knowledgeReadinessTone,
+  normalizeFileTypeLabel,
+  resolveErrorMessage,
+} from '@/utils/formatters'
+import {
+  exportDocumentAsDoc,
+  exportDocumentAsMarkdown,
+  exportElementAsJpg,
+  exportElementAsPdf,
+  renderDocumentHtml,
+} from '@/utils/documentExport'
+
+type KnowledgeAssetTab = 'overview' | 'files' | 'documents' | 'content'
+type DocumentExportFormat = 'doc' | 'pdf' | 'markdown' | 'jpg'
 
 const route = useRoute()
 const router = useRouter()
-const projects = ref<ProjectDetailView[]>([])
-const activeTab = ref<'files' | 'documents'>('files')
+const { loadProjects, projectLabel } = useProjectDirectory()
+const { previewFile } = useFilePreview()
+
+const knowledgeSubnavItems: Array<{ key: KnowledgeAssetTab; label: string }> = [
+  { key: 'overview', label: '概览' },
+  { key: 'files', label: '文件' },
+  { key: 'documents', label: '文档' },
+  { key: 'content', label: '表格' },
+]
+
 const keyword = ref('')
-const selectedProjectId = ref<number>()
+const activeAssetTab = ref<KnowledgeAssetTab>('overview')
 const pageNum = ref(1)
-const pageSize = ref(10)
+const pageSize = 10
 const total = ref(0)
 const assets = ref<KnowledgeAssetView[]>([])
-const KNOWLEDGE_FILE_EXTENSIONS = ['doc', 'docx', 'pdf', 'md', 'txt']
+const assetsLoading = ref(true)
+const assetError = ref('')
+const exportDialogVisible = ref(false)
+const exporting = ref(false)
+const exportTarget = ref<KnowledgeAssetView>()
+const ACTIVE_FILE_STATUSES = new Set(['INIT', 'UPLOADING', 'PENDING', 'PROCESSING'])
+const normalizeFileStatus = (value?: string) => (value || '').trim().toUpperCase()
+const hasActiveFileStatus = (record?: { parseStatus?: string; indexStatus?: string }) =>
+  ACTIVE_FILE_STATUSES.has(normalizeFileStatus(record?.parseStatus)) ||
+  ACTIVE_FILE_STATUSES.has(normalizeFileStatus(record?.indexStatus))
 
-const projectMap = () => new Map(projects.value.map((project) => [project.id, project.name]))
+const selectedKnowledgeType = computed<'FILE' | 'DOCUMENT' | 'CONTENT' | undefined>(() => {
+  if (activeAssetTab.value === 'files') return 'FILE'
+  if (activeAssetTab.value === 'documents') return 'DOCUMENT'
+  if (activeAssetTab.value === 'content') return 'CONTENT'
+  return undefined
+})
 
-const projectLabel = (projectId?: number) => {
-  if (!projectId) return '未绑定项目'
-  return projectMap().get(projectId) || `项目 #${projectId}`
+const assetCollectionLabel = computed(
+  () => ({ overview: '知识资料', files: '文件', documents: '文档', content: '表格内容' }[activeAssetTab.value]),
+)
+
+const normalizeAssetTab = (value: unknown): KnowledgeAssetTab =>
+  ['files', 'documents', 'content'].includes(String(value)) ? (value as KnowledgeAssetTab) : 'overview'
+
+const assetTypeLabel = (row: KnowledgeAssetView) => {
+  if (row.assetType === 'FILE') return normalizeFileTypeLabel(row.fileExt, row.mimeType)
+  if (row.assetType === 'DOCUMENT') return '文档'
+  return contentTypeLabel(row.itemType)
+}
+
+const assetStatusLabel = (row: KnowledgeAssetView) => knowledgeReadinessLabel(row.parseStatus, row.indexStatus)
+const assetTone = (row: KnowledgeAssetView) => knowledgeReadinessTone(row.parseStatus, row.indexStatus)
+const assetStatusIcon = (row: KnowledgeAssetView) =>
+  ({ success: 'check_circle', warning: 'schedule', primary: 'visibility', danger: 'cancel', info: 'edit_note' }[assetTone(row)] ||
+    'info') as string
+
+const assetIcon = (row: KnowledgeAssetView) => {
+  if (row.assetType === 'DOCUMENT') return 'description'
+  if (row.assetType === 'CONTENT') {
+    if (row.itemType === 'BOARD') return 'draw'
+    if (row.itemType === 'DATA_TABLE') return 'dataset'
+    return 'table_chart'
+  }
+  const ext = (row.fileExt || '').toLowerCase()
+  if (ext === 'pdf') return 'picture_as_pdf'
+  if (['doc', 'docx'].includes(ext)) return 'article'
+  if (ext === 'md') return 'code'
+  if (ext === 'txt') return 'notes'
+  if (['jpg', 'jpeg', 'png', 'gif', 'webp'].includes(ext)) return 'image'
+  if (['xls', 'xlsx', 'csv'].includes(ext)) return 'table_chart'
+  return 'insert_drive_file'
+}
+
+const secondaryLine = (row: KnowledgeAssetView) => {
+  const projectName = projectLabel(row.projectId)
+  if (row.assetType === 'FILE') {
+    return `${projectName} · ${normalizeFileTypeLabel(row.fileExt, row.mimeType)} · ${formatFileSize(row.fileSize)}`
+  }
+  if (row.assetType === 'DOCUMENT') {
+    return row.summary ? `${projectName} · ${row.summary}` : `${projectName} · 在线文档`
+  }
+  return row.summary ? `${projectName} · ${row.summary}` : `${projectName} · ${contentTypeLabel(row.itemType)}内容`
+}
+
+const relativeTime = (value?: string) => {
+  if (!value) return '--'
+  const time = dayjs(value)
+  const days = dayjs().diff(time, 'day')
+  if (days >= 1) return `${days} 天前`
+  const hours = dayjs().diff(time, 'hour')
+  if (hours >= 1) return `${hours} 小时前`
+  const minutes = dayjs().diff(time, 'minute')
+  if (minutes >= 1) return `${minutes} 分钟前`
+  return '刚刚'
+}
+
+const canEditAsset = (row: KnowledgeAssetView) => (row.assetType === 'FILE' ? isOfficeEditableFile(row.fileExt) : true)
+const canDownloadAsset = (row: KnowledgeAssetView) => row.assetType === 'FILE' || row.assetType === 'DOCUMENT'
+const canRetryAsset = (row: KnowledgeAssetView) =>
+  (row.assetType === 'FILE' || row.assetType === 'DOCUMENT') && isKnowledgeFailed(row.parseStatus, row.indexStatus)
+const shouldShowFailureReason = (row: KnowledgeAssetView) => isKnowledgeFailed(row.parseStatus, row.indexStatus)
+
+const assetFailureReason = (row: KnowledgeAssetView) => {
+  const message = (row.parseErrorMessage || '').trim().toLowerCase()
+  if (!message) return '解析异常，请稍后重试'
+  if (message.includes('password') || message.includes('encrypted')) return '文件已加密'
+  if (message.includes('timeout')) return '解析超时'
+  if (message.includes('unsupported') || message.includes('not support')) return '格式暂不支持'
+  if (message.includes('too long') || message.includes('data truncation')) return '内容过长'
+  if (message.includes('empty') || message.includes('blank')) return '内容为空'
+  if (message.includes('network') || message.includes('connect')) return '连接解析服务失败'
+  return '解析异常，请稍后重试'
+}
+
+const applyFileDetailToAssetRow = (row: KnowledgeAssetView, detail: FileView) => {
+  row.title = detail.fileName
+  row.fileExt = detail.fileExt
+  row.mimeType = detail.mimeType
+  row.fileSize = detail.fileSize
+  row.parseStatus = detail.parseStatus
+  row.indexStatus = detail.indexStatus
+  row.parseErrorMessage = detail.parseErrorMessage
+  row.createdAt = detail.createdAt
+  row.updatedAt = detail.updatedAt
+}
+
+const loadAssets = async () => {
+  assetsLoading.value = true
+  assetError.value = ''
+  try {
+    const page = await getKnowledgeAssets({
+      type: selectedKnowledgeType.value,
+      q: keyword.value.trim() || undefined,
+      knowledgeOnly: activeAssetTab.value === 'overview' || activeAssetTab.value === 'files',
+      pageNum: pageNum.value,
+      pageSize,
+    })
+    assets.value = page.records
+    total.value = page.total
+  } catch (error) {
+    assetError.value = resolveErrorMessage(error, '知识资料加载失败，请稍后重试')
+  } finally {
+    assetsLoading.value = false
+  }
 }
 
 const syncFromRoute = async () => {
-  activeTab.value = route.query.tab === 'documents' ? 'documents' : 'files'
+  activeAssetTab.value = normalizeAssetTab(route.query.tab)
   keyword.value = typeof route.query.q === 'string' ? route.query.q : ''
-  const projectId = Number(route.query.projectId)
-  selectedProjectId.value = Number.isFinite(projectId) && projectId > 0 ? projectId : undefined
   const nextPage = Number(route.query.pageNum)
   pageNum.value = Number.isFinite(nextPage) && nextPage > 0 ? nextPage : 1
   await loadAssets()
@@ -165,30 +340,16 @@ const pushRoute = async () => {
   await router.replace({
     path: '/knowledge',
     query: {
-      tab: activeTab.value,
+      ...(activeAssetTab.value !== 'overview' ? { tab: activeAssetTab.value } : {}),
       ...(keyword.value.trim() ? { q: keyword.value.trim() } : {}),
-      ...(selectedProjectId.value ? { projectId: selectedProjectId.value } : {}),
       ...(pageNum.value > 1 ? { pageNum: pageNum.value } : {}),
     },
   })
 }
 
-const loadAssets = async () => {
-  const page = await getKnowledgeAssets({
-    type: activeTab.value === 'files' ? 'FILE' : 'DOCUMENT',
-    projectId: selectedProjectId.value,
-    q: keyword.value.trim() || undefined,
-    knowledgeOnly: activeTab.value === 'files',
-    pageNum: pageNum.value,
-    pageSize: pageSize.value,
-  })
-  assets.value = page.records
-  total.value = page.total
-}
-
 const ensureCurrentPage = async () => {
   if (!assets.value.length && total.value > 0 && pageNum.value > 1) {
-    pageNum.value = Math.max(1, Math.ceil(total.value / pageSize.value))
+    pageNum.value = Math.max(1, Math.ceil(total.value / pageSize))
     await pushRoute()
   }
 }
@@ -198,138 +359,213 @@ const runSearch = async () => {
   await pushRoute()
 }
 
-const resetFilters = async () => {
-  keyword.value = ''
-  selectedProjectId.value = undefined
-  pageNum.value = 1
-  await pushRoute()
-}
-
 const handlePageChange = async (value: number) => {
   pageNum.value = value
   await pushRoute()
 }
 
-const switchTab = async (tab: 'files' | 'documents') => {
-  if (activeTab.value === tab) return
-  activeTab.value = tab
+const switchAssetTab = async (value: string) => {
+  const nextTab = normalizeAssetTab(value)
+  if (nextTab === activeAssetTab.value) return
+  activeAssetTab.value = nextTab
   pageNum.value = 1
   await pushRoute()
 }
 
-const secondaryLine = (row: KnowledgeAssetView) => {
-  if (row.assetType === 'FILE') {
-    return `${normalizeFileTypeLabel(row.fileExt, row.mimeType)} · ${formatFileSize(row.fileSize)}`
-  }
-  return row.summary || '暂无摘要'
-}
+useVisibleFileStatusPolling({
+  rows: assets,
+  enabled: computed(() => !assetError.value && (activeAssetTab.value === 'overview' || activeAssetTab.value === 'files')),
+  intervalMs: 3000,
+  getFileId: (row) => (row.assetType === 'FILE' ? row.assetId : undefined),
+  isFileActive: (row) => row.assetType === 'FILE' && hasActiveFileStatus(row),
+  applyDetail: applyFileDetailToAssetRow,
+  onTimeout: () => {
+    ElMessage.warning('文件解析仍在处理中，已暂停自动刷新，请稍后手动刷新查看结果')
+  },
+})
 
-const statusLabel = (row: KnowledgeAssetView) => {
+const openAsset = (row: KnowledgeAssetView) => {
   if (row.assetType === 'FILE') {
-    return normalizeFileTypeLabel(row.fileExt, row.mimeType)
+    void router.push(`/files/${row.assetId}`)
+    return
   }
-  return documentStatusLabel(row.docStatus)
+  if (row.assetType === 'DOCUMENT') {
+    void router.push({ path: `/documents/${row.assetId}/edit`, query: { mode: 'preview' } })
+    return
+  }
+  void router.push({ path: `/contents/${row.assetId}/edit`, query: { mode: 'preview' } })
 }
 
 const previewAsset = async (row: KnowledgeAssetView) => {
-  if (row.assetType !== 'FILE') return
-  try {
-    if (isOfficeEditableFile(row.fileExt)) {
-      await previewOfficeFile(row.assetId)
-    } else {
-      await previewFileBinary(row.assetId)
-    }
-  } catch (error) {
-    ElMessage.error(resolveErrorMessage(error, '文件预览失败，请稍后重试'))
-  }
-}
-
-const beforeUpload = async (rawFile: File) => {
-  if (!selectedProjectId.value) {
-    ElMessage.warning('请先选择一个项目，再上传文件。')
-    return false
-  }
-  const extension = rawFile.name.includes('.') ? rawFile.name.split('.').pop()?.toLowerCase() || '' : ''
-  if (!KNOWLEDGE_FILE_EXTENSIONS.includes(extension)) {
-    ElMessage.warning('知识库当前只接收 doc、docx、pdf、md、txt 文件。')
-    return false
-  }
-  try {
-    const init = await initUpload({
-      projectId: selectedProjectId.value,
-      fileName: rawFile.name,
-      fileSize: rawFile.size,
-      mimeType: rawFile.type || 'application/octet-stream',
-    })
-    await uploadFileBinary(init.fileId, rawFile)
-    await completeUpload(init.fileId)
-    ElMessage.success('文件上传成功')
-    await loadAssets()
-  } catch (error) {
-    ElMessage.error(resolveErrorMessage(error, '文件上传失败，请稍后重试'))
-  }
-  return false
-}
-
-const createDoc = async () => {
-  if (!selectedProjectId.value) {
-    ElMessage.warning('请先选择一个项目，再创建文档。')
+  if (row.assetType === 'FILE') {
+    await previewFile({ id: row.assetId, fileExt: row.fileExt })
     return
   }
+  if (row.assetType === 'DOCUMENT') {
+    await router.push({ path: `/documents/${row.assetId}/edit`, query: { mode: 'preview' } })
+    return
+  }
+  await router.push({ path: `/contents/${row.assetId}/edit`, query: { mode: 'preview' } })
+}
+
+const editAsset = async (row: KnowledgeAssetView) => {
+  if (row.assetType === 'FILE') {
+    if (!isOfficeEditableFile(row.fileExt)) return
+    await router.push(`/files/${row.assetId}/edit`)
+    return
+  }
+  if (row.assetType === 'DOCUMENT') {
+    await router.push(`/documents/${row.assetId}/edit`)
+    return
+  }
+  await router.push(`/contents/${row.assetId}/edit`)
+}
+
+const retryAsset = async (row: KnowledgeAssetView) => {
   try {
-    const created = await createDocument({ projectId: selectedProjectId.value, title: '未命名文档', summary: '' })
-    ElMessage.success('文档已创建')
-    await router.push(`/documents/${created.id}/edit`)
+    if (row.assetType === 'FILE') {
+      await retryFileParse(row.assetId)
+      ElMessage.success('文件已重新进入解析队列')
+    } else if (row.assetType === 'DOCUMENT') {
+      await retryDocumentIndex(row.assetId)
+      ElMessage.success('文档已重新进入索引队列')
+    }
+    await loadAssets()
   } catch (error) {
-    ElMessage.error(resolveErrorMessage(error, '文档创建失败，请稍后重试'))
+    ElMessage.error(resolveErrorMessage(error, row.assetType === 'FILE' ? '重新解析失败，请稍后重试' : '重试索引失败，请稍后重试'))
   }
 }
 
 const deleteAsset = async (row: KnowledgeAssetView) => {
+  const targetLabel = row.assetType === 'FILE' ? '文件' : row.assetType === 'DOCUMENT' ? '文档' : contentTypeLabel(row.itemType)
+  const confirmText =
+    row.assetType === 'FILE'
+      ? `确认删除“${row.title}”吗？文件会被移入项目 trash 回收文件夹。`
+      : `确认删除“${row.title}”吗？`
   try {
-    await ElMessageBox.confirm(`确认删除“${row.title}”吗？此操作不可恢复。`, `删除${row.assetType === 'FILE' ? '文件' : '文档'}`, {
+    await ElMessageBox.confirm(confirmText, `删除${targetLabel}`, {
       confirmButtonText: '确认删除',
       cancelButtonText: '取消',
       type: 'warning',
       confirmButtonClass: 'el-button--danger',
     })
-
     if (row.assetType === 'FILE') {
       await deleteFile(row.assetId)
-    } else {
+      ElMessage.success('文件已移入回收文件夹')
+    } else if (row.assetType === 'DOCUMENT') {
       await deleteDocument(row.assetId)
+      ElMessage.success('文档已删除')
+    } else {
+      await deleteContentItem(row.assetId)
+      ElMessage.success(`${contentTypeLabel(row.itemType)}已删除`)
     }
-
-    ElMessage.success(`${row.assetType === 'FILE' ? '文件' : '文档'}已删除`)
     await loadAssets()
     await ensureCurrentPage()
-  } catch (error: any) {
+  } catch (error) {
     if (error !== 'cancel' && error !== 'close') {
       ElMessage.error(resolveErrorMessage(error, '删除失败，请稍后重试'))
     }
   }
 }
 
-const exportAsset = async (row: KnowledgeAssetView) => {
-  if (row.assetType !== 'DOCUMENT') return
+const openExportDialog = (row: KnowledgeAssetView) => {
+  exportTarget.value = row
+  exportDialogVisible.value = true
+}
 
+const buildExportSurface = (title: string, summary: string | undefined, bodyHtml: string) => {
+  const wrapper = document.createElement('div')
+  wrapper.style.position = 'fixed'
+  wrapper.style.left = '-200vw'
+  wrapper.style.top = '0'
+  wrapper.style.opacity = '0'
+  wrapper.style.pointerEvents = 'none'
+  const canvas = document.createElement('div')
+  canvas.style.width = '794px'
+  canvas.style.background = '#ffffff'
+  canvas.innerHTML = renderDocumentHtml(title, summary, bodyHtml)
+  wrapper.appendChild(canvas)
+  document.body.appendChild(wrapper)
+  return { canvas, dispose: () => document.body.removeChild(wrapper) }
+}
+
+const exportDocumentAsset = async (format: DocumentExportFormat) => {
+  if (!exportTarget.value) return
+  exporting.value = true
   try {
-    const exportUrl = `/api/v1/documents/${row.assetId}/export?format=pdf`
-    const link = document.createElement('a')
-    link.href = exportUrl
-    link.download = `${row.title}.pdf`
-    document.body.appendChild(link)
-    link.click()
-    document.body.removeChild(link)
-    ElMessage.success('文档已导出为 PDF')
+    const detail = await getDocument(exportTarget.value.assetId)
+    const fileName = detail.title?.trim() || exportTarget.value.title || '未命名文档'
+    const summary = detail.summary || exportTarget.value.summary
+    const bodyHtml = detail.contentHtmlSnapshot || '<p></p>'
+    if (format === 'doc') {
+      await exportDocumentAsDoc({ fileName, title: fileName, summary, bodyHtml })
+      ElMessage.success('已导出 .doc 文件')
+    } else if (format === 'markdown') {
+      await exportDocumentAsMarkdown({ fileName, title: fileName, summary, bodyHtml })
+      ElMessage.success('已导出 Markdown 文件')
+    } else {
+      const { canvas, dispose } = buildExportSurface(fileName, summary, bodyHtml)
+      try {
+        if (format === 'pdf') {
+          await exportElementAsPdf(canvas, fileName)
+          ElMessage.success('已导出 .pdf 文件')
+        } else {
+          await exportElementAsJpg(canvas, fileName)
+          ElMessage.success('已导出 .jpg 文件')
+        }
+      } finally {
+        dispose()
+      }
+    }
+    exportDialogVisible.value = false
   } catch (error) {
     ElMessage.error(resolveErrorMessage(error, '导出失败，请稍后重试'))
+  } finally {
+    exporting.value = false
   }
 }
 
+const downloadAsset = async (row: KnowledgeAssetView) => {
+  if (row.assetType === 'DOCUMENT') {
+    openExportDialog(row)
+    return
+  }
+  if (row.assetType !== 'FILE') return
+  try {
+    await downloadFileContent(row.assetId, row.title)
+  } catch (error) {
+    ElMessage.error(resolveErrorMessage(error, '下载失败，请稍后重试'))
+  }
+}
+
+const handleRowCommand = async (row: KnowledgeAssetView, command: string | number | object) => {
+  switch (String(command)) {
+    case 'preview':
+      await previewAsset(row)
+      break
+    case 'edit':
+      await editAsset(row)
+      break
+    case 'download':
+      await downloadAsset(row)
+      break
+    case 'retry':
+      await retryAsset(row)
+      break
+    case 'delete':
+      await deleteAsset(row)
+      break
+    default:
+      break
+  }
+}
+
+const retryAssetLoad = async () => {
+  await loadAssets()
+}
+
 onMounted(async () => {
-  const projectPage = await getProjects({ pageNum: 1, pageSize: 100 })
-  projects.value = projectPage.records
+  await loadProjects()
   await syncFromRoute()
 })
 
@@ -345,65 +581,336 @@ watch(
 .knowledge-page {
   display: flex;
   flex-direction: column;
+  gap: 24px;
+}
+
+.knowledge-toolbar {
+  display: flex;
+  align-items: center;
   gap: 18px;
 }
 
-.knowledge-count {
-  grid-column: span 2;
-  display: flex;
-  align-items: center;
-  color: var(--muted);
-  font-size: 13px;
+.knowledge-toolbar__search {
+  flex: 1;
+  min-width: min(100%, 320px);
+  max-width: 520px;
 }
 
-.knowledge-actions {
+.knowledge-toolbar__search :deep(.el-input__wrapper) {
+  min-height: 46px;
+  border-radius: 14px;
+  background: #e0e2e9;
+  box-shadow: none;
+}
+
+.knowledge-toolbar__search :deep(.el-input__wrapper.is-focus) {
+  background: #ffffff;
+  box-shadow: 0 0 0 2px rgba(0, 96, 169, 0.12);
+}
+
+.knowledge-toolbar__search :deep(.el-input__prefix-inner) {
+  color: #5f6775;
+}
+
+.knowledge-subnav {
   display: flex;
   align-items: center;
 }
 
-.knowledge-tabs {
+.knowledge-table-shell {
+  overflow: hidden;
+  border-radius: 20px;
+  background: #ffffff;
+  box-shadow: 0 12px 28px rgba(15, 23, 42, 0.06);
+  border: 1px solid rgba(192, 199, 212, 0.24);
+}
+
+.knowledge-table-shell__state {
+  padding: 24px;
+}
+
+.knowledge-table-shell__refreshing {
   display: inline-flex;
+  align-items: center;
   gap: 8px;
-  padding: 16px 20px 0;
+  padding: 14px 24px 0;
+  color: #667085;
+  font-size: 13px;
+  font-weight: 600;
 }
 
-.knowledge-tabs__item {
-  border: 0;
+.knowledge-table-shell__refreshing-icon {
+  font-size: 18px;
+  animation: knowledge-table-spin 1s linear infinite;
+}
+
+.knowledge-assets-table {
+  overflow-x: auto;
+}
+
+.knowledge-assets-table table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.knowledge-assets-table thead th {
+  padding: 16px 24px;
+  background: #f1f3fa;
+  color: #5f6775;
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  text-align: left;
+}
+
+.knowledge-assets-table__actions-head {
+  width: 80px;
+  text-align: right;
+}
+
+.knowledge-assets-table tbody tr {
   cursor: pointer;
-  padding: 10px 16px;
-  border-radius: 999px;
-  background: var(--panel);
-  color: var(--muted);
-  font-weight: 700;
-  transition: 0.2s ease;
+  transition: background 0.18s ease;
 }
 
-.knowledge-tabs__item.is-active {
-  background: rgba(64, 158, 255, 0.12);
-  color: var(--brand);
+.knowledge-assets-table tbody tr:hover {
+  background: #f8f9ff;
 }
 
-.asset-title {
+.knowledge-assets-table tbody td {
+  padding: 18px 24px;
+  border-top: 1px solid rgba(192, 199, 212, 0.16);
+  color: #48505e;
+  font-size: 14px;
+}
+
+.knowledge-assets-table__name {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  min-width: 280px;
+}
+
+.knowledge-assets-table__icon {
+  width: 38px;
+  height: 38px;
+  border-radius: 12px;
+  display: grid;
+  place-items: center;
+  background: rgba(64, 158, 255, 0.14);
+  color: #0060a9;
+  flex-shrink: 0;
+}
+
+.knowledge-assets-table__icon.is-danger {
+  background: rgba(186, 26, 26, 0.12);
+  color: #ba1a1a;
+}
+
+.knowledge-assets-table__icon.is-success {
+  background: rgba(85, 175, 40, 0.16);
+  color: #286c00;
+}
+
+.knowledge-assets-table__icon.is-warning {
+  background: rgba(255, 171, 0, 0.16);
+  color: #a15c00;
+}
+
+.knowledge-assets-table__copy {
   display: flex;
   flex-direction: column;
   gap: 4px;
+  min-width: 0;
 }
 
-.asset-title strong {
+.knowledge-assets-table__copy strong {
   font-size: 15px;
   font-weight: 700;
+  color: #181c20;
 }
 
-.asset-title span {
-  color: var(--muted);
+.knowledge-assets-table__copy small {
+  color: #7a8392;
   font-size: 12px;
 }
 
-.knowledge-footer {
+.knowledge-assets-table__type {
+  color: #626b77;
+  font-weight: 600;
+}
+
+.knowledge-assets-table__status-stack {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+}
+
+.knowledge-assets-table__status {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border: 0;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.knowledge-assets-table__status.is-clickable {
+  cursor: pointer;
+  transition: transform 0.18s ease, box-shadow 0.18s ease, opacity 0.18s ease;
+}
+
+.knowledge-assets-table__status.is-clickable:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 8px 18px rgba(186, 26, 26, 0.16);
+  opacity: 0.92;
+}
+
+.knowledge-assets-table__status.is-success {
+  background: rgba(85, 175, 40, 0.18);
+  color: #206100;
+}
+
+.knowledge-assets-table__status.is-warning {
+  background: rgba(255, 171, 0, 0.16);
+  color: #9a5600;
+}
+
+.knowledge-assets-table__status.is-primary {
+  background: rgba(64, 158, 255, 0.14);
+  color: #005ea6;
+}
+
+.knowledge-assets-table__status.is-danger {
+  background: rgba(255, 218, 214, 0.95);
+  color: #93000a;
+}
+
+.knowledge-assets-table__status.is-info {
+  background: rgba(225, 226, 231, 0.95);
+  color: #4b5563;
+}
+
+.knowledge-assets-table__status-reason {
+  max-width: 180px;
+  color: #ba1a1a;
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.knowledge-assets-table__mono {
+  font-family: Consolas, 'Courier New', monospace;
+}
+
+.knowledge-assets-table__actions-cell {
+  text-align: right;
+}
+
+.knowledge-assets-table__menu-trigger {
+  min-width: 40px;
+  height: 34px;
+  padding: 0 10px;
+  border: 1px solid rgba(192, 199, 212, 0.3);
+  border-radius: 10px;
+  background: #ffffff;
+  color: #475467;
+  font-size: 16px;
+  font-weight: 800;
+  cursor: pointer;
+  transition: color 0.18s ease, border-color 0.18s ease, background-color 0.18s ease;
+}
+
+.knowledge-assets-table__menu-trigger:hover {
+  color: #0060a9;
+  border-color: rgba(0, 96, 169, 0.24);
+  background: #f8f9ff;
+}
+
+.knowledge-table-shell__footer {
   display: flex;
+  align-items: center;
   justify-content: space-between;
   gap: 12px;
-  align-items: center;
+  padding: 16px 24px;
+  border-top: 1px solid rgba(192, 199, 212, 0.16);
+  background: rgba(241, 243, 250, 0.4);
   flex-wrap: wrap;
+}
+
+.knowledge-table-shell__count {
+  color: #667085;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+@keyframes knowledge-table-spin {
+  from {
+    transform: rotate(0deg);
+  }
+
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.knowledge-export-dialog {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.knowledge-export-dialog__copy {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.knowledge-export-dialog__copy strong {
+  font-size: 16px;
+  font-weight: 700;
+  color: #181c20;
+}
+
+.knowledge-export-dialog__copy span {
+  color: #667085;
+  font-size: 13px;
+}
+
+.knowledge-export-dialog__actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+@media (max-width: 1100px) {
+  .knowledge-toolbar {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .knowledge-toolbar__search {
+    max-width: none;
+  }
+}
+
+@media (max-width: 768px) {
+  .knowledge-subnav {
+    width: 100%;
+  }
+
+  .knowledge-assets-table thead th,
+  .knowledge-assets-table tbody td,
+  .knowledge-table-shell__footer {
+    padding-left: 16px;
+    padding-right: 16px;
+  }
+
+  .knowledge-export-dialog__actions {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }
 </style>

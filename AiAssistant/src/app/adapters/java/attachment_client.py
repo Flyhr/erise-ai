@@ -34,5 +34,52 @@ async def fetch_temp_file_context(temp_file_id: int, request_id: str) -> dict[st
     return await _request('GET', f'/ai/temp-files/{temp_file_id}/context', request_id)
 
 
-async def update_document_title(document_id: int, title: str, request_id: str) -> dict[str, object] | None:
-    return await _request('POST', f'/documents/{document_id}/title', request_id, {'title': title})
+async def update_document_title(document_id: int, actor_user_id: int, title: str, request_id: str) -> dict[str, object] | None:
+    return await _request('POST', f'/documents/{document_id}/title', request_id, {'actorUserId': actor_user_id, 'title': title})
+
+
+async def update_file_title(file_id: int, actor_user_id: int, title: str, request_id: str) -> dict[str, object] | None:
+    return await _request('POST', f'/files/{file_id}/title', request_id, {'actorUserId': actor_user_id, 'title': title})
+
+
+async def update_document_summary(document_id: int, actor_user_id: int, summary: str, request_id: str) -> dict[str, object] | None:
+    return await _request(
+        'POST',
+        f'/documents/{document_id}/summary',
+        request_id,
+        {'actorUserId': actor_user_id, 'summary': summary},
+    )
+
+
+async def update_document_content(document_id: int, actor_user_id: int, plain_text: str, request_id: str) -> dict[str, object] | None:
+    return await _request(
+        'POST',
+        f'/documents/{document_id}/content',
+        request_id,
+        {'actorUserId': actor_user_id, 'plainText': plain_text},
+    )
+
+
+async def update_document_tags(document_id: int, actor_user_id: int, tags: list[str], request_id: str) -> list[dict[str, object]]:
+    data = await _request(
+        'POST',
+        f'/documents/{document_id}/tags',
+        request_id,
+        {'actorUserId': actor_user_id, 'tags': tags},
+    )
+    if not isinstance(data, list):
+        return []
+    return [item for item in data if isinstance(item, dict)]
+
+
+async def archive_file(file_id: int, actor_user_id: int, request_id: str) -> dict[str, object] | None:
+    return await _request('POST', f'/files/{file_id}/archive', request_id, {'actorUserId': actor_user_id})
+
+
+async def update_file_content(file_id: int, actor_user_id: int, plain_text: str, request_id: str) -> dict[str, object] | None:
+    return await _request(
+        'POST',
+        f'/files/{file_id}/content',
+        request_id,
+        {'actorUserId': actor_user_id, 'plainText': plain_text},
+    )

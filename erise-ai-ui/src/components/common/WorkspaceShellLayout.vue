@@ -24,10 +24,10 @@ import WorkspaceNavigationShell from '@/components/common/WorkspaceNavigationShe
 
 const router = useRouter()
 const route = useRoute()
-const searchKeyword = ref(typeof route.query.keyword === 'string' ? route.query.keyword : '')
+const searchKeyword = ref(typeof route.query.q === 'string' ? route.query.q : '')
 
 watch(
-  () => route.query.keyword,
+  () => route.query.q,
   (keyword) => {
     searchKeyword.value = typeof keyword === 'string' ? keyword : ''
   },
@@ -37,7 +37,9 @@ const activeNav = computed<'dashboard' | 'projects' | 'knowledge' | 'ai'>(() => 
   const path = route.path
   if (path.startsWith('/ai')) return 'ai'
   if (path.startsWith('/knowledge')) return 'knowledge'
-  if (path.startsWith('/projects')) return 'projects'
+  if (path.startsWith('/projects') || path.startsWith('/files') || path.startsWith('/documents') || path.startsWith('/contents')) {
+    return 'projects'
+  }
   if (path.startsWith('/workspace')) return 'dashboard'
   return 'dashboard'
 })
@@ -52,7 +54,7 @@ const showComingSoon = (feature: string) => {
 const openSearch = () => {
   router.push({
     path: '/search',
-    query: searchKeyword.value ? { keyword: searchKeyword.value } : {},
+    query: searchKeyword.value ? { q: searchKeyword.value } : {},
   })
 }
 

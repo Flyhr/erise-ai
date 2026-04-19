@@ -4,6 +4,7 @@ import com.baomidou.mybatisplus.annotation.IdType;
 import com.baomidou.mybatisplus.annotation.TableId;
 import com.baomidou.mybatisplus.annotation.TableName;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.baomidou.mybatisplus.core.mapper.BaseMapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.erise.ai.backend.common.api.ApiResponse;
@@ -29,6 +30,9 @@ import java.util.Locale;
 import java.util.UUID;
 import lombok.Data;
 import lombok.RequiredArgsConstructor;
+import org.commonmark.ext.gfm.tables.TablesExtension;
+import org.commonmark.parser.Parser;
+import org.commonmark.renderer.html.HtmlRenderer;
 import org.apache.pdfbox.Loader;
 import org.apache.pdfbox.pdmodel.PDDocument;
 import org.apache.pdfbox.text.PDFTextStripper;
@@ -98,6 +102,11 @@ public class FileController {
         return ApiResponse.success(fileService.detail(id));
     }
 
+    @PostMapping("/{id}/retry-parse")
+    public ApiResponse<FileView> retryParse(@PathVariable Long id) {
+        return ApiResponse.success(fileService.retryParse(id));
+    }
+
     @GetMapping("/{id}/preview")
     public ResponseEntity<InputStreamResource> preview(@PathVariable Long id) {
         return fileService.stream(id, true);
@@ -125,6 +134,14 @@ public class FileController {
 class FileService {
 
     private static final List<String> INDEXABLE_TYPES = List.of("pdf", "md", "markdown", "txt", "doc", "docx");
+    private static final Parser MARKDOWN_PARSER = Parser.builder()
+            .extensions(List.of(TablesExtension.create()))
+            .build();
+    private static final HtmlRenderer MARKDOWN_RENDERER = HtmlRenderer.builder()
+            .extensions(List.of(TablesExtension.create()))
+            .escapeHtml(true)
+            .softbreak("<br />\n")
+            .build();
 
     private final FileMapper fileMapper;
     private final FileParseTaskMapper fileParseTaskMapper;
@@ -168,7 +185,9 @@ class FileService {
         entity.setUploadStatus("INIT");
         entity.setParseStatus("PENDING");
         entity.setPreviewStatus("PENDING");
+        entity.setReviewStatus("APPROVED");
         entity.setIndexStatus("PENDING");
+        entity.setArchived(0);
         entity.setCreatedBy(currentUser.userId());
         entity.setUpdatedBy(currentUser.userId());
         fileMapper.insert(entity);
@@ -209,6 +228,36 @@ class FileService {
         return toView(requireAccessibleFile(fileId));
     }
 
+    FileView retryParse(Long fileId) {
+        var currentUser = SecurityUtils.currentUser();
+        FileEntity entity = requireAccessibleFile(fileId);
+        if (!indexable(entity)) {
+            throw new BizException(ErrorCodes.BAD_REQUEST, "This file type does not support knowledge parsing");
+        }
+        if (!isFailedStatus(entity.getParseStatus()) && !isFailedStatus(entity.getIndexStatus())) {
+            throw new BizException(ErrorCodes.BAD_REQUEST, "Only failed files can be retried");
+        }
+        FileParseTaskEntity latestTask = fileParseTaskMapper.selectOne(new LambdaQueryWrapper<FileParseTaskEntity>()
+                .eq(FileParseTaskEntity::getFileId, fileId)
+                .orderByDesc(FileParseTaskEntity::getUpdatedAt)
+                .orderByDesc(FileParseTaskEntity::getId)
+                .last("limit 1"));
+        if (latestTask == null) {
+            enqueueParseTask(entity, currentUser.userId());
+        } else {
+            latestTask.setTaskStatus("PENDING");
+            latestTask.setRetryCount(0);
+            latestTask.setLastError(null);
+            latestTask.setUpdatedBy(currentUser.userId());
+            fileParseTaskMapper.updateById(latestTask);
+        }
+        entity.setParseStatus("PENDING");
+        entity.setIndexStatus("PENDING");
+        entity.setUpdatedBy(currentUser.userId());
+        fileMapper.updateById(entity);
+        return toView(entity);
+    }
+
     InternalFileContextView internalContext(Long fileId) {
         FileEntity entity = requireExistingFile(fileId);
         return new InternalFileContextView(
@@ -219,19 +268,62 @@ class FileService {
                 entity.getMimeType(),
                 loadPlainTextForContext(fileId, entity),
                 entity.getParseStatus(),
+                entity.getIndexStatus(),
+                latestParseError(entity.getId(), entity.getParseStatus(), entity.getIndexStatus()),
+                entity.getArchived(),
                 entity.getUpdatedAt()
         );
+    }
+
+    InternalFileContextView internalArchive(Long fileId, Long actorUserId) {
+        FileEntity entity = requireAccessibleFile(fileId, actorUserId);
+        entity.setArchived(1);
+        entity.setUpdatedBy(actorUserId);
+        fileMapper.updateById(entity);
+        try {
+            ragKnowledgeService.deleteKbSource(entity.getOwnerUserId(), entity.getProjectId(), "FILE", fileId);
+        } catch (RuntimeException ignored) {
+        }
+        auditLogService.log(actorUserId, "FILE_ARCHIVE_BY_AI", "FILE", fileId, null);
+        return internalContext(fileId);
+    }
+
+    InternalFileContextView internalUpdateTitle(Long fileId, Long actorUserId, String title) {
+        FileEntity entity = requireAccessibleFile(fileId, actorUserId);
+        String normalizedFileName = normalizeFileTitle(title, entity);
+        entity.setFileName(normalizedFileName);
+        entity.setUpdatedBy(actorUserId);
+        fileMapper.updateById(entity);
+        try {
+            ragKnowledgeService.updateKbSourceTitle(
+                    entity.getOwnerUserId(),
+                    entity.getProjectId(),
+                    "FILE",
+                    fileId,
+                    normalizedFileName,
+                    actorUserId
+            );
+        } catch (RuntimeException ignored) {
+        }
+        auditLogService.log(actorUserId, "FILE_TITLE_UPDATE_BY_AI", "FILE", fileId, java.util.Map.of("fileName", normalizedFileName));
+        return internalContext(fileId);
     }
 
     ResponseEntity<InputStreamResource> stream(Long fileId, boolean inline) {
         var currentUser = SecurityUtils.currentUser();
         FileEntity entity = requireAccessibleFile(fileId);
         auditLogService.log(currentUser, inline ? "FILE_PREVIEW" : "FILE_DOWNLOAD", "FILE", fileId, null);
-        if (inline && "docx".equalsIgnoreCase(entity.getFileExt())) {
-            return docxPreview(entity);
-        }
-        if (inline && "txt".equalsIgnoreCase(entity.getFileExt())) {
-            return txtPreview(entity);
+        String extension = entity.getFileExt() == null ? "" : entity.getFileExt().toLowerCase(Locale.ROOT);
+        if (inline) {
+            if ("docx".equals(extension)) {
+                return docxPreview(entity);
+            }
+            if ("txt".equals(extension)) {
+                return txtPreview(entity);
+            }
+            if ("md".equals(extension) || "markdown".equals(extension)) {
+                return markdownPreview(entity);
+            }
         }
         InputStream stream = storageClient.getObject(entity.getStorageKey());
         ContentDisposition disposition = inline
@@ -280,9 +372,11 @@ class FileService {
     void delete(Long fileId) {
         var currentUser = SecurityUtils.currentUser();
         FileEntity entity = requireAccessibleFile(fileId);
+        if (storageClient.objectExists(entity.getStorageKey())) {
+            storageClient.moveObject(entity.getStorageKey(), buildTrashStorageKey(entity));
+        }
         fileMapper.deleteById(fileId);
         fileEditContentMapper.delete(new LambdaQueryWrapper<FileEditContentEntity>().eq(FileEditContentEntity::getFileId, fileId));
-        storageClient.removeObject(entity.getStorageKey());
         ragKnowledgeService.deleteKbSource(entity.getOwnerUserId(), entity.getProjectId(), "FILE", fileId);
         auditLogService.log(currentUser, "FILE_DELETE", "FILE", fileId, null);
     }
@@ -305,7 +399,17 @@ class FileService {
         return entity;
     }
 
+    FileEntity requireAccessibleFile(Long fileId, Long actorUserId) {
+        FileEntity entity = requireExistingFile(fileId);
+        projectService.requireAccessibleProject(entity.getProjectId(), actorUserId);
+        if (actorUserId == null || !actorUserId.equals(entity.getOwnerUserId())) {
+            throw new BizException(ErrorCodes.FORBIDDEN, "No permission");
+        }
+        return entity;
+    }
+
     FileView toView(FileEntity entity) {
+        String parseErrorMessage = latestParseError(entity.getId(), entity.getParseStatus(), entity.getIndexStatus());
         return new FileView(
                 entity.getId(),
                 entity.getProjectId(),
@@ -315,10 +419,34 @@ class FileService {
                 entity.getFileSize(),
                 entity.getUploadStatus(),
                 entity.getParseStatus(),
+                entity.getReviewStatus(),
                 entity.getIndexStatus(),
+                parseErrorMessage,
+                entity.getReviewComment(),
+                entity.getArchived(),
                 entity.getCreatedAt(),
                 entity.getUpdatedAt()
         );
+    }
+
+    private String latestParseError(Long fileId, String parseStatus, String indexStatus) {
+        boolean failed = "FAILED".equalsIgnoreCase(parseStatus) || "FAILED".equalsIgnoreCase(indexStatus);
+        if (!failed) {
+            return null;
+        }
+        FileParseTaskEntity task = fileParseTaskMapper.selectOne(new LambdaQueryWrapper<FileParseTaskEntity>()
+                .eq(FileParseTaskEntity::getFileId, fileId)
+                .orderByDesc(FileParseTaskEntity::getUpdatedAt)
+                .orderByDesc(FileParseTaskEntity::getId)
+                .last("limit 1"));
+        if (task == null || task.getLastError() == null || task.getLastError().isBlank()) {
+            return null;
+        }
+        return task.getLastError();
+    }
+
+    private boolean isFailedStatus(String status) {
+        return "FAILED".equalsIgnoreCase(status) || "DELETED".equalsIgnoreCase(status);
     }
 
     private String loadPlainTextForContext(Long fileId, FileEntity entity) {
@@ -329,13 +457,17 @@ class FileService {
             return stored.getPlainText();
         }
         try (InputStream stream = storageClient.getObject(entity.getStorageKey())) {
-            return storedTextExtractionSupport.extractPlainText(entity.getFileExt(), stream);
-        } catch (IOException exception) {
-            throw new BizException(ErrorCodes.FILE_ERROR, "File context load failed: " + exception.getMessage());
+            return storedTextExtractionSupport.extractPlainText(entity.getOwnerUserId(), entity.getFileName(), entity.getFileExt(), stream);
+        } catch (Exception exception) {
+            return "";
         }
     }
 
     void handleParseTask(FileParseTaskEntity task) {
+        if (!claimParseTask(task.getId())) {
+            return;
+        }
+        task.setTaskStatus("PROCESSING");
         FileEntity file = fileMapper.selectById(task.getFileId());
         if (file == null) {
             task.setTaskStatus("FAILED");
@@ -343,31 +475,106 @@ class FileService {
             fileParseTaskMapper.updateById(task);
             return;
         }
+        markFileProcessing(file);
         try (InputStream stream = storageClient.getObject(file.getStorageKey())) {
             List<RagKnowledgeService.ChunkInput> chunks = extractChunks(file, stream);
+            if (chunks.isEmpty()) {
+                throw new BizException(ErrorCodes.FILE_ERROR, "No readable text content was extracted");
+            }
             ragKnowledgeService.replaceKbSource(file.getOwnerUserId(), file.getProjectId(), "FILE", file.getId(), file.getFileName(), chunks);
             file.setParseStatus("SUCCESS");
             file.setIndexStatus("SUCCESS");
             file.setUpdatedBy(file.getOwnerUserId());
             fileMapper.updateById(file);
             task.setTaskStatus("SUCCESS");
+            task.setLastError(null);
             task.setUpdatedBy(file.getOwnerUserId());
             fileParseTaskMapper.updateById(task);
         } catch (Exception exception) {
-            task.setRetryCount(task.getRetryCount() + 1);
-            task.setLastError(exception.getMessage());
-            task.setTaskStatus(task.getRetryCount() >= 3 ? "FAILED" : "PENDING");
+            int nextRetryCount = (task.getRetryCount() == null ? 0 : task.getRetryCount()) + 1;
+            String errorMessage = parseTaskErrorMessage(exception);
+            boolean retryable = isRetryableParseError(errorMessage);
+            boolean exhausted = nextRetryCount >= 3;
+            task.setRetryCount(nextRetryCount);
+            task.setLastError(errorMessage);
+            task.setTaskStatus(!retryable || exhausted ? "FAILED" : "PENDING");
             task.setUpdatedBy(file.getOwnerUserId());
             fileParseTaskMapper.updateById(task);
-            file.setParseStatus("FAILED");
-            file.setIndexStatus("FAILED");
-            file.setUpdatedBy(file.getOwnerUserId());
-            fileMapper.updateById(file);
+            if (!retryable || exhausted) {
+                markFileFailed(file, errorMessage);
+            } else {
+                markFileRetryPending(file);
+            }
         }
+    }
+
+    private void markFileProcessing(FileEntity file) {
+        file.setParseStatus("PROCESSING");
+        file.setIndexStatus("PROCESSING");
+        file.setUpdatedBy(file.getOwnerUserId());
+        fileMapper.updateById(file);
+    }
+
+    private void markFileRetryPending(FileEntity file) {
+        file.setParseStatus("PENDING");
+        file.setIndexStatus("PENDING");
+        file.setUpdatedBy(file.getOwnerUserId());
+        fileMapper.updateById(file);
+    }
+
+    private void markFileFailed(FileEntity file, String errorMessage) {
+        file.setParseStatus("FAILED");
+        file.setIndexStatus("FAILED");
+        file.setUpdatedBy(file.getOwnerUserId());
+        fileMapper.updateById(file);
+    }
+
+    private String parseTaskErrorMessage(Exception exception) {
+        if (exception == null || exception.getMessage() == null || exception.getMessage().isBlank()) {
+            return "File parsing failed";
+        }
+        return exception.getMessage();
+    }
+
+    private boolean isRetryableParseError(String message) {
+        String normalized = message == null ? "" : message.toLowerCase(Locale.ROOT);
+        return normalized.contains("service unavailable")
+                || normalized.contains("temporarily unavailable")
+                || normalized.contains("dependency unavailable")
+                || normalized.contains("dependency is unavailable")
+                || normalized.contains("ocr service unavailable")
+                || normalized.contains("ocr engine is unavailable")
+                || normalized.contains("ocr dependency is unavailable")
+                || (normalized.contains("ocr") && normalized.contains("unavailable"))
+                || normalized.contains("timeout")
+                || normalized.contains("timed out")
+                || normalized.contains("connection refused")
+                || normalized.contains("connection reset")
+                || normalized.contains("connection aborted")
+                || normalized.contains("i/o error")
+                || normalized.contains("network is unreachable")
+                || normalized.contains("rate limit")
+                || normalized.contains("too many requests")
+                || normalized.contains("gateway timeout")
+                || normalized.contains("bad gateway")
+                || normalized.contains("temporarily overloaded");
     }
 
     private boolean indexable(FileEntity entity) {
         return entity.getFileExt() != null && INDEXABLE_TYPES.contains(entity.getFileExt().toLowerCase(Locale.ROOT));
+    }
+
+    private boolean claimParseTask(Long taskId) {
+        if (taskId == null) {
+            return false;
+        }
+        return fileParseTaskMapper.update(
+                null,
+                new LambdaUpdateWrapper<FileParseTaskEntity>()
+                        .eq(FileParseTaskEntity::getId, taskId)
+                        .eq(FileParseTaskEntity::getTaskStatus, "PENDING")
+                        .set(FileParseTaskEntity::getTaskStatus, "PROCESSING")
+        ) > 0;
     }
 
     private void validateUpload(MultipartFile file, FileEntity entity) {
@@ -384,10 +591,60 @@ class FileService {
         return index > -1 ? name.substring(index + 1).toLowerCase(Locale.ROOT) : "bin";
     }
 
+    private String normalizeFileTitle(String title, FileEntity entity) {
+        String value = title == null ? "" : title
+                .replace('\\', '_')
+                .replace('/', '_')
+                .replaceAll("[\\r\\n\\t]+", " ")
+                .replaceAll("\\s+", " ")
+                .trim();
+        if (value.isBlank()) {
+            throw new BizException(ErrorCodes.BAD_REQUEST, "File title is required");
+        }
+        String extension = entity.getFileExt();
+        if (extension == null || extension.isBlank()) {
+            extension = fileExtension(entity.getFileName());
+        }
+        extension = extension == null ? "" : extension.trim().toLowerCase(Locale.ROOT);
+        if (!extension.isBlank() && !"bin".equals(extension)) {
+            String suffix = "." + extension;
+            String lowerValue = value.toLowerCase(Locale.ROOT);
+            if (!lowerValue.endsWith(suffix)) {
+                int dotIndex = value.lastIndexOf('.');
+                if (dotIndex > 0 && dotIndex < value.length() - 1) {
+                    value = value.substring(0, dotIndex).trim();
+                }
+                value = value + suffix;
+            }
+        }
+        if (value.length() > 255) {
+            int suffixStart = value.lastIndexOf('.');
+            if (suffixStart > 0 && suffixStart < value.length() - 1) {
+                String suffix = value.substring(suffixStart);
+                value = value.substring(0, Math.max(1, 255 - suffix.length())) + suffix;
+            } else {
+                value = value.substring(0, 255);
+            }
+        }
+        return value;
+    }
+
+    private String buildTrashStorageKey(FileEntity entity) {
+        String safeFileName = entity.getFileName() == null
+                ? "deleted-file"
+                : entity.getFileName().replace('\\', '_').replace('/', '_');
+        return "projects/%d/trash/%d-%d-%s".formatted(
+                entity.getProjectId(),
+                System.currentTimeMillis(),
+                entity.getId(),
+                safeFileName
+        );
+    }
+
     private void enqueueParseTask(FileEntity entity, Long operatorUserId) {
         Long existingCount = fileParseTaskMapper.selectCount(new LambdaQueryWrapper<FileParseTaskEntity>()
                 .eq(FileParseTaskEntity::getFileId, entity.getId())
-                .in(FileParseTaskEntity::getTaskStatus, List.of("PENDING", "SUCCESS")));
+                .in(FileParseTaskEntity::getTaskStatus, List.of("PENDING", "PROCESSING", "SUCCESS")));
         if (existingCount != null && existingCount > 0) {
             return;
         }
@@ -411,7 +668,7 @@ class FileService {
                     .build();
             return ResponseEntity.ok()
                     .header(HttpHeaders.CONTENT_DISPOSITION, disposition.toString())
-                    .contentType(MediaType.TEXT_HTML)
+                    .contentType(MediaType.parseMediaType("text/html;charset=UTF-8"))
                     .body(new InputStreamResource(new ByteArrayInputStream(html.getBytes(StandardCharsets.UTF_8))));
         } catch (IOException exception) {
             throw new BizException(ErrorCodes.FILE_ERROR, "Docx preview failed: " + exception.getMessage());
@@ -420,113 +677,37 @@ class FileService {
 
     private ResponseEntity<InputStreamResource> txtPreview(FileEntity entity) {
         try (InputStream stream = storageClient.getObject(entity.getStorageKey())) {
-            String html = wrapDocumentHtml(entity.getFileName(), "TXT Preview", escapeHtml(TextContentUtils.decodeText(stream.readAllBytes())));
+            String html = wrapDocumentHtml(entity.getFileName(), "TXT 在线预览", escapeHtml(TextContentUtils.decodeText(stream.readAllBytes())));
             ContentDisposition disposition = ContentDisposition.inline()
                     .filename(stripExtension(entity.getFileName()) + ".html", StandardCharsets.UTF_8)
                     .build();
             return ResponseEntity.ok()
                     .header(HttpHeaders.CONTENT_DISPOSITION, disposition.toString())
-                    .contentType(MediaType.TEXT_HTML)
+                    .contentType(MediaType.parseMediaType("text/html;charset=UTF-8"))
                     .body(new InputStreamResource(new ByteArrayInputStream(html.getBytes(StandardCharsets.UTF_8))));
         } catch (IOException exception) {
             throw new BizException(ErrorCodes.FILE_ERROR, "TXT preview failed: " + exception.getMessage());
         }
     }
 
+    private ResponseEntity<InputStreamResource> markdownPreview(FileEntity entity) {
+        try (InputStream stream = storageClient.getObject(entity.getStorageKey())) {
+            String markdown = TextContentUtils.decodeText(stream.readAllBytes());
+            String html = renderMarkdownPreview(entity.getFileName(), markdown);
+            ContentDisposition disposition = ContentDisposition.inline()
+                    .filename(stripExtension(entity.getFileName()) + ".html", StandardCharsets.UTF_8)
+                    .build();
+            return ResponseEntity.ok()
+                    .header(HttpHeaders.CONTENT_DISPOSITION, disposition.toString())
+                    .contentType(MediaType.parseMediaType("text/html;charset=UTF-8"))
+                    .body(new InputStreamResource(new ByteArrayInputStream(html.getBytes(StandardCharsets.UTF_8))));
+        } catch (IOException exception) {
+            throw new BizException(ErrorCodes.FILE_ERROR, "Markdown preview failed: " + exception.getMessage());
+        }
+    }
+
     private List<RagKnowledgeService.ChunkInput> extractChunks(FileEntity file, InputStream stream) throws IOException {
-        return storedTextExtractionSupport.extractChunks(file.getFileExt(), stream);
-    }
-
-    private List<RagKnowledgeService.ChunkInput> extractPdf(InputStream stream) throws IOException {
-        byte[] bytes = stream.readAllBytes();
-        try (PDDocument document = Loader.loadPDF(bytes)) {
-            List<RagKnowledgeService.ChunkInput> chunks = new ArrayList<>();
-            PDFTextStripper stripper = new PDFTextStripper();
-            for (int page = 1; page <= document.getNumberOfPages(); page++) {
-                stripper.setStartPage(page);
-                stripper.setEndPage(page);
-                String text = stripper.getText(document);
-                chunks.addAll(ragKnowledgeService.splitText(text, page));
-            }
-            return chunks;
-        }
-    }
-
-    private List<RagKnowledgeService.ChunkInput> extractDoc(InputStream stream) throws IOException {
-        try (HWPFDocument document = new HWPFDocument(stream); WordExtractor extractor = new WordExtractor(document)) {
-            return ragKnowledgeService.splitText(extractor.getText(), null);
-        }
-    }
-
-    private List<RagKnowledgeService.ChunkInput> extractDocx(InputStream stream) throws IOException {
-        try (XWPFDocument document = new XWPFDocument(stream)) {
-            List<RagKnowledgeService.ChunkInput> chunks = new ArrayList<>();
-            for (String block : readDocxBlocks(document)) {
-                chunks.addAll(ragKnowledgeService.splitText(block, null));
-            }
-            return chunks;
-        }
-    }
-
-    private List<String> readDocxBlocks(XWPFDocument document) {
-        List<String> blocks = new ArrayList<>();
-        for (IBodyElement element : document.getBodyElements()) {
-            if (element.getElementType() == BodyElementType.PARAGRAPH) {
-                String text = paragraphPlainText((XWPFParagraph) element);
-                if (!text.isBlank()) {
-                    blocks.add(text);
-                }
-                continue;
-            }
-            if (element.getElementType() == BodyElementType.TABLE) {
-                XWPFTable table = (XWPFTable) element;
-                for (XWPFTableRow row : table.getRows()) {
-                    List<String> cells = new ArrayList<>();
-                    for (XWPFTableCell cell : row.getTableCells()) {
-                        String cellText = cell.getText() == null ? "" : cell.getText().replace("\n", " ").trim();
-                        if (!cellText.isBlank()) {
-                            cells.add(cellText);
-                        }
-                    }
-                    if (!cells.isEmpty()) {
-                        blocks.add(String.join(" | ", cells));
-                    }
-                }
-            }
-        }
-        return blocks;
-    }
-
-    private String extractPdfText(InputStream stream) throws IOException {
-        byte[] bytes = stream.readAllBytes();
-        try (PDDocument document = Loader.loadPDF(bytes)) {
-            PDFTextStripper stripper = new PDFTextStripper();
-            StringBuilder content = new StringBuilder();
-            for (int page = 1; page <= document.getNumberOfPages(); page++) {
-                stripper.setStartPage(page);
-                stripper.setEndPage(page);
-                String text = stripper.getText(document).trim();
-                if (!text.isBlank()) {
-                    if (!content.isEmpty()) {
-                        content.append("\n\n");
-                    }
-                    content.append(text);
-                }
-            }
-            return content.toString();
-        }
-    }
-
-    private String extractDocText(InputStream stream) throws IOException {
-        try (HWPFDocument document = new HWPFDocument(stream); WordExtractor extractor = new WordExtractor(document)) {
-            return extractor.getText();
-        }
-    }
-
-    private String extractDocxText(InputStream stream) throws IOException {
-        try (XWPFDocument document = new XWPFDocument(stream)) {
-            return String.join("\n\n", readDocxBlocks(document));
-        }
+        return storedTextExtractionSupport.extractChunks(file.getOwnerUserId(), file.getFileName(), file.getFileExt(), stream);
     }
 
     private String renderDocxPreview(byte[] bytes, String fileName) throws IOException {
@@ -547,7 +728,7 @@ class FileService {
                     .append(".docx-meta{color:#66707a;font-size:14px;margin-bottom:18px;}")
                     .append(".docx-bullet{display:inline-block;min-width:1.25em;color:#14532d;font-weight:700;}")
                     .append("</style></head><body><main><article>")
-                    .append("<div class=\"docx-meta\">DOCX 鍦ㄧ嚎棰勮</div>");
+                    .append("<div class=\"docx-meta\">DOCX 在线预览</div>");
             for (IBodyElement element : document.getBodyElements()) {
                 if (element.getElementType() == BodyElementType.PARAGRAPH) {
                     appendParagraphHtml(html, (XWPFParagraph) element);
@@ -568,7 +749,7 @@ class FileService {
         String tag = resolveParagraphTag(paragraph);
         html.append('<').append(tag).append('>');
         if (paragraph.getNumID() != null) {
-            html.append("<span class=\"docx-bullet\">鈥?/span>");
+            html.append("<span class=\"docx-bullet\">•</span>");
         }
         html.append(content);
         html.append("</").append(tag).append('>');
@@ -616,7 +797,7 @@ class FileService {
             chunk.append("<img src=\"")
                     .append(pictureDataToDataUrl(pictureData))
                     .append("\" alt=\"")
-                    .append("鎻掑浘")
+                    .append("插图")
                     .append("\" />");
         }
         String content = chunk.toString();
@@ -693,6 +874,32 @@ class FileService {
                 + "</pre></article></main></body></html>";
     }
 
+    private String renderMarkdownPreview(String fileName, String markdown) {
+        String bodyHtml = MARKDOWN_RENDERER.render(MARKDOWN_PARSER.parse(markdown == null ? "" : markdown));
+        return "<!DOCTYPE html><html lang=\"zh-CN\"><head><meta charset=\"UTF-8\" />"
+                + "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\" />"
+                + "<title>" + escapeHtml(stripExtension(fileName)) + "</title>"
+                + "<style>"
+                + "body{margin:0;background:#f4f7fb;font-family:'Segoe UI','PingFang SC','Microsoft YaHei',sans-serif;color:#1c2536;}"
+                + "main{max-width:960px;margin:0 auto;padding:32px 20px 56px;}"
+                + "article{background:#fff;border:1px solid rgba(66,92,145,.16);border-radius:18px;box-shadow:0 12px 32px rgba(15,23,42,.08);padding:32px;line-height:1.85;}"
+                + ".eyebrow{color:#667085;font-size:13px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;margin-bottom:16px;}"
+                + "h1,h2,h3,h4,h5,h6{margin:1.2em 0 .6em;line-height:1.35;color:#101828;}"
+                + "p,ul,ol,blockquote,pre,table{margin:0 0 1em;}"
+                + "blockquote{padding:12px 16px;border-left:4px solid rgba(0,96,169,.28);background:rgba(0,96,169,.06);border-radius:12px;}"
+                + "code{padding:2px 6px;border-radius:6px;background:rgba(15,23,42,.06);font-family:'Cascadia Code','Consolas',monospace;font-size:.92em;}"
+                + "pre{overflow:auto;padding:16px;border-radius:14px;background:#0f172a;color:#e2e8f0;}"
+                + "pre code{padding:0;background:transparent;color:inherit;}"
+                + "table{width:100%;border-collapse:collapse;}"
+                + "td,th{border:1px solid rgba(66,92,145,.16);padding:10px 12px;vertical-align:top;}"
+                + "img{max-width:100%;height:auto;border-radius:12px;}"
+                + "a{color:#005ea6;text-decoration:none;}"
+                + "a:hover{text-decoration:underline;}"
+                + "</style></head><body><main><article><div class=\"eyebrow\">Markdown 在线预览</div>"
+                + (bodyHtml.isBlank() ? "<p>暂无内容</p>" : bodyHtml)
+                + "</article></main></body></html>";
+    }
+
     private String stripMarkdown(String markdown) {
         return markdown
                 .replaceAll("```[\\s\\S]*?```", " ")
@@ -728,8 +935,34 @@ class FileParseWorker {
         List<FileParseTaskEntity> tasks = fileParseTaskMapper.selectList(new LambdaQueryWrapper<FileParseTaskEntity>()
                 .eq(FileParseTaskEntity::getTaskStatus, "PENDING")
                 .orderByAsc(FileParseTaskEntity::getCreatedAt)
-                .last("limit 5"));
-        tasks.forEach(fileService::handleParseTask);
+                .last("limit 20"));
+        tasks.stream()
+                .filter(this::retryReady)
+                .limit(5)
+                .forEach(fileService::handleParseTask);
+    }
+
+    private boolean retryReady(FileParseTaskEntity task) {
+        if (task == null) {
+            return false;
+        }
+        int retryCount = task.getRetryCount() == null ? 0 : task.getRetryCount();
+        if (retryCount <= 0) {
+            return true;
+        }
+        LocalDateTime updatedAt = task.getUpdatedAt();
+        if (updatedAt == null) {
+            return true;
+        }
+        return !updatedAt.plusSeconds(retryDelaySeconds(retryCount)).isAfter(LocalDateTime.now());
+    }
+
+    private long retryDelaySeconds(int retryCount) {
+        return switch (Math.max(retryCount, 0)) {
+            case 0, 1 -> 30L;
+            case 2 -> 90L;
+            default -> 180L;
+        };
     }
 
     private void cleanupStaleUploads() {
@@ -753,7 +986,7 @@ class FileParseWorker {
         for (FileEntity file : files) {
             Long existingCount = fileParseTaskMapper.selectCount(new LambdaQueryWrapper<FileParseTaskEntity>()
                     .eq(FileParseTaskEntity::getFileId, file.getId())
-                    .in(FileParseTaskEntity::getTaskStatus, List.of("PENDING", "SUCCESS")));
+                    .in(FileParseTaskEntity::getTaskStatus, List.of("PENDING", "PROCESSING", "SUCCESS")));
             if (existingCount != null && existingCount > 0) {
                 continue;
             }
@@ -806,7 +1039,12 @@ class FileEntity extends AuditableEntity {
     private String uploadStatus;
     private String parseStatus;
     private String previewStatus;
+    private String reviewStatus;
+    private String reviewComment;
+    private Long reviewedByUserId;
+    private java.time.LocalDateTime reviewedAt;
     private String indexStatus;
+    private Integer archived;
 }
 
 @Data
@@ -867,7 +1105,11 @@ record FileView(
         Long fileSize,
         String uploadStatus,
         String parseStatus,
+        String reviewStatus,
         String indexStatus,
+        String parseErrorMessage,
+        String reviewComment,
+        Integer archived,
         java.time.LocalDateTime createdAt,
         java.time.LocalDateTime updatedAt
 ) {
@@ -887,6 +1129,9 @@ record InternalFileContextView(
         String mimeType,
         String plainText,
         String parseStatus,
+        String indexStatus,
+        String parseErrorMessage,
+        Integer archived,
         java.time.LocalDateTime updatedAt
 ) {
 }

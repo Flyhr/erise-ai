@@ -1,21 +1,20 @@
 <template>
-  <div class="page-shell">
-    <AppPageHeader :title="`${typeLabel}中心`" eyebrow="结构化内容" :subtitle="pageSubtitle" show-back back-label="返回项目概览" :back-to="`/projects/${projectId}`">
-      <template #actions>
-        <el-button type="primary" @click="createItem">新建{{ typeLabel }}</el-button>
-      </template>
-    </AppPageHeader>
+  <ProjectScopedListShell :project-id="projectId" :title="`${typeLabel}列表`" :keyword="keyword"
+    :search-placeholder="`按${typeLabel}标题或摘要搜索`" @update:keyword="keyword = $event" @search="handleSearch">
+    <template #actions>
+      <el-button @click="resetFilters">重置</el-button>
+      <el-button type="primary" @click="handleSearch">查询</el-button>
+      <el-button type="primary" @click="createItem">新建{{ typeLabel }}</el-button>
+    </template>
 
-    <ProjectSubnav :project-id="projectId" />
-
-    <AppSectionCard :title="`${typeLabel}列表`" :unpadded="true">
-      <AppDataTable :data="items" stripe>
+    <AppSectionCard :title="`${typeLabel}列表`" :unpadded="Boolean(items.length)">
+      <AppDataTable v-if="items.length" :data="items" stripe>
         <el-table-column label="名称" min-width="220">
           <template #default="{ row }">
             <div class="content-row__title">{{ row.title }}</div>
           </template>
         </el-table-column>
-        <el-table-column label="类型" width="140">
+        <el-table-column label="类型" width="120">
           <template #default>
             <AppStatusTag :label="typeLabel" tone="primary" />
           </template>
@@ -43,15 +42,16 @@
           </template>
         </el-table-column>
       </AppDataTable>
+      <AppEmptyState v-else :title="`当前项目还没有${typeLabel}`" description="先创建一条表格内容，后续就可以在项目内统一维护和在 AI 助理中直接引用。" />
+
       <template #footer>
-        <div v-if="items.length" class="content-footer">
-          <span class="page-subtitle">共 {{ total }} 条{{ typeLabel }}记录</span>
+        <div class="content-footer">
+          <span class="page-subtitle" style="margin: 0;">共 {{ total }} 条{{ typeLabel }}记录</span>
           <CompactPager :page-num="pageNum" :page-size="pageSize" :total="total" @change="handlePageChange" />
         </div>
-        <AppEmptyState v-else :title="`还没有${typeLabel}`" description="先创建一个结构化内容实体，后续可在 AI 助理里直接引用。" />
       </template>
     </AppSectionCard>
-  </div>
+  </ProjectScopedListShell>
 </template>
 
 <script setup lang="ts">
@@ -61,21 +61,22 @@ import { useRoute, useRouter } from 'vue-router'
 import { createContentItem, deleteContentItem, getContentItems } from '@/api/content'
 import AppDataTable from '@/components/common/AppDataTable.vue'
 import AppEmptyState from '@/components/common/AppEmptyState.vue'
-import AppPageHeader from '@/components/common/AppPageHeader.vue'
 import AppSectionCard from '@/components/common/AppSectionCard.vue'
 import AppStatusTag from '@/components/common/AppStatusTag.vue'
 import CompactPager from '@/components/common/CompactPager.vue'
-import ProjectSubnav from '@/components/common/ProjectSubnav.vue'
+import ProjectScopedListShell from '@/components/common/ProjectScopedListShell.vue'
 import type { ContentItemSummaryView } from '@/types/models'
-import { formatDateTime } from '@/utils/formatters'
+import { formatDateTime, resolveErrorMessage } from '@/utils/formatters'
 
 const props = defineProps<{ id: string; type: string }>()
+
 const route = useRoute()
 const router = useRouter()
 const projectId = Number(props.id)
 const items = ref<ContentItemSummaryView[]>([])
+const keyword = ref('')
 const pageNum = ref(1)
-const pageSize = 25
+const pageSize = 12
 const total = ref(0)
 
 const normalizeType = (value: string) => {
@@ -84,9 +85,21 @@ const normalizeType = (value: string) => {
   return 'SHEET'
 }
 
-const contentType = computed<'SHEET' | 'BOARD' | 'DATA_TABLE'>(() => normalizeType(props.type) as 'SHEET' | 'BOARD' | 'DATA_TABLE')
-const typeLabel = computed(() => ({ SHEET: '表格', BOARD: '画板', DATA_TABLE: '数据表' })[contentType.value])
-const pageSubtitle = computed(() => `把项目里的${typeLabel.value}独立管理，列表与编辑页遵循统一工作台样式。`)
+const contentType = computed<'SHEET' | 'BOARD' | 'DATA_TABLE'>(
+  () => normalizeType(props.type) as 'SHEET' | 'BOARD' | 'DATA_TABLE',
+)
+
+const typeLabel = computed(
+  () =>
+    ({
+      SHEET: '表格',
+      BOARD: '画板',
+      DATA_TABLE: '数据表',
+    })[contentType.value],
+)
+
+// const pageSubtitle = computed(() => `统一管理当前项目下的${typeLabel.value}内容，并保持与文件、文档页面一致的工作流。`)
+// const pageHint = computed(() => `可按关键词筛选${typeLabel.value}，并快速进入浏览、编辑和删除操作。`)
 
 const createDefaults = () => {
   if (contentType.value === 'BOARD') {
@@ -100,7 +113,7 @@ const createDefaults = () => {
   if (contentType.value === 'DATA_TABLE') {
     return {
       title: '未命名数据表',
-      summary: '结构化字段和记录编辑。',
+      summary: '用于维护表格字段与记录。',
       contentJson: JSON.stringify({
         columns: [
           { key: 'field_1', label: '名称', type: 'TEXT' },
@@ -113,19 +126,29 @@ const createDefaults = () => {
   }
   return {
     title: '未命名表格',
-    summary: '适合做项目清单、轻量表格和计划排期。',
-    contentJson: JSON.stringify({ columns: 6, rows: Array.from({ length: 8 }, () => Array.from({ length: 6 }, () => '')) }),
+    summary: '适合记录项目清单、计划排期和轻量表格信息。',
+    contentJson: JSON.stringify({
+      columns: 6,
+      rows: Array.from({ length: 8 }, () => Array.from({ length: 6 }, () => '')),
+    }),
     plainText: '',
   }
 }
 
 const load = async () => {
-  const page = await getContentItems({ projectId, itemType: contentType.value, pageNum: pageNum.value, pageSize })
+  const page = await getContentItems({
+    projectId,
+    itemType: contentType.value,
+    q: keyword.value.trim() || undefined,
+    pageNum: pageNum.value,
+    pageSize,
+  })
   items.value = page.records
   total.value = page.total
 }
 
 const syncFromRoute = async () => {
+  keyword.value = typeof route.query.q === 'string' ? route.query.q : ''
   const nextPage = Number(route.query.pageNum)
   pageNum.value = Number.isFinite(nextPage) && nextPage > 0 ? nextPage : 1
   await load()
@@ -135,6 +158,7 @@ const pushRoute = async () => {
   await router.replace({
     path: route.path,
     query: {
+      ...(keyword.value.trim() ? { q: keyword.value.trim() } : {}),
       ...(pageNum.value > 1 ? { pageNum: pageNum.value } : {}),
     },
   })
@@ -147,6 +171,17 @@ const ensureCurrentPage = async () => {
   }
 }
 
+const handleSearch = async () => {
+  pageNum.value = 1
+  await pushRoute()
+}
+
+const resetFilters = async () => {
+  keyword.value = ''
+  pageNum.value = 1
+  await pushRoute()
+}
+
 const handlePageChange = async (value: number) => {
   pageNum.value = value
   await pushRoute()
@@ -154,16 +189,20 @@ const handlePageChange = async (value: number) => {
 
 const createItem = async () => {
   const payload = createDefaults()
-  const created = await createContentItem({
-    projectId,
-    itemType: contentType.value,
-    title: payload.title,
-    summary: payload.summary,
-    contentJson: payload.contentJson,
-    plainText: payload.plainText,
-  })
-  ElMessage.success(`${typeLabel.value}已创建`)
-  router.push(`/contents/${created.id}/edit`)
+  try {
+    const created = await createContentItem({
+      projectId,
+      itemType: contentType.value,
+      title: payload.title,
+      summary: payload.summary,
+      contentJson: payload.contentJson,
+      plainText: payload.plainText,
+    })
+    ElMessage.success(`${typeLabel.value}已创建`)
+    await router.push(`/contents/${created.id}/edit`)
+  } catch (error) {
+    ElMessage.error(resolveErrorMessage(error, `${typeLabel.value}创建失败，请稍后重试`))
+  }
 }
 
 const openItem = (id: number) => router.push(`/contents/${id}/edit`)

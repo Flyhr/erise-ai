@@ -1,58 +1,58 @@
-﻿<template>
+<template>
   <div class="page-shell ai-admin-page">
-    <WorkspaceNavigationShell v-model="searchKeyword" active-nav="ai" brand-title="Erise AI"
-      brand-subtitle="The Digital Curator" create-text="新建对话" :footer-title="selectedProjectDisplay || '知识工作台'"
-      :footer-copy="activeModel?.providerCode || 'Premium Account'"
-      :footer-avatar="(selectedProjectDisplay || 'ER').slice(0, 2).toUpperCase()"
-      :user-name="activeModel?.modelName || 'AI 助理'" :user-role="sessionStatusText"
-      :user-avatar="(activeModel?.modelName || 'A').slice(0, 1)" search-placeholder="搜索项目、知识库、文件或 AI 会话..."
-      @create="resetConversation" @navigate-dashboard="router.push('/workspace')"
-      @navigate-projects="router.push('/projects')" @navigate-knowledge="router.push('/knowledge')"
-      @navigate-ai="router.push('/ai')" @search="openSearch" @notify="showComingSoon('通知中心')"
-      @settings="router.push('/settings/profile')" @profile="router.push('/settings/profile')">
+    <WorkspaceNavigationShell v-model="searchKeyword" active-nav="ai" brand-title="Erise AI 知识库" brand-subtitle=""
+      create-text="新建对话" :footer-title="selectedProjectDisplay || 'Erise AI 知识库 V1.0'"
+      :footer-copy="activeModel?.providerCode || '智能问答工作台'"
+      :footer-avatar="(selectedProjectDisplay || '知识').slice(0, 2)" :user-name="activeModel?.modelName || 'AI 助理'"
+      :user-role="sessionStatusText" :user-avatar="(activeModel?.modelName || '智').slice(0, 1)"
+      search-placeholder="搜索项目、知识库、文件或 AI 会话..." @create="resetConversation"
+      @navigate-dashboard="router.push('/workspace')" @navigate-projects="router.push('/projects')"
+      @navigate-knowledge="router.push('/knowledge')" @navigate-ai="router.push('/ai')" @search="openSearch"
+      @notify="showComingSoon('通知中心')" @settings="router.push('/settings/profile')"
+      @profile="router.push('/settings/profile')">
       <div class="workspace-shell-card app-card">
         <div class="ai-workspace">
           <aside class="conversation-history">
             <div class="conversation-history__head">
               <div>
+                <div class="conversation-history__eyebrow">最近会话</div>
                 <h3>会话列表</h3>
               </div>
-              <button type="button" class="soft-chip" :disabled="sending" @click="resetConversation">新对话</button>
             </div>
 
-            <div class="knowledge-card">
-              <!-- <div class="knowledge-card__head"> -->
-              <!-- <span class="section-eyebrow">Knowledge Base</span> -->
-              <!-- <button type="button" class="mini-link" @click="openAttachmentPicker">添加文件</button> -->
-              <!-- </div> -->
+            <button type="button" class="history-create-button" :disabled="sending" @click="resetConversation">
+              <span class="material-symbols-outlined">add_circle</span>
+              <span>新对话</span>
+            </button>
+
+            <label class="history-search">
+              <span class="material-symbols-outlined">search</span>
+              <input v-model.trim="sessionKeyword" type="text" placeholder="搜索会话..." />
+            </label>
+
+            <!-- <div class="knowledge-card">
               <div class="knowledge-subtabs">
                 <span class="section-eyebrow">知识库文件</span>
-
-                <!-- <button type="button" class="knowledge-subtabs__item is-active"
-                  @click="openAttachmentPicker">添加文件</button> -->
-                <!-- <button type="button" class="knowledge-subtabs__item" :disabled="sending || uploadingTempFile"
-                  @click="triggerTempFileUpload">
-                  {{ uploadingTempFile ? '上传中...' : '上传临时文件' }}
-                </button> -->
               </div>
-              <div v-if="selectedAttachments.length" class="knowledge-selected">
-                <button v-for="attachment in selectedAttachments.filter((item) => item.attachmentType === 'FILE')"
-                  :key="attachmentKeyOf(attachment)" type="button" class="selection-chip" :disabled="sending"
-                  @click="removeAttachment(attachment)">
-                  <span>{{ attachment.title || `文件 #${attachment.sourceId}` }}</span>
-                  <span>×</span>
-                </button>
+              <div v-if="selectedAttachments.length" class="temp-file-list">
+                <div v-for="attachment in selectedAttachments.filter((item) => item.attachmentType === 'FILE')"
+                  :key="attachmentKeyOf(attachment)" class="temp-file-chip">
+                  <div class="temp-file-chip__copy">
+                    <strong>{{ attachment.title || `文件 #${attachment.sourceId}` }}</strong>
+                  </div>
+                  <button type="button" class="temp-file-chip__remove" :disabled="sending"
+                    @click="removeAttachment(attachment)">×</button>
+                </div>
                 <button v-if="selectedAttachments.some((item) => item.attachmentType !== 'FILE')" type="button"
                   class="mini-link mini-link--block" @click="showUnavailable('当前只展示文件标签')">
                   还有其它类型资料已附加
                 </button>
               </div>
-              <div v-else class="knowledge-empty">还没有附加知识库文件。</div>
+              <div v-else class="knowledge-empty">还没有添加知识库文件。</div>
 
               <div class="knowledge-temp">
                 <div class="knowledge-temp__head">
                   <span class="section-eyebrow">临时文件</span>
-                  <!-- <span class="section-caption">{{ activeSessionId ? '仅当前会话可见' : '发送首条消息后可上传' }}</span> -->
                 </div>
                 <div v-if="tempFiles.length" class="temp-file-list">
                   <div v-for="tempFile in tempFiles" :key="tempFile.id" class="temp-file-chip"
@@ -60,6 +60,12 @@
                     <div class="temp-file-chip__copy">
                       <strong>{{ tempFile.fileName }}</strong>
                       <small>{{ tempFileStatusLabel(tempFile) }}</small>
+                      <small v-if="tempFile.parseErrorMessage" class="temp-file-chip__error">{{
+                        tempFile.parseErrorMessage }}</small>
+                      <button v-if="isTempFileFailed(tempFile)" type="button" class="temp-file-chip__retry"
+                        :disabled="sending || uploadingTempFile" @click="retryFailedTempFile(tempFile)">
+                        重新解析
+                      </button>
                     </div>
                     <button type="button" class="temp-file-chip__remove" :disabled="sending || uploadingTempFile"
                       @click="removeTempFile(tempFile)">
@@ -71,11 +77,11 @@
                   {{ activeSessionId ? '当前会话还没有临时文件。' : '当前会话还没有临时文件' }}
                 </div>
               </div>
-            </div>
+            </div> -->
 
             <div class="thread-list thread-list--history">
               <div v-for="session in visibleSessions" :key="session.id" class="thread-item"
-                :class="{ 'is-active': session.id === activeSessionId }">
+                :class="{ 'is-active': session.id === activeSessionId, 'is-hovering-delete': hoveredDeleteId === session.id }">
                 <button type="button" class="thread-item__main" @click="openSession(session.id)">
                   <div class="thread-item__title">{{ session.title }}</div>
                   <div class="thread-item__meta">
@@ -83,6 +89,7 @@
                   </div>
                 </button>
                 <button type="button" class="thread-item__delete" :disabled="sending"
+                  @mouseenter="onDeleteMouseEnter(session.id)" @mouseleave="onDeleteMouseLeave(session.id)"
                   @click="removeSession(session.id)">×</button>
               </div>
               <div v-if="!visibleSessions.length" class="thread-empty">这里还没有历史会话。发送第一条消息后，会自动生成会话记录。</div>
@@ -90,21 +97,29 @@
           </aside>
 
           <section class="chat-stage">
-            <!-- <div class="chat-stage__header"> -->
-            <!-- <div>
-                <h2>{{ activeSessionSummary?.title || 'Architectural Assistant' }}</h2>
-              </div> -->
-            <!-- <div class="chat-stage__meta">
-                <button type="button" class="model-chip" :disabled="sending" @click="showUnavailable('模型高级设置')">
-                  <span class="material-symbols-outlined">data_object</span>
-                  <span>{{ modelHeaderTitle }}</span>
-                </button>
-                <div class="run-chip" :class="{ 'is-live': sending }">
-                  <span class="run-chip__dot"></span>
-                  <span>{{ sessionStatusText }}</span>
+            <div class="chat-stage__header">
+              <div>
+                <h3>{{ sessionTitleText }}</h3>
+              </div>
+              <div class="chat-stage__meta">
+                <!-- <div class="header-model-chip"> -->
+                <!-- <span class="material-symbols-outlined">data_object</span> -->
+                <!-- <div class="header-model-chip__copy">
+                    <strong>{{ headerModelName }}</strong>
+                  </div> -->
+                <!-- </div> -->
+                <div class="web-search-toggle">
+                  <span class="web-search-toggle__label">联网搜索</span>
+                  <el-switch v-model="retrievalSettings.webSearchEnabledDefault" size="small" inline-prompt
+                    active-text="开" inactive-text="关" :loading="savingRetrievalSettings"
+                    :disabled="sending || savingRetrievalSettings" @change="handleWebSearchToggle" />
                 </div>
-              </div> -->
-            <!-- </div> -->
+                <!-- <div class="run-chip" :class="{ 'is-live': sending }">
+                  <span class="run-chip__dot"></span>
+                  <span>{{ thinkingStatusText }}</span>
+                </div> -->
+              </div>
+            </div>
 
             <section ref="messageListRef" class="message-board" :class="{ 'is-empty': !messages.length }">
               <div class="message-board__inner">
@@ -116,14 +131,23 @@
                 <div v-if="messages.length" class="transcript-list transcript-list--modern">
                   <article v-for="message in messages" :key="message.id" class="transcript-item"
                     :class="message.roleCode === 'USER' ? 'is-user' : 'is-assistant'">
-                    <div class="transcript-item__avatar">
-                      <span v-if="message.roleCode === 'USER'" class="material-symbols-outlined">person</span>
-                      <span v-else class="material-symbols-outlined"
-                        style="font-variation-settings: 'FILL' 1">smart_toy</span>
+                    <div class="transcript-item__avatar-wrap"
+                      :class="{ 'transcript-item__avatar-wrap--assistant': message.roleCode === 'ASSISTANT' }">
+                      <span v-if="assistantStatusLabel(message)"
+                        class="transcript-item__metric transcript-item__metric--aside">
+                        {{ assistantStatusLabel(message) }}
+                      </span>
+                      <div class="transcript-item__avatar"
+                        :class="{ 'transcript-item__avatar--assistant': message.roleCode === 'ASSISTANT' }">
+                        <span v-if="message.roleCode === 'USER'" class="material-symbols-outlined">person</span>
+                        <template v-else>
+                          <span class="material-symbols-outlined"
+                            style="font-variation-settings: 'FILL' 1">smart_toy</span>
+                        </template>
+                      </div>
                     </div>
                     <div class="transcript-item__panel">
                       <div class="transcript-item__head">
-                        <span class="transcript-item__label">{{ message.roleCode === 'USER' ? '你' : 'Erise AI' }}</span>
                         <span class="transcript-item__time">{{ formatTime(message.createdAt) }}</span>
                       </div>
                       <div class="transcript-item__body" :class="surfaceClasses(message)">
@@ -131,6 +155,10 @@
                           v-if="message.roleCode === 'ASSISTANT' && message.status === 'streaming' && !message.content"
                           class="thinking-dots">
                           <span></span><span></span><span></span>
+                        </div>
+                        <div v-else-if="message.roleCode === 'ASSISTANT'"
+                          class="transcript-item__content transcript-item__content--markdown"
+                          :class="{ 'is-collapsed': isCollapsed(message) }" v-html="renderAssistantContent(message)">
                         </div>
                         <div v-else class="transcript-item__content" :class="{ 'is-collapsed': isCollapsed(message) }">
                           {{ message.content || '...' }}
@@ -140,35 +168,98 @@
                         <div v-if="message.errorMessage" class="transcript-item__notice">{{ message.errorMessage }}
                         </div>
 
-                        <div v-if="message.citations?.length" class="citation-panel citation-panel--modern">
+                        <div v-if="privateCitationGroups(message).length" class="citation-panel citation-panel--modern">
                           <div class="citation-panel__title">引用来源</div>
-                          <button v-for="citation in message.citations"
-                            :key="`${citation.sourceType}-${citation.sourceId}-${citation.pageNo || 'na'}`"
-                            type="button" class="citation-card" @click="openCitation(citation)">
-                            <template v-if="citation.sourceType === 'WEB'">
-                              <strong class="citation-card__title citation-card__title--single">{{ citation.sourceTitle
-                              }}</strong>
-                            </template>
-                            <template v-else>
-                              <strong class="citation-card__title">{{ citation.sourceTitle }}</strong>
-                              <span>
-                                {{ citationSourceLabel(citation.sourceType) }}
-                                <template v-if="citation.pageNo"> · 第 {{ citation.pageNo }} 页</template>
-                              </span>
-                              <small>{{ citation.snippet || '暂无引用摘录' }}</small>
-                            </template>
-                          </button>
+                          <div class="citation-panel__section">
+                            <button v-for="group in privateCitationGroups(message)" :key="group.key" type="button"
+                              class="citation-card" @click="openCitation(group.representative)">
+                              <div class="citation-card__content">
+                                <strong class="citation-card__title">{{ group.title }}</strong>
+                                <small class="citation-card__meta">{{ privateCitationMeta(group) }}</small>
+                              </div>
+                            </button>
+                          </div>
                         </div>
 
-                        <button v-if="isCollapsible(message)" type="button" class="transcript-item__toggle"
-                          @click="toggleExpanded(message)">
-                          {{ message.expanded ? '收起' : '展开全部' }}
+                        <div v-if="visibleWebCitationGroups(message).length"
+                          class="citation-panel citation-panel--modern">
+                          <div class="citation-panel__title">联网搜索</div>
+                          <div class="citation-panel__section">
+                            <div v-for="group in visibleWebCitationGroups(message)" :key="group.key"
+                              class="citation-card citation-card--web">
+                              <div class="citation-card__content">
+                                <strong class="citation-card__title citation-card__title--single">{{ group.title
+                                }}</strong>
+                                <small class="citation-card__meta">{{ group.urlLabel || '网页引用' }}</small>
+                              </div>
+                              <button type="button" class="citation-card__action"
+                                @click="openCitation(group.representative)">
+                                网页
+                              </button>
+                            </div>
+                          </div>
+                        </div>
+                        <button v-if="hiddenWebCitationCount(message)" type="button" class="transcript-item__toggle"
+                          @click="toggleCitationExpansion(message)">
+                          {{ message.citationsExpanded ? '收起网页引用' : `查看剩余 ${hiddenWebCitationCount(message)} 条网页引用`
+                          }}
                         </button>
+
+
                         <button
                           v-if="message.roleCode === 'USER' && message.pendingQuestion && message.status === 'failed'"
                           type="button" class="retry-button" :disabled="sending" @click="retryMessage(message)">
                           重新发送
                         </button>
+
+                        <div v-if="message.roleCode === 'ASSISTANT' && assistantActionVisible(message)"
+                          class="assistant-actions">
+                          <button
+                            type="button"
+                            class="assistant-actions__button"
+                            :class="{ 'is-active': message.feedbackType === 'UP' }"
+                            :disabled="!canSubmitFeedback(message)"
+                            @click="submitAssistantFeedback(message, 'UP')"
+                          >
+                            <span class="material-symbols-outlined">thumb_up</span>
+                            <span>{{ message.feedbackType === 'UP' ? '已点赞' : '点赞' }}</span>
+                          </button>
+                          <button
+                            type="button"
+                            class="assistant-actions__button"
+                            :class="{ 'is-active': message.feedbackType === 'DOWN' }"
+                            :disabled="!canSubmitFeedback(message)"
+                            @click="submitAssistantFeedback(message, 'DOWN')"
+                          >
+                            <span class="material-symbols-outlined">thumb_down</span>
+                            <span>{{ message.feedbackType === 'DOWN' ? '已点踩' : '点踩' }}</span>
+                          </button>
+                          <button type="button" class="assistant-actions__button"
+                            :disabled="!assistantCopyText(message)" @click="copyAssistantReply(message)">
+                            <span class="material-symbols-outlined">content_copy</span>
+                            <span>复制</span>
+                          </button>
+                          <button type="button" class="assistant-actions__button"
+                            :disabled="sending || !assistantSourceQuestion(message)"
+                            @click="regenerateAssistantReply(message)">
+                            <span class="material-symbols-outlined">refresh</span>
+                            <span>刷新</span>
+                          </button>
+                        </div>
+                      </div>
+
+                      <div v-if="message.roleCode === 'USER' && message.attachments?.length"
+                        class="transcript-attachments">
+                        <div v-for="asset in message.attachments" :key="asset.key"
+                          class="composer-asset composer-asset--transcript" :class="assetSurfaceClass(asset)">
+                          <div class="composer-asset__icon">
+                            <span class="composer-asset__type">{{ assetTypeBadge(asset) }}</span>
+                          </div>
+                          <div class="composer-asset__copy">
+                            <strong>{{ asset.title }}</strong>
+                            <small>{{ asset.subtitle }}</small>
+                          </div>
+                        </div>
                       </div>
                     </div>
                   </article>
@@ -179,8 +270,7 @@
                     <span class="material-symbols-outlined" style="font-variation-settings: 'FILL' 1">smart_toy</span>
                   </div>
                   <div class="empty-stage__eyebrow">{{ activeModel?.modelName || 'Erise AI 助理' }}</div>
-                  <h2 class="empty-stage__title">Ask the digital curator anything.</h2>
-                  <p class="empty-stage__copy">先附加文件，再让 AI 帮你总结内容、提炼风险、列出待办，或者直接围绕当前项目继续分析。</p>
+                  <h3 class="empty-stage__title">今天有什么问题吗?</h3>
                   <div class="empty-stage__prompts">
                     <button v-for="prompt in quickPrompts" :key="prompt" type="button" class="prompt-card"
                       :disabled="sending" @click="usePrompt(prompt)">
@@ -191,52 +281,80 @@
               </div>
             </section>
 
-            <footer class="composer-wrap composer-wrap--architect">
-              <div class="composer-box composer-box--architect">
-                <div class="composer-box__toptools">
-                  <button type="button" class="toolbar-ghost" :disabled="sending" @click="openAttachmentPicker">
-                    <span class="material-symbols-outlined">attach_file</span>
-                    <span>知识库文件</span>
-                  </button>
-                  <button type="button" class="toolbar-ghost" :disabled="sending || uploadingTempFile"
-                    @click="triggerTempFileUpload">
-                    <span class="material-symbols-outlined">note_add</span>
-                    <span>{{ uploadingTempFile ? '上传中' : '临时文件' }}</span>
-                  </button>
-                  <button type="button" class="toolbar-ghost" @click="showUnavailable('图片上传')">
-                    <span class="material-symbols-outlined">image</span>
-                    <span>图片</span>
-                  </button>
-                  <div class="toolbar-model-picker">
-                    <span class="material-symbols-outlined">tune</span>
-                    <el-select v-model="selectedModelCode" size="small" class="toolbar-model-select"
-                      :disabled="sending || loadingModels || !modelChoices.length" placeholder="选择模型">
-                      <el-option v-for="model in modelChoices" :key="model.modelCode"
-                        :label="`${model.modelName} · ${model.providerCode}`" :value="model.modelCode" />
-                    </el-select>
+            <footer class="composer-wrap--architect">
+              <div class="composer-box--architect">
+                <div v-if="pendingComposerAssets.length" class="composer-staged-assets">
+                  <div v-for="asset in pendingComposerAssets" :key="asset.key" class="composer-asset"
+                    :class="assetSurfaceClass(asset)">
+                    <div class="composer-asset__icon">
+                      <span class="composer-asset__type">{{ assetTypeBadge(asset) }}</span>
+                    </div>
+                    <div class="composer-asset__copy">
+                      <strong>{{ asset.title }}</strong>
+                      <small>{{ asset.subtitle }}</small>
+                    </div>
+                    <button type="button" class="composer-asset__remove" :disabled="uploadingTempFile"
+                      @click="removeComposerAsset(asset)">
+                      <span class="material-symbols-outlined">close</span>
+                    </button>
                   </div>
                 </div>
 
-                <div class="composer-box__content">
+                <div class="composer-box__meta">
+                  <el-dropdown trigger="click" @command="handleComposerMenuCommand">
+                    <button type="button" class="composer-plus-button" :disabled="uploadingTempFile">
+                      <span class="material-symbols-outlined">add</span>
+                    </button>
+                    <template #dropdown>
+                      <el-dropdown-menu class="composer-dropdown">
+                        <el-dropdown-item command="knowledge">
+                          <span class="composer-dropdown__item">
+                            <span class="material-symbols-outlined">folder_managed</span>
+                            <span>知识库项目/文件</span>
+                          </span>
+                        </el-dropdown-item>
+                        <el-dropdown-item command="temp-file" :disabled="!activeSessionId || uploadingTempFile">
+                          <span class="composer-dropdown__item">
+                            <span class="material-symbols-outlined">upload_file</span>
+                            <span>{{ uploadingTempFile ? '上传中…' : '上传临时文件' }}</span>
+                          </span>
+                        </el-dropdown-item>
+
+                      </el-dropdown-menu>
+                    </template>
+                  </el-dropdown>
+
+
+
+                  <!-- <div class="composer-meta-pill composer-meta-pill--status">
+                    <span class="material-symbols-outlined">psychology</span>
+                    <span>{{ thinkingStatusText }}</span>
+                  </div> -->
+
+                  <div class="composer-model-picker">
+                    <span class="material-symbols-outlined">expand_circle_down</span>
+                    <el-select v-model="selectedModelCode" size="small" class="toolbar-model-select"
+                      :disabled="loadingModels || !modelChoices.length" placeholder="选择模型">
+                      <el-option v-for="model in modelChoices" :key="model.modelCode" :label="modelOptionLabel(model)"
+                        :value="model.modelCode" />
+                    </el-select>
+                  </div>
+
+                  <div v-if="selectedProjectDisplay" class="composer-meta-pill composer-meta-pill--project">
+                    <span class="material-symbols-outlined">folder</span>
+                    <span>{{ selectedProjectDisplay }}</span>
+                  </div>
+                </div>
+
+                <div class="composer-box__content composer-box__content--architect">
                   <textarea ref="composerRef" v-model="question"
-                    class="composer-box__input composer-box__input--architect" rows="1" :disabled="sending"
+                    class="composer-box__input composer-box__input--architect" rows="1"
                     :placeholder="composerPlaceholder" @input="resizeComposer" @keydown="handleComposerKeydown" />
 
-                  <div class="composer-box__toolbar">
-                    <div class="composer-box__left-tools">
-                      <button type="button" class="toolbar-chip" disabled>{{ modelProviderLabel }}</button>
-                      <button v-if="selectedProjectDisplay" type="button" class="toolbar-chip" disabled>{{
-                        selectedProjectDisplay
-                        }}</button>
-                      <button v-if="selectedAttachments.length" type="button" class="toolbar-chip" disabled>
-                        已附加 {{ selectedAttachments.length }} 份资料
-                      </button>
-                      <button v-if="tempFiles.length" type="button" class="toolbar-chip" disabled>
-                        临时文件 {{ indexedTempFiles.length }}/{{ tempFiles.length }}
-                      </button>
-                    </div>
+                  <div class="composer-box__toolbar composer-box__toolbar--architect">
+
                     <div class="composer-box__right-tools">
-                      <span class="composer-box__hint">Enter 发送，Shift + Enter 换行</span>
+                      <span class="composer-box__hint">回车发送，使用换行组合键可继续输入</span>
                       <button v-if="sending" type="button" class="send-button is-danger" :disabled="!currentRequestId"
                         @click="stopGeneration">停止生成</button>
                       <button v-else type="button" class="send-button send-button--architect" :disabled="!canSend"
@@ -247,10 +365,6 @@
                   </div>
                 </div>
               </div>
-              <p class="composer-footnote">
-                AI Assistant may provide generated content that still requires your review.
-                <button type="button" class="mini-link" @click="showUnavailable('服务条款')">Terms of Service</button>
-              </p>
             </footer>
           </section>
         </div>
@@ -275,12 +389,15 @@
             <div v-if="!draftProjectId" class="attachment-panel__empty">请先选择项目。</div>
             <div v-else-if="loadingAttachmentOptions" class="attachment-panel__empty">正在加载文件列表...</div>
             <div v-else-if="draftFiles.length" class="attachment-panel__list">
-              <label v-for="file in draftFiles" :key="`file-${file.id}`" class="attachment-option">
+              <label v-for="file in draftFiles" :key="`file-${file.id}`" class="attachment-option"
+                :class="{ 'is-disabled': !canAttachKnowledgeFile(file) }">
                 <input type="checkbox" :checked="draftAttachmentSelected('FILE', file.id)"
-                  @change="toggleDraftAttachment('FILE', file.id, file.fileName)" />
+                  :disabled="!canAttachKnowledgeFile(file)" @change="toggleDraftFileAttachment(file)" />
                 <span class="attachment-option__copy">
                   <strong>{{ file.fileName }}</strong>
-                  <small>{{ file.fileExt.toUpperCase() }} · {{ fileParseStatusLabel(file.parseStatus) }}</small>
+                  <small>{{ knowledgeFileStatusText(file) }}</small>
+                  <small v-if="file.parseErrorMessage" class="attachment-option__error">{{ file.parseErrorMessage
+                  }}</small>
                 </span>
               </label>
             </div>
@@ -324,6 +441,7 @@
 
 <script setup lang="ts">
 import dayjs from 'dayjs'
+import MarkdownIt from 'markdown-it'
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { useRoute, useRouter } from 'vue-router'
@@ -337,14 +455,18 @@ import {
   getSession,
   getSessions,
   getTempFiles,
+  retryTempFile,
+  submitAiMessageFeedback,
+  updateRetrievalSettings,
   uploadTempFile,
 } from '@/api/ai'
 import type { AiChatPayload } from '@/api/ai'
 import { getDocuments } from '@/api/document'
-import { getFiles } from '@/api/file'
+import { getFile, getFiles } from '@/api/file'
 import { getProjects } from '@/api/project'
 import { resolveApiUrl } from '@/api/http'
 import WorkspaceNavigationShell from '@/components/common/WorkspaceNavigationShell.vue'
+import { useKnowledgeStatusPolling } from '@/composables/useKnowledgeStatusPolling'
 import type {
   AiAttachmentPayload,
   AiChatResponse,
@@ -358,8 +480,34 @@ import type {
   FileView,
   ProjectDetailView,
 } from '@/types/models'
+import {
+  knowledgeReadinessLabel,
+  pickPreferredAiModel,
+  resolveKnowledgeReadiness,
+  sortAiModelsByPreference,
+} from '@/utils/formatters'
+import { copyToClipboard } from '@/utils/object-operations'
 
 type MessageStatus = 'sent' | 'sending' | 'streaming' | 'failed'
+type ComposerAssetState = 'ready' | 'pending' | 'failed'
+
+interface ComposerAssetSnapshot {
+  key: string
+  assetType: 'DOCUMENT' | 'FILE' | 'TEMP_FILE'
+  title: string
+  subtitle: string
+  sourceId?: number
+  tempFileId?: number
+  projectId?: number
+  sizeBytes?: number
+  state: ComposerAssetState
+}
+
+interface StoredMessageAssetRecord {
+  question: string
+  createdAt: string
+  attachments: ComposerAssetSnapshot[]
+}
 
 interface UiMessage {
   id: string
@@ -367,17 +515,27 @@ interface UiMessage {
   roleCode: 'USER' | 'ASSISTANT'
   content: string
   createdAt: string
+  streamStartedAt?: number
   refusedReason?: string
   status: MessageStatus
   pendingQuestion?: string
   errorMessage?: string
   expanded?: boolean
+  citationsExpanded?: boolean
   citations?: AiCitationView[]
+  modelCode?: string
+  providerCode?: string
+  latencyMs?: number
+  attachments?: ComposerAssetSnapshot[]
+  feedbackType?: 'UP' | 'DOWN'
+  feedbackSubmitting?: boolean
 }
 
 interface StreamDonePayload {
+  requestId?: string
   sessionId?: number
   messageId?: number
+  latencyMs?: number
 }
 
 interface DraftAttachmentOption {
@@ -386,11 +544,26 @@ interface DraftAttachmentOption {
   title: string
 }
 
+interface CitationGroup {
+  key: string
+  sourceType: string
+  title: string
+  snippet?: string
+  representative: AiCitationView
+  pageNumbers: number[]
+  pageLabel?: string
+  urlLabel?: string
+}
+
 const DEFAULT_RETRIEVAL_SETTINGS: AiRetrievalSettingView = {
   similarityThreshold: 0.75,
   topK: 5,
   webSearchEnabledDefault: false,
 }
+/**
+ * 显示“敬请期待”弹窗提示。
+ * @param feature 要提示的功能名称
+ */
 const showComingSoon = (feature: string) => {
   ElMessageBox.alert(`${feature} 当前功能还未开发`, '提示', {
     confirmButtonText: '确定',
@@ -401,14 +574,55 @@ const props = defineProps<{ id?: string }>()
 const route = useRoute()
 const router = useRouter()
 
+/**
+ * 将任意值解析为正整数，否则返回 undefined。
+ * @param value 要解析的值
+ */
 const parseNumber = (value: unknown) => {
   const parsed = Number(value)
   return Number.isFinite(parsed) && parsed > 0 ? parsed : undefined
 }
 
+const markdownRenderer = new MarkdownIt({
+  html: false,
+  linkify: true,
+  breaks: true,
+})
+
+const defaultLinkRenderer =
+  markdownRenderer.renderer.rules.link_open ||
+  ((tokens, idx, options, _env, self) => self.renderToken(tokens, idx, options))
+
+markdownRenderer.renderer.rules.link_open = (tokens, idx, options, env, self) => {
+  const token = tokens[idx]
+  token.attrSet('target', '_blank')
+  token.attrSet('rel', 'noopener noreferrer')
+  return defaultLinkRenderer(tokens, idx, options, env, self)
+}
+
+/**
+ * 构造本地唯一 ID，用于临时消息等。
+ * @param prefix ID 前缀
+ */
 const buildLocalId = (prefix: string) => `${prefix}-${Date.now()}-${Math.random().toString(16).slice(2)}`
+
+/**
+ * 会话附件在 sessionStorage 中的存储 key。
+ * @param sessionId 会话 ID
+ */
 const attachmentStorageKey = (sessionId: number) => `erise-ai-attachments:${sessionId}`
+const messageAttachmentStorageKey = (sessionId: number) => `erise-ai-message-attachments:${sessionId}`
+
+/**
+ * 生成附件的唯一键（用于 UI 列表等）。
+ * @param attachment 附件对象
+ */
 const attachmentKeyOf = (attachment: Pick<AiAttachmentPayload, 'attachmentType' | 'sourceId'>) => `${attachment.attachmentType}:${attachment.sourceId}`
+
+/**
+ * 将内部引用类型映射为可读标签。
+ * @param sourceType 引用类型
+ */
 const citationSourceLabel = (sourceType?: string) => ({
   DOCUMENT: '文档',
   FILE: '文件',
@@ -418,12 +632,10 @@ const citationSourceLabel = (sourceType?: string) => ({
   BOARD: '画板',
   DATA_TABLE: '数据表',
 }[sourceType || ''] || sourceType || '引用来源')
-const fileParseStatusLabel = (status?: string) => ({
-  PENDING: '待解析',
-  PROCESSING: '解析中',
-  COMPLETED: '已完成',
-  FAILED: '失败',
-}[status || ''] || status || '待处理')
+/**
+ * 将字节大小格式化为易读字符串（B / KB / MB）。
+ * @param size 字节数
+ */
 const formatBytes = (size?: number) => {
   const value = Number(size || 0)
   if (!Number.isFinite(value) || value <= 0) {
@@ -438,11 +650,19 @@ const formatBytes = (size?: number) => {
   return `${(value / (1024 * 1024)).toFixed(1)} MB`
 }
 
+/**
+ * 从后端错误对象中提取友好的错误消息。
+ * @param error 后端返回的错误对象
+ */
 const errorMessageOf = (error: unknown) => {
   const candidate = error as { response?: { data?: { message?: string; msg?: string } }; message?: string }
   return candidate?.response?.data?.message || candidate?.response?.data?.msg || candidate?.message || '请求失败，请稍后重试。'
 }
 
+/**
+ * 从原始字符串中解析后端可能返回的 JSON 错误消息。
+ * @param raw 原始响应文本
+ */
 const extractErrorMessage = (raw: string) => {
   if (!raw) {
     return ''
@@ -461,7 +681,16 @@ const extractErrorMessage = (raw: string) => {
   return raw.trim()
 }
 
+/**
+ * 将时间字符串格式化为 `MM-DD HH:mm`，若为空返回 `--`。
+ * @param value 时间字符串
+ */
 const formatTime = (value?: string) => (value ? dayjs(value).format('MM-DD HH:mm') : '--')
+
+/**
+ * 返回相对于当前时间的友好描述（几天前/几小时/几分钟/刚刚）。
+ * @param value 时间字符串
+ */
 const relativeTime = (value?: string) => {
   if (!value) {
     return '--'
@@ -495,9 +724,11 @@ const attachmentDialogVisible = ref(false)
 const selectedModelCode = ref('')
 const currentRequestId = ref('')
 const searchKeyword = ref('')
+const sessionKeyword = ref('')
 const question = ref('')
 const sending = ref(false)
 const uploadingTempFile = ref(false)
+const savingRetrievalSettings = ref(false)
 const activeSessionId = ref<number | undefined>()
 const selectedProjectId = ref<number | undefined>()
 const draftProjectId = ref<number | undefined>()
@@ -518,34 +749,42 @@ const projectLookup = computed(() => new Map(selectableProjects.value.map((proje
 const activeProjectId = computed(() => routeProjectId.value || selectedProjectId.value)
 const activeProject = computed(() => (activeProjectId.value ? projectLookup.value.get(activeProjectId.value) : undefined))
 const selectedProjectDisplay = computed(() => activeProject.value?.name || (activeProjectId.value ? `项目 #${activeProjectId.value}` : ''))
-const indexedTempFiles = computed(() => tempFiles.value.filter((item) => item.indexStatus === 'INDEXED'))
 const hasScopedContext = computed(() =>
-  Boolean(activeProjectId.value || selectedAttachments.value.length || indexedTempFiles.value.length),
+  Boolean(activeProjectId.value || selectedAttachments.value.length || tempFiles.value.length),
 )
 
 const baseAiPath = computed(() => (props.id ? `/projects/${props.id}/ai` : '/ai'))
 const visibleSessions = computed(() => {
+  const keyword = sessionKeyword.value.trim().toLowerCase()
   if (!projectLocked.value || !routeProjectId.value) {
-    return sessions.value
+    return keyword
+      ? sessions.value.filter((session) => session.title.toLowerCase().includes(keyword))
+      : sessions.value
   }
-  return sessions.value.filter((session) => session.projectId === routeProjectId.value || session.id === activeSessionId.value)
+  const scoped = sessions.value.filter((session) => session.projectId === routeProjectId.value || session.id === activeSessionId.value)
+  return keyword
+    ? scoped.filter((session) => session.title.toLowerCase().includes(keyword))
+    : scoped
 })
 const modelChoices = computed(() => {
   const preferredProviders = new Set(['openai', 'deepseek'])
   const filtered = availableModels.value.filter((model) => preferredProviders.has((model.providerCode || '').toLowerCase()))
-  return filtered.length ? filtered : availableModels.value
+  return sortAiModelsByPreference(filtered.length ? filtered : availableModels.value)
 })
 const activeSessionSummary = computed(() => sessions.value.find((session) => session.id === activeSessionId.value))
 const activeModel = computed(() => {
   if (!modelChoices.value.length) {
     return undefined
   }
-  return modelChoices.value.find((model) => model.modelCode === selectedModelCode.value) || modelChoices.value[0]
+  return pickPreferredAiModel(modelChoices.value, selectedModelCode.value)
 })
-// const sessionTitleText = computed(() => activeSessionSummary.value?.title || (messages.value.length ? '当前对话' : '开始一段新对话'))
+const lastAssistantMessage = computed(() =>
+  [...messages.value].reverse().find((message) => message.roleCode === 'ASSISTANT'),
+)
+const sessionTitleText = computed(() => activeSessionSummary.value?.title || (messages.value.length ? '当前对话' : '开始一段新对话'))
 const sessionStatusText = computed(() => {
   if (sending.value) {
-    return `AI 正在回复 (${runningSeconds.value}s)`
+    return `正在回复 (${runningSeconds.value}s)`
   }
   if (networkError.value) {
     return '对话暂时中断'
@@ -555,7 +794,7 @@ const sessionStatusText = computed(() => {
 const composerPlaceholder = computed(() =>
   routeProjectId.value
     ? '围绕当前项目继续提问，或先附加文档、文件、临时资料后再发起指令。'
-    : '输入你的问题，或先附加项目资料与临时文件。',
+    : '输入你的问题。',
 )
 const runningSeconds = computed(() => {
   if (!sending.value || !sendStartedAt.value) {
@@ -564,8 +803,52 @@ const runningSeconds = computed(() => {
   return Math.max(1, Math.floor((clockNow.value - sendStartedAt.value) / 1000))
 })
 const canSend = computed(() => Boolean(question.value.trim()) && !sending.value)
-const modelHeaderTitle = computed(() => activeModel.value?.modelName || '未选择模型')
+const pendingComposerAssets = computed<ComposerAssetSnapshot[]>(() => [
+  ...selectedAttachments.value.map((attachment) => ({
+    key: attachmentKeyOf(attachment),
+    assetType: attachment.attachmentType,
+    title: attachment.title || `${citationSourceLabel(attachment.attachmentType)} #${attachment.sourceId}`,
+    subtitle: attachment.attachmentType === 'FILE' ? '知识库文件' : '知识库文档',
+    sourceId: attachment.sourceId,
+    projectId: attachment.projectId,
+    state: 'ready' as const,
+  })),
+  ...tempFiles.value.map((file) => ({
+    key: `TEMP_FILE:${file.id}`,
+    assetType: 'TEMP_FILE' as const,
+    title: file.fileName,
+    subtitle: tempFileStatusLabel(file),
+    tempFileId: file.id,
+    sourceId: file.id,
+    projectId: file.projectId,
+    sizeBytes: file.sizeBytes,
+    state: tempFileState(file) as ComposerAssetState,
+  })),
+])
 const modelProviderLabel = computed(() => activeModel.value?.providerCode || (loadingModels.value ? '加载中' : '模型服务'))
+const headerModelName = computed(() => {
+  const modelCode = lastAssistantMessage.value?.modelCode
+  if (modelCode) {
+    const matched = modelChoices.value.find((model) => model.modelCode === modelCode)
+    if (matched?.modelName) {
+      return matched.modelName
+    }
+  }
+  return activeModel.value?.modelName || '未选择模型'
+})
+const headerProviderName = computed(() =>
+  lastAssistantMessage.value?.providerCode || activeModel.value?.providerCode || (loadingModels.value ? '加载中' : '模型服务'),
+)
+// const thinkingStatusText = computed(() => {
+//   if (sending.value) {
+//     return `思考中 ${runningSeconds.value}s`
+//   }
+//   const latencyMs = lastAssistantMessage.value?.latencyMs
+//   if (latencyMs && latencyMs > 0) {
+//     return latencyMs >= 1000 ? `思考耗时 ${(latencyMs / 1000).toFixed(latencyMs >= 10000 ? 0 : 1)}s` : `思考耗时 ${latencyMs}ms`
+//   }
+//   return sessionStatusText.value
+// })
 // const modelModeLabel = computed(() => (activeModel.value?.supportStream === false ? '普通回复' : '流式回复'))
 const quickPrompts = computed(() => [
   selectedAttachments.value.length || indexedTempFiles.value.length
@@ -578,22 +861,24 @@ const quickPrompts = computed(() => [
 let tickHandle: number | undefined
 let tempFilePollHandle: number | undefined
 
-const isTempFileReady = (file: AiTempFileView) => file.indexStatus === 'INDEXED' || file.parseStatus === 'INDEXED'
-const isTempFileFailed = (file: AiTempFileView) => ['FAILED', 'DELETED'].includes(file.indexStatus) || ['FAILED', 'DELETED'].includes(file.parseStatus)
-const isTempFilePending = (file: AiTempFileView) =>
-  !isTempFileReady(file) && !isTempFileFailed(file) && ['PENDING', 'PROCESSING'].includes(file.indexStatus || file.parseStatus)
+const hoveredDeleteId = ref<number | undefined>(undefined)
+const onDeleteMouseEnter = (id: number) => {
+  hoveredDeleteId.value = id
+}
+const onDeleteMouseLeave = (id: number) => {
+  if (hoveredDeleteId.value === id) {
+    hoveredDeleteId.value = undefined
+  }
+}
+
+const tempFileState = (file: AiTempFileView) => resolveKnowledgeReadiness(file.parseStatus, file.indexStatus)
+const isTempFileReady = (file: AiTempFileView) => tempFileState(file) === 'ready'
+const isTempFileFailed = (file: AiTempFileView) => tempFileState(file) === 'failed'
+const isTempFilePending = (file: AiTempFileView) => ['pending', 'processing'].includes(tempFileState(file))
+const indexedTempFiles = computed(() => tempFiles.value.filter((item) => isTempFileReady(item)))
 
 const tempFileStatusLabel = (file: AiTempFileView) => {
-  if (isTempFileReady(file)) {
-    return `已可引用 · ${formatBytes(file.sizeBytes)}`
-  }
-  if (isTempFileFailed(file)) {
-    return `处理失败 · ${formatBytes(file.sizeBytes)}`
-  }
-  if (file.indexStatus === 'PROCESSING' || file.parseStatus === 'PROCESSING') {
-    return `处理中 · ${formatBytes(file.sizeBytes)}`
-  }
-  return `待处理 · ${formatBytes(file.sizeBytes)}`
+  return `${knowledgeReadinessLabel(file.parseStatus, file.indexStatus)} · ${formatBytes(file.sizeBytes)}`
 }
 
 const tempFileSurfaceClass = (file: AiTempFileView) => ({
@@ -602,6 +887,33 @@ const tempFileSurfaceClass = (file: AiTempFileView) => ({
   'is-failed': isTempFileFailed(file),
 })
 
+const attachmentFocusedQuestion = (value: string) =>
+  /(这个|这份|该|上传的|附加的|发给你的).{0,8}(文档|文件|附件|资料|pdf)|(?:总结|概括|介绍|解释|说明).{0,8}(文档|文件|附件|pdf)|(?:this|the)\s+(?:document|file|attachment|pdf)|(?:uploaded|attached)\s+(?:document|file|pdf)/i.test(value)
+
+const knowledgeFileState = (file: FileView) => resolveKnowledgeReadiness(file.parseStatus, file.indexStatus)
+
+const canAttachKnowledgeFile = (file: FileView) => knowledgeFileState(file) === 'ready'
+
+const knowledgeFileStatusText = (file: FileView) => {
+  const fileType = (file.fileExt || 'file').toUpperCase()
+  return `${fileType} · ${knowledgeReadinessLabel(file.parseStatus, file.indexStatus)}`
+}
+
+const modelOptionLabel = (model: AiModelView) => {
+  const provider = (model.providerCode || '').toUpperCase()
+  if (provider === 'DEEPSEEK') {
+    return `${model.modelName}  `
+  }
+  if (provider === 'OPENAI') {
+    return `${model.modelName} `
+  }
+  return `${model.modelName} · ${model.providerCode}`
+}
+
+/**
+ * 将后端消息 AiMessageView 转换为前端 UiMessage。
+ * 默认将消息 `expanded` 设为 true，使助理回复默认展开以便阅读完整内容。
+ */
 const toUiMessage = (message: AiMessageView): UiMessage => ({
   id: String(message.id),
   serverId: message.id,
@@ -611,12 +923,291 @@ const toUiMessage = (message: AiMessageView): UiMessage => ({
   refusedReason: message.refusedReason,
   status: message.status === 'streaming' ? 'streaming' : 'sent',
   errorMessage: message.errorMessage,
-  expanded: false,
+  pendingQuestion: message.roleCode === 'USER' ? message.content : undefined,
+  expanded: true,
+  citationsExpanded: false,
   citations: message.citations || [],
+  modelCode: message.modelCode,
+  providerCode: message.providerCode,
+  latencyMs: message.latencyMs,
+  feedbackType: undefined,
+  feedbackSubmitting: false,
 })
 
-const isCollapsible = (message: UiMessage) => message.content.length > 560 || (message.content.match(/\n/g)?.length ?? 0) > 12
+const stripTrailingCitationAppendix = (content: string) => {
+  const normalized = (content || '').trimEnd()
+  if (!normalized) {
+    return ''
+  }
+  return normalized
+    .replace(/(?:\r?\n){2,}(?:#{1,6}\s*)?(?:引用来源|参考网页|参考链接|Sources?|References?)\s*[:：]?\s*[\s\S]*$/i, '')
+    .trimEnd()
+}
+
+const assistantContentOf = (message: UiMessage) => {
+  const cleaned = stripTrailingCitationAppendix(message.content || '')
+  return cleaned || message.content || '...'
+}
+
+const renderAssistantContent = (message: UiMessage) => markdownRenderer.render(assistantContentOf(message))
+
+const assistantCopyText = (message: UiMessage) => assistantContentOf(message).trim()
+
+const assistantActionVisible = (message: UiMessage) =>
+  message.roleCode === 'ASSISTANT' && Boolean(assistantCopyText(message) || message.errorMessage)
+
+const canSubmitFeedback = (message: UiMessage) =>
+  message.roleCode === 'ASSISTANT' &&
+  Boolean(message.serverId) &&
+  !message.feedbackSubmitting &&
+  !sending.value
+
+const formatThinkingDuration = (latencyMs: number) =>
+  latencyMs >= 1000
+    ? `思考耗时 ${(latencyMs / 1000).toFixed(latencyMs >= 10000 ? 0 : 1)}s`
+    : `思考耗时 ${latencyMs}ms`
+
+const assistantThinkingLabel = (message: UiMessage) => {
+  if (message.roleCode !== 'ASSISTANT') {
+    return ''
+  }
+  if (message.status === 'streaming') {
+    return message.latencyMs && message.latencyMs > 0 ? formatThinkingDuration(message.latencyMs) : '思考中'
+  }
+  if (!message.latencyMs || message.latencyMs <= 0) {
+    return ''
+  }
+  return formatThinkingDuration(message.latencyMs)
+}
+
+const assistantStatusLabel = (message: UiMessage) => {
+  if (message.roleCode !== 'ASSISTANT') {
+    return ''
+  }
+  if (message.status === 'streaming') {
+    const startedAt = message.streamStartedAt || sendStartedAt.value
+    if (!startedAt) {
+      return assistantThinkingLabel(message)
+    }
+    const seconds = Math.max(1, Math.floor((clockNow.value - startedAt) / 1000))
+    return `思考中 ${seconds}s`
+  }
+  return assistantThinkingLabel(message)
+}
+
+const assetTypeBadge = (asset: ComposerAssetSnapshot) => {
+  if (asset.assetType === 'DOCUMENT') {
+    return 'DOC'
+  }
+  const fileName = asset.title || ''
+  const extension = fileName.includes('.') ? fileName.split('.').pop() || '' : ''
+  const badge = extension.trim().toUpperCase()
+  return (badge || (asset.assetType === 'TEMP_FILE' ? 'FILE' : asset.assetType)).slice(0, 4)
+}
+
+const assetSurfaceClass = (asset: ComposerAssetSnapshot) => ({
+  'is-ready': asset.state === 'ready',
+  'is-pending': asset.state === 'pending',
+  'is-failed': asset.state === 'failed',
+})
+
+const cloneComposerAssets = (attachments: ComposerAssetSnapshot[]) => attachments.map((item) => ({ ...item }))
+
+const readStoredMessageAssets = (sessionId?: number): StoredMessageAssetRecord[] => {
+  if (!sessionId) {
+    return []
+  }
+  const raw = window.sessionStorage.getItem(messageAttachmentStorageKey(sessionId))
+  if (!raw) {
+    return []
+  }
+  try {
+    const parsed = JSON.parse(raw) as StoredMessageAssetRecord[]
+    return Array.isArray(parsed)
+      ? parsed.filter((item) => item?.question && item?.createdAt && Array.isArray(item.attachments))
+      : []
+  } catch {
+    window.sessionStorage.removeItem(messageAttachmentStorageKey(sessionId))
+    return []
+  }
+}
+
+const writeStoredMessageAssets = (sessionId: number, records: StoredMessageAssetRecord[]) => {
+  window.sessionStorage.setItem(messageAttachmentStorageKey(sessionId), JSON.stringify(records))
+}
+
+const syncStoredFileTitle = (sessionId: number | undefined, fileId: number, nextTitle: string) => {
+  if (!sessionId) {
+    return
+  }
+  const records = readStoredMessageAssets(sessionId)
+  if (!records.length) {
+    return
+  }
+  let changed = false
+  const nextRecords = records.map((record) => {
+    const nextAttachments = record.attachments.map((attachment) => {
+      if (attachment.assetType !== 'FILE' || attachment.sourceId !== fileId || attachment.title === nextTitle) {
+        return attachment
+      }
+      changed = true
+      return {
+        ...attachment,
+        title: nextTitle,
+      }
+    })
+    return changed ? { ...record, attachments: nextAttachments } : record
+  })
+  if (changed) {
+    writeStoredMessageAssets(sessionId, nextRecords)
+  }
+}
+
+const persistMessageAssetRecord = (sessionId: number | undefined, record: StoredMessageAssetRecord) => {
+  if (!sessionId || !record.attachments.length) {
+    return
+  }
+  const records = readStoredMessageAssets(sessionId)
+  const exists = records.some((item) => item.question === record.question && item.createdAt === record.createdAt)
+  if (exists) {
+    return
+  }
+  writeStoredMessageAssets(
+    sessionId,
+    [...records, { ...record, attachments: cloneComposerAssets(record.attachments) }].slice(-80),
+  )
+}
+
+const removeStoredMessageAssets = (sessionId: number) => {
+  window.sessionStorage.removeItem(messageAttachmentStorageKey(sessionId))
+}
+
+const attachStoredAssets = (sessionId: number | undefined, sourceMessages: UiMessage[]) => {
+  if (!sessionId || !sourceMessages.length) {
+    return sourceMessages
+  }
+  const records = readStoredMessageAssets(sessionId)
+  if (!records.length) {
+    return sourceMessages
+  }
+  const used = new Set<number>()
+  return sourceMessages.map((message) => {
+    if (message.roleCode !== 'USER') {
+      return message
+    }
+    const matchedIndex = records.findIndex((record, index) => {
+      if (used.has(index)) {
+        return false
+      }
+      return record.question.trim() === (message.pendingQuestion || message.content || '').trim()
+    })
+    if (matchedIndex < 0) {
+      return message
+    }
+    used.add(matchedIndex)
+    return {
+      ...message,
+      attachments: cloneComposerAssets(records[matchedIndex].attachments),
+    }
+  })
+}
+
+const pageLabelFromNumbers = (pageNumbers: number[]) => {
+  if (!pageNumbers.length) {
+    return ''
+  }
+  const sorted = [...pageNumbers].sort((left, right) => left - right)
+  return `第 ${sorted.join('、')} 页`
+}
+
+const urlLabelOf = (url?: string) => {
+  if (!url) {
+    return '网页引用'
+  }
+  try {
+    return new URL(url).hostname
+  } catch {
+    return url
+  }
+}
+
+const citationGroupsOf = (message: UiMessage) => {
+  const privateGroups = new Map<string, CitationGroup>()
+  const webGroups = new Map<string, CitationGroup>()
+
+  for (const citation of message.citations || []) {
+    if (citation.sourceType === 'WEB') {
+      const key = citation.url || `WEB:${citation.sourceId}:${citation.sourceTitle}`
+      const existing = webGroups.get(key)
+      if (existing) {
+        if (!existing.snippet && citation.snippet) {
+          existing.snippet = citation.snippet
+        }
+        continue
+      }
+      webGroups.set(key, {
+        key,
+        sourceType: citation.sourceType,
+        title: citation.sourceTitle || citation.url || '网页引用',
+        snippet: citation.snippet,
+        representative: citation,
+        pageNumbers: [],
+        urlLabel: urlLabelOf(citation.url),
+      })
+      continue
+    }
+
+    const key = `${citation.sourceType}:${citation.sourceId}`
+    const existing = privateGroups.get(key)
+    if (existing) {
+      if (citation.pageNo && !existing.pageNumbers.includes(citation.pageNo)) {
+        existing.pageNumbers.push(citation.pageNo)
+        existing.pageLabel = pageLabelFromNumbers(existing.pageNumbers)
+      }
+      if (!existing.snippet && citation.snippet) {
+        existing.snippet = citation.snippet
+      }
+      continue
+    }
+    const pageNumbers = citation.pageNo ? [citation.pageNo] : []
+    privateGroups.set(key, {
+      key,
+      sourceType: citation.sourceType,
+      title: citation.sourceTitle || `${citationSourceLabel(citation.sourceType)} #${citation.sourceId}`,
+      snippet: citation.snippet,
+      representative: citation,
+      pageNumbers,
+      pageLabel: pageLabelFromNumbers(pageNumbers) || undefined,
+    })
+  }
+
+  return {
+    privateGroups: Array.from(privateGroups.values()),
+    webGroups: Array.from(webGroups.values()),
+  }
+}
+
+const privateCitationGroups = (message: UiMessage) => citationGroupsOf(message).privateGroups
+const webCitationGroups = (message: UiMessage) => citationGroupsOf(message).webGroups
+const privateCitationMeta = (group: CitationGroup) =>
+  [citationSourceLabel(group.sourceType), group.pageLabel].filter(Boolean).join(' · ') || '知识库引用'
+const visibleWebCitationGroups = (message: UiMessage) => {
+  const groups = webCitationGroups(message)
+  return message.citationsExpanded ? groups : groups.slice(0, 1)
+}
+const hiddenWebCitationCount = (message: UiMessage) => Math.max(webCitationGroups(message).length - 1, 0)
+const toggleCitationExpansion = (message: UiMessage) => {
+  message.citationsExpanded = !message.citationsExpanded
+}
+
+// 判断消息是否足够长，可以折叠显示
+const isCollapsible = (message: UiMessage) => {
+  const content = message.roleCode === 'ASSISTANT' ? assistantContentOf(message) : message.content
+  return content.length > 560 || (content.match(/\n/g)?.length ?? 0) > 12
+}
+// 判断消息当前是否处于折叠状态（可折叠且未展开）
 const isCollapsed = (message: UiMessage) => isCollapsible(message) && !message.expanded
+// 切换消息展开/折叠状态（保留接口以备将来使用）
 const toggleExpanded = (message: UiMessage) => {
   message.expanded = !message.expanded
 }
@@ -628,15 +1219,21 @@ const surfaceClasses = (message: UiMessage) => ({
 const draftAttachmentSelected = (attachmentType: 'DOCUMENT' | 'FILE', sourceId: number) =>
   draftAttachmentKeys.value.includes(`${attachmentType}:${sourceId}`)
 
+/**
+ * 根据输入框内容动态调整 composer 文本域高度，最大高度与 CSS 保持一致（160px）。
+ */
 const resizeComposer = async () => {
   await nextTick()
   if (!composerRef.value) {
     return
   }
   composerRef.value.style.height = '0px'
-  composerRef.value.style.height = `${Math.min(composerRef.value.scrollHeight, 220)}px`
+  composerRef.value.style.height = `${Math.min(composerRef.value.scrollHeight, 160)}px`
 }
 
+/**
+ * 处理 composer 的回车按键：按 Enter（非 Shift+Enter）触发发送。
+ */
 const handleComposerKeydown = (event: KeyboardEvent) => {
   if (event.key !== 'Enter' || event.shiftKey || event.isComposing) {
     return
@@ -645,6 +1242,9 @@ const handleComposerKeydown = (event: KeyboardEvent) => {
   void send()
 }
 
+/**
+ * 滚动消息列表到底部，确保最新消息可见。
+ */
 const scrollToBottom = async () => {
   await nextTick()
   if (messageListRef.value) {
@@ -652,6 +1252,9 @@ const scrollToBottom = async () => {
   }
 }
 
+/**
+ * 启动页面内的时钟，用于显示相对时间/更新时间等实时信息。
+ */
 const startClock = () => {
   if (tickHandle) {
     window.clearInterval(tickHandle)
@@ -661,6 +1264,9 @@ const startClock = () => {
   }, 1000)
 }
 
+/**
+ * 停止页面内时钟，清理定时器。
+ */
 const stopClock = () => {
   if (tickHandle) {
     window.clearInterval(tickHandle)
@@ -668,6 +1274,9 @@ const stopClock = () => {
   }
 }
 
+/**
+ * 停止临时文件解析的轮询定时器（如果存在）。
+ */
 const stopTempFilePolling = () => {
   if (tempFilePollHandle) {
     window.clearInterval(tempFilePollHandle)
@@ -675,6 +1284,10 @@ const stopTempFilePolling = () => {
   }
 }
 
+/**
+ * 启动针对当前会话的临时文件解析状态轮询（每 3 秒一次）。
+ * @param sessionId 会话 ID
+ */
 const startTempFilePolling = (sessionId: number) => {
   stopTempFilePolling()
   tempFilePollHandle = window.setInterval(() => {
@@ -724,6 +1337,70 @@ const removeAttachmentState = (sessionId: number) => {
   window.sessionStorage.removeItem(attachmentStorageKey(sessionId))
 }
 
+const syncReferencedFileTitle = async (fileId: number) => {
+  try {
+    const detail = await getFile(fileId, { background: true })
+    const nextTitle = detail.fileName?.trim()
+    if (!nextTitle) {
+      return
+    }
+
+    selectedAttachments.value = selectedAttachments.value.map((attachment) =>
+      attachment.attachmentType === 'FILE' && attachment.sourceId === fileId
+        ? { ...attachment, title: nextTitle }
+        : attachment,
+    )
+    draftFiles.value = draftFiles.value.map((file) =>
+      file.id === fileId
+        ? { ...file, fileName: nextTitle }
+        : file,
+    )
+    draftAttachmentOptions.value = draftAttachmentOptions.value.map((item) =>
+      item.attachmentType === 'FILE' && item.sourceId === fileId
+        ? { ...item, title: nextTitle }
+        : item,
+    )
+    messages.value = messages.value.map((message) => {
+      const nextAttachments = message.attachments?.map((attachment) =>
+        attachment.assetType === 'FILE' && attachment.sourceId === fileId
+          ? { ...attachment, title: nextTitle }
+          : attachment,
+      )
+      const nextCitations = message.citations?.map((citation) =>
+        citation.sourceType === 'FILE' && citation.sourceId === fileId
+          ? { ...citation, sourceTitle: nextTitle }
+          : citation,
+      )
+      if (nextAttachments === message.attachments && nextCitations === message.citations) {
+        return message
+      }
+      return {
+        ...message,
+        attachments: nextAttachments,
+        citations: nextCitations,
+      }
+    })
+    persistAttachmentState(activeSessionId.value)
+    syncStoredFileTitle(activeSessionId.value, fileId, nextTitle)
+  } catch {
+    // Ignore best-effort reference refresh failures to avoid interrupting the chat flow.
+  }
+}
+
+const syncReferencedFileTitles = async (attachments: ComposerAssetSnapshot[] = []) => {
+  const fileIds = Array.from(
+    new Set(
+      attachments
+        .filter((attachment) => attachment.assetType === 'FILE' && attachment.sourceId)
+        .map((attachment) => Number(attachment.sourceId))
+        .filter((value) => Number.isFinite(value) && value > 0),
+    ),
+  )
+  for (const fileId of fileIds) {
+    await syncReferencedFileTitle(fileId)
+  }
+}
+
 const loadProjects = async (silent = true) => {
   try {
     const page = await getProjects({ pageNum: 1, pageSize: 100 })
@@ -740,6 +1417,31 @@ const loadRetrievalPreference = async () => {
     retrievalSettings.value = await getRetrievalSettings()
   } catch {
     retrievalSettings.value = { ...DEFAULT_RETRIEVAL_SETTINGS }
+  }
+}
+
+const handleWebSearchToggle = async (value: string | number | boolean) => {
+  const nextValue = Boolean(value)
+  const previousValue = !nextValue
+  savingRetrievalSettings.value = true
+  try {
+    retrievalSettings.value = {
+      ...retrievalSettings.value,
+      webSearchEnabledDefault: nextValue,
+    }
+    await updateRetrievalSettings({
+      similarityThreshold: retrievalSettings.value.similarityThreshold,
+      topK: retrievalSettings.value.topK,
+      webSearchEnabledDefault: nextValue,
+    })
+  } catch (error) {
+    retrievalSettings.value = {
+      ...retrievalSettings.value,
+      webSearchEnabledDefault: previousValue,
+    }
+    ElMessage.error(errorMessageOf(error))
+  } finally {
+    savingRetrievalSettings.value = false
   }
 }
 
@@ -801,6 +1503,14 @@ const refreshAttachmentOptions = async (projectId?: number) => {
   }
 }
 
+useKnowledgeStatusPolling({
+  records: draftFiles,
+  reload: async () => {
+    await refreshAttachmentOptions(draftProjectId.value)
+  },
+  enabled: () => attachmentDialogVisible.value && !!draftProjectId.value,
+})
+
 const setDraftSelectionFromCurrent = () => {
   draftProjectId.value = activeProjectId.value
   draftAttachmentKeys.value = selectedAttachments.value.map((attachment) => attachmentKeyOf(attachment))
@@ -823,6 +1533,14 @@ const toggleDraftAttachment = (attachmentType: 'DOCUMENT' | 'FILE', sourceId: nu
   if (!draftAttachmentOptions.value.some((item) => item.attachmentType === attachmentType && item.sourceId === sourceId)) {
     draftAttachmentOptions.value = [...draftAttachmentOptions.value, { attachmentType, sourceId, title }]
   }
+}
+
+const toggleDraftFileAttachment = (file: FileView) => {
+  if (!canAttachKnowledgeFile(file)) {
+    ElMessage.warning(file.parseErrorMessage || '当前文件尚未完成解析，暂时不能加入对话')
+    return
+  }
+  toggleDraftAttachment('FILE', file.id, file.fileName)
 }
 
 const clearAttachmentSelection = () => {
@@ -854,6 +1572,41 @@ const removeAttachment = (attachment: AiAttachmentPayload) => {
   persistAttachmentState(activeSessionId.value)
 }
 
+const removeComposerAsset = async (asset: ComposerAssetSnapshot) => {
+  if (asset.assetType === 'TEMP_FILE' && asset.tempFileId) {
+    const target = tempFiles.value.find((item) => item.id === asset.tempFileId)
+    if (target) {
+      await removeTempFile(target)
+    }
+    return
+  }
+  if (!asset.sourceId || (asset.assetType !== 'FILE' && asset.assetType !== 'DOCUMENT')) {
+    return
+  }
+  removeAttachment({
+    attachmentType: asset.assetType,
+    sourceId: asset.sourceId,
+    projectId: asset.projectId,
+    title: asset.title,
+  })
+}
+
+const handleComposerMenuCommand = async (command: string | number | object) => {
+  switch (String(command)) {
+    case 'knowledge':
+      await openAttachmentPicker()
+      break
+    case 'temp-file':
+      triggerTempFileUpload()
+      break
+    case 'new-conversation':
+      await resetConversation()
+      break
+    default:
+      break
+  }
+}
+
 const ensureTempFileSession = () => {
   if (activeSessionId.value) {
     return true
@@ -863,7 +1616,7 @@ const ensureTempFileSession = () => {
 }
 
 const triggerTempFileUpload = () => {
-  if (!ensureTempFileSession() || sending.value || uploadingTempFile.value) {
+  if (!ensureTempFileSession() || uploadingTempFile.value) {
     return
   }
   tempFileInputRef.value?.click()
@@ -903,6 +1656,19 @@ const handleTempFilePicked = async (event: Event) => {
   }
 }
 
+const retryFailedTempFile = async (file: AiTempFileView) => {
+  try {
+    const retried = await retryTempFile(file.id)
+    tempFiles.value = [retried, ...tempFiles.value.filter((item) => item.id !== retried.id)]
+    if (isTempFilePending(retried)) {
+      startTempFilePolling(retried.sessionId)
+    }
+    ElMessage.success('临时文件已重新进入解析队列。')
+  } catch (error) {
+    ElMessage.error(errorMessageOf(error))
+  }
+}
+
 const removeTempFile = async (file: AiTempFileView) => {
   try {
     await ElMessageBox.confirm(`确定从当前会话移除“${file.fileName}”吗？`, '删除临时文件', { type: 'warning' })
@@ -926,19 +1692,14 @@ const refreshSessions = async () => {
 const refreshModels = async () => {
   loadingModels.value = true
   try {
-    const models = await getModels()
+    const models = sortAiModelsByPreference(await getModels())
     availableModels.value = models
     if (!models.length) {
       selectedModelCode.value = ''
       return
     }
-    const visibleModels = models.filter((model) => ['openai', 'deepseek'].includes((model.providerCode || '').toLowerCase()))
-    const fallbackModels = visibleModels.length ? visibleModels : models
-    const preferredModel =
-      fallbackModels.find((model) => (model.providerCode || '').toLowerCase() === 'deepseek') || fallbackModels[0]
-    if (!fallbackModels.some((model) => model.modelCode === selectedModelCode.value)) {
-      selectedModelCode.value = preferredModel.modelCode
-    }
+    const preferredModel = pickPreferredAiModel(models, selectedModelCode.value)
+    selectedModelCode.value = preferredModel?.modelCode || ''
   } catch (error) {
     availableModels.value = []
     selectedModelCode.value = ''
@@ -955,7 +1716,7 @@ const openSearch = async () => {
   const keyword = searchKeyword.value.trim()
   await router.push({
     path: '/search',
-    query: keyword ? { keyword } : {},
+    query: keyword ? { q: keyword } : {},
   })
 }
 
@@ -976,17 +1737,35 @@ const syncSessionRoute = async (sessionId?: number) => {
   }
 }
 
-const applyChatResponse = async (response: AiChatResponse, userMessage: UiMessage, assistantMessage: UiMessage) => {
+/**
+ * 将后端的 chat 响应应用到对应的本地消息上：更新状态、内容、引用及模型信息，并同步会话与临时文件状态。
+ * @param response 后端返回的聊天响应
+ * @param userMessage 本地用户消息对象
+ * @param assistantMessage 本地助理占位消息对象
+ */
+const applyChatResponse = async (
+  response: AiChatResponse,
+  userMessage: UiMessage,
+  assistantMessage: UiMessage,
+  messageAssetRecord?: StoredMessageAssetRecord,
+) => {
   userMessage.status = 'sent'
   assistantMessage.status = 'sent'
   assistantMessage.serverId = response.messageId
   assistantMessage.content = response.answer
   assistantMessage.refusedReason = response.refusedReason
   assistantMessage.citations = response.citations || []
+  assistantMessage.modelCode = response.modelCode
+  assistantMessage.providerCode = response.providerCode
+  assistantMessage.latencyMs = response.latencyMs
   if (response.modelCode && availableModels.value.some((model) => model.modelCode === response.modelCode)) {
     selectedModelCode.value = response.modelCode
   }
+  if (messageAssetRecord) {
+    persistMessageAssetRecord(response.sessionId, messageAssetRecord)
+  }
   await syncSessionRoute(response.sessionId)
+  await syncReferencedFileTitles(userMessage.attachments || messageAssetRecord?.attachments || [])
   await refreshTempFiles(response.sessionId)
   await refreshSessions()
 }
@@ -997,7 +1776,7 @@ const syncFromRoute = async () => {
     try {
       const detail = await getSession(sessionId)
       activeSessionId.value = detail.id
-      messages.value = detail.messages.map(toUiMessage)
+      messages.value = attachStoredAssets(detail.id, detail.messages.map(toUiMessage))
       restoreAttachmentState(detail.id, detail.projectId)
       await refreshTempFiles(detail.id)
       networkError.value = ''
@@ -1053,6 +1832,7 @@ const removeSession = async (sessionId: number) => {
   await ElMessageBox.confirm('删除后无法恢复，确定继续吗？', '删除会话', { type: 'warning' })
   await deleteSession(sessionId)
   removeAttachmentState(sessionId)
+  removeStoredMessageAssets(sessionId)
   ElMessage.success('会话已删除')
   await refreshSessions()
   if (sessionId === activeSessionId.value) {
@@ -1060,9 +1840,19 @@ const removeSession = async (sessionId: number) => {
   }
 }
 
+/**
+ * 发起一个流式聊天请求到后端；通过 handlers 回调传出打开、分片和完成事件。
+ * @param payload 聊天请求负载
+ * @param handlers onOpen/onChunk/onDone 事件回调
+ */
 const streamChat = async (
   payload: AiChatPayload,
-  handlers: { onOpen?: (requestId?: string) => void; onChunk?: (chunk: string) => void; onDone?: (payload: StreamDonePayload) => Promise<void> | void },
+  handlers: {
+    onOpen?: () => void
+    onStart?: (payload: StreamDonePayload) => void
+    onChunk?: (chunk: string) => void
+    onDone?: (payload: StreamDonePayload) => Promise<void> | void
+  },
 ) => {
   const token = localStorage.getItem('erise-access-token')
   const response = await fetch(resolveApiUrl('/v1/ai/chat/stream'), {
@@ -1083,7 +1873,7 @@ const streamChat = async (
     throw new Error('AI response stream is unavailable')
   }
 
-  handlers.onOpen?.(response.headers.get('X-Trace-Id') || undefined)
+  handlers.onOpen?.()
 
   const reader = response.body.getReader()
   const decoder = new TextDecoder()
@@ -1106,6 +1896,14 @@ const streamChat = async (
       return
     }
 
+    if (eventName === 'start') {
+      try {
+        handlers.onStart?.(JSON.parse(payloadText) as StreamDonePayload)
+      } catch {
+        handlers.onStart?.({})
+      }
+      return
+    }
     if (eventName === 'chunk') {
       handlers.onChunk?.(payloadText)
       return
@@ -1147,6 +1945,13 @@ const streamChat = async (
   }
 }
 
+/**
+ * 标记发送失败：更新用户消息和助理消息的状态与错误信息，并显示错误提示。
+ * @param userMessage 本地用户消息对象
+ * @param assistantMessage 本地助理占位消息对象
+ * @param message 错误描述
+ * @param originalQuestion 原始问题文本（用于恢复到 pendingQuestion）
+ */
 const markSendFailed = (userMessage: UiMessage, assistantMessage: UiMessage, message: string, originalQuestion: string) => {
   userMessage.status = 'failed'
   userMessage.pendingQuestion = originalQuestion
@@ -1160,22 +1965,62 @@ const markSendFailed = (userMessage: UiMessage, assistantMessage: UiMessage, mes
   ElMessage.error(message)
 }
 
+/**
+ * 向后端发送取消当前生成的请求（stop / cancel）。
+ * 若无进行中的请求则直接返回。
+ */
 const stopGeneration = async () => {
   if (!currentRequestId.value) {
     return
   }
+  const requestId = currentRequestId.value
+  currentRequestId.value = ''
   try {
-    await cancelChat(currentRequestId.value)
+    await cancelChat(requestId)
     ElMessage.success('已发送停止请求')
   } catch (error) {
+    currentRequestId.value = requestId
     ElMessage.error(errorMessageOf(error))
   }
 }
 
+/**
+ * 发送用户问题：
+ * - 创建本地用户消息与助理占位消息
+ * - 调用后端（流式/非流式）处理并更新消息状态
+ * @param presetQuestion 可选的预设问题（绕过输入框）
+ */
 const send = async (presetQuestion?: string) => {
   const raw = presetQuestion ?? question.value
   const text = raw.trim()
   if (!text || sending.value) {
+    return
+  }
+
+  if (!selectedAttachments.value.length && !indexedTempFiles.value.length && tempFiles.value.some(isTempFilePending) && attachmentFocusedQuestion(text)) {
+    const now = new Date().toISOString()
+    question.value = ''
+    messages.value.push(
+      {
+        id: buildLocalId('user'),
+        roleCode: 'USER',
+        content: text,
+        createdAt: now,
+        status: 'sent',
+        pendingQuestion: text,
+        expanded: true,
+      },
+      {
+        id: buildLocalId('assistant'),
+        roleCode: 'ASSISTANT',
+        content: '你刚添加的资料还在解析中，暂时还不能作为可靠上下文。等解析完成后再问“这个文档写了什么”之类的问题，我会优先基于该资料回答。',
+        createdAt: now,
+        status: 'sent',
+        expanded: true,
+      },
+    )
+    await resizeComposer()
+    await scrollToBottom()
     return
   }
 
@@ -1184,6 +2029,11 @@ const send = async (presetQuestion?: string) => {
   await resizeComposer()
 
   const now = new Date().toISOString()
+  const messageAssetRecord: StoredMessageAssetRecord = {
+    question: text,
+    createdAt: now,
+    attachments: cloneComposerAssets(pendingComposerAssets.value),
+  }
   const userMessage: UiMessage = {
     id: buildLocalId('user'),
     roleCode: 'USER',
@@ -1191,7 +2041,8 @@ const send = async (presetQuestion?: string) => {
     createdAt: now,
     status: 'sending',
     pendingQuestion: text,
-    expanded: false,
+    expanded: true,
+    attachments: cloneComposerAssets(messageAssetRecord.attachments),
   }
   const assistantMessage: UiMessage = {
     id: buildLocalId('assistant'),
@@ -1199,16 +2050,19 @@ const send = async (presetQuestion?: string) => {
     content: '',
     createdAt: now,
     status: 'streaming',
-    expanded: false,
+    expanded: true,
   }
 
   messages.value.push(userMessage, assistantMessage)
   await scrollToBottom()
 
+  const streamStartedAt = Date.now()
+  assistantMessage.streamStartedAt = streamStartedAt
   sending.value = true
-  sendStartedAt.value = Date.now()
+  sendStartedAt.value = streamStartedAt
   startClock()
   currentRequestId.value = ''
+  persistMessageAssetRecord(activeSessionId.value, messageAssetRecord)
 
   const payload: AiChatPayload = {
     projectId: activeProjectId.value,
@@ -1217,7 +2071,7 @@ const send = async (presetQuestion?: string) => {
     modelCode: selectedModelCode.value || undefined,
     mode: hasScopedContext.value ? 'SCOPED' : 'GENERAL',
     attachments: selectedAttachments.value.length ? selectedAttachments.value : undefined,
-    tempFileIds: indexedTempFiles.value.length ? indexedTempFiles.value.map((item) => item.id) : undefined,
+    tempFileIds: tempFiles.value.length ? tempFiles.value.map((item) => item.id) : undefined,
     webSearchEnabled: retrievalSettings.value.webSearchEnabledDefault,
     similarityThreshold: retrievalSettings.value.similarityThreshold,
     topK: retrievalSettings.value.topK,
@@ -1230,18 +2084,29 @@ const send = async (presetQuestion?: string) => {
   try {
     if (!useStream) {
       const response = await chat(payload)
-      await applyChatResponse(response, userMessage, assistantMessage)
+      await applyChatResponse(response, userMessage, assistantMessage, messageAssetRecord)
       return
     }
 
     await streamChat(payload, {
-      onOpen: (requestId) => {
+      onOpen: () => {
         opened = true
         userMessage.status = 'sent'
-        currentRequestId.value = requestId || ''
+      },
+      onStart: (startPayload) => {
+        currentRequestId.value = startPayload.requestId || currentRequestId.value
+        if (startPayload.sessionId) {
+          void syncSessionRoute(startPayload.sessionId)
+        }
       },
       onChunk: (chunk) => {
         opened = true
+        if (!chunkReceived) {
+          assistantMessage.latencyMs = Math.max(1, Date.now() - streamStartedAt)
+          assistantMessage.streamStartedAt = undefined
+          sendStartedAt.value = undefined
+          stopClock()
+        }
         chunkReceived = true
         userMessage.status = 'sent'
         assistantMessage.content += chunk
@@ -1249,12 +2114,24 @@ const send = async (presetQuestion?: string) => {
       onDone: async (donePayload) => {
         userMessage.status = 'sent'
         assistantMessage.status = 'sent'
+        assistantMessage.streamStartedAt = undefined
         assistantMessage.serverId = donePayload.messageId
+        assistantMessage.latencyMs = assistantMessage.latencyMs || donePayload.latencyMs
+        currentRequestId.value = ''
+        persistMessageAssetRecord(donePayload.sessionId, messageAssetRecord)
         await syncSessionRoute(donePayload.sessionId)
         if (donePayload.sessionId) {
+          const thinkingLatency = assistantMessage.latencyMs
           const detail = await getSession(donePayload.sessionId)
-          messages.value = detail.messages.map(toUiMessage)
+          messages.value = attachStoredAssets(donePayload.sessionId, detail.messages.map(toUiMessage))
+          if (thinkingLatency && donePayload.messageId) {
+            const storedAssistantMessage = messages.value.find((item) => item.serverId === donePayload.messageId)
+            if (storedAssistantMessage) {
+              storedAssistantMessage.latencyMs = thinkingLatency
+            }
+          }
           restoreAttachmentState(detail.id, detail.projectId)
+          await syncReferencedFileTitles(messageAssetRecord.attachments)
           await refreshTempFiles(donePayload.sessionId)
         }
         await refreshSessions()
@@ -1265,6 +2142,7 @@ const send = async (presetQuestion?: string) => {
     if (/cancel|取消|停止/i.test(message)) {
       userMessage.status = 'sent'
       assistantMessage.status = 'failed'
+      assistantMessage.streamStartedAt = undefined
       assistantMessage.errorMessage = '已停止生成。'
       if (!assistantMessage.content) {
         assistantMessage.content = '已停止生成。'
@@ -1273,7 +2151,7 @@ const send = async (presetQuestion?: string) => {
     } else if (!opened && !chunkReceived) {
       try {
         const response = await chat(payload)
-        await applyChatResponse(response, userMessage, assistantMessage)
+        await applyChatResponse(response, userMessage, assistantMessage, messageAssetRecord)
       } catch (fallbackError) {
         markSendFailed(userMessage, assistantMessage, errorMessageOf(fallbackError), text)
       }
@@ -1294,6 +2172,52 @@ const retryMessage = async (message: UiMessage) => {
     return
   }
   await send(message.pendingQuestion)
+}
+
+const assistantSourceQuestion = (message: UiMessage) => {
+  const messageIndex = messages.value.findIndex((item) => item.id === message.id)
+  if (messageIndex <= 0) {
+    return ''
+  }
+  for (let index = messageIndex - 1; index >= 0; index -= 1) {
+    const candidate = messages.value[index]
+    if (candidate.roleCode === 'USER') {
+      return (candidate.pendingQuestion || candidate.content || '').trim()
+    }
+  }
+  return ''
+}
+
+const copyAssistantReply = async (message: UiMessage) => {
+  const content = assistantCopyText(message)
+  if (!content) {
+    return
+  }
+  await copyToClipboard(content, '回答内容')
+}
+
+const submitAssistantFeedback = async (message: UiMessage, feedbackType: 'UP' | 'DOWN') => {
+  if (!message.serverId || !canSubmitFeedback(message)) {
+    return
+  }
+  message.feedbackSubmitting = true
+  try {
+    await submitAiMessageFeedback(message.serverId, { feedbackType })
+    message.feedbackType = feedbackType
+    ElMessage.success(feedbackType === 'UP' ? '已记录点赞反馈' : '已记录点踩反馈')
+  } catch (error) {
+    ElMessage.error(errorMessageOf(error))
+  } finally {
+    message.feedbackSubmitting = false
+  }
+}
+
+const regenerateAssistantReply = async (message: UiMessage) => {
+  const sourceQuestion = assistantSourceQuestion(message)
+  if (!sourceQuestion || sending.value) {
+    return
+  }
+  await send(sourceQuestion)
 }
 
 const usePrompt = async (prompt: string) => {
@@ -1385,985 +2309,4 @@ onBeforeUnmount(() => {
 })
 </script>
 
-<style scoped>
-.workspace-shell-card {
-  min-height: calc(100dvh - 148px);
-  overflow: hidden;
-  border: 1px solid rgba(192, 199, 212, 0.5);
-  background: #f8f9ff;
-  box-shadow: 0 24px 64px rgba(0, 96, 169, 0.08);
-}
-
-.ai-admin-page {
-  min-height: calc(100dvh - 120px);
-}
-
-.architect-shell {
-  display: grid;
-  grid-template-columns: 260px minmax(0, 1fr);
-  min-height: calc(100dvh - 148px);
-  overflow: hidden;
-  padding: 0;
-  border: 1px solid rgba(192, 199, 212, 0.5);
-  background: #f8f9ff;
-  box-shadow: 0 24px 64px rgba(0, 96, 169, 0.08);
-}
-
-.architect-nav {
-  display: flex;
-  flex-direction: column;
-  gap: 18px;
-  padding: 24px 18px;
-  background: #f1f3fa;
-  border-right: 1px solid rgba(192, 199, 212, 0.5);
-}
-
-.architect-brand {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-}
-
-.architect-brand__icon,
-.top-user__avatar,
-.architect-account__avatar,
-.empty-stage__robot {
-  display: grid;
-  place-items: center;
-  color: #fff;
-  font-weight: 800;
-  background: linear-gradient(135deg, #409eff, #0060a9);
-}
-
-.architect-brand__icon {
-  width: 40px;
-  height: 40px;
-  border-radius: 12px;
-}
-
-.architect-brand h1 {
-  margin: 0;
-  font-size: 18px;
-  line-height: 1.1;
-  font-weight: 800;
-  color: #181c20;
-}
-
-.architect-brand p,
-.architect-account__copy span,
-.top-user__meta span,
-.chat-stage__header p,
-.knowledge-empty,
-.composer-footnote,
-.thread-empty {
-  margin: 0;
-  color: #5f6775;
-}
-
-.architect-brand p {
-  font-size: 11px;
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
-}
-
-.nav-primary-btn,
-.architect-menu__item,
-.architect-account,
-.top-search,
-.top-icon-btn,
-.top-user,
-.model-chip,
-.toolbar-ghost,
-.mini-link,
-.selection-chip,
-.soft-chip,
-.send-button,
-.thread-item__delete,
-.thread-item__main,
-.citation-card,
-.prompt-card,
-.retry-button,
-.transcript-item__toggle {
-  border: 0;
-  font: inherit;
-  cursor: pointer;
-}
-
-.nav-primary-btn {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-  width: 100%;
-  padding: 12px 16px;
-  border-radius: 14px;
-  color: #fff;
-  background: linear-gradient(135deg, #409eff, #0060a9);
-  font-weight: 700;
-  box-shadow: 0 16px 32px rgba(0, 96, 169, 0.18);
-}
-
-.architect-menu {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-
-.architect-menu__item {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  width: 100%;
-  padding: 12px 14px;
-  border-radius: 12px;
-  background: transparent;
-  color: #404752;
-  text-align: left;
-  transition: all 0.2s ease;
-}
-
-.architect-menu__item:hover {
-  background: rgba(255, 255, 255, 0.72);
-  color: #181c20;
-}
-
-.architect-menu__item.is-active {
-  color: #0060a9;
-  background: rgba(64, 158, 255, 0.1);
-  box-shadow: inset 3px 0 0 #0060a9;
-  font-weight: 700;
-}
-
-.architect-account {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  margin-top: auto;
-  padding: 14px 12px 0;
-  border-top: 1px solid rgba(192, 199, 212, 0.5);
-  background: transparent;
-}
-
-.architect-account__avatar,
-.top-user__avatar {
-  width: 38px;
-  height: 38px;
-  border-radius: 999px;
-}
-
-.architect-account__copy {
-  display: flex;
-  min-width: 0;
-  flex-direction: column;
-}
-
-.architect-account__copy strong,
-.top-user__meta strong {
-  color: #181c20;
-  font-size: 13px;
-}
-
-.architect-main {
-  display: flex;
-  min-width: 0;
-  min-height: 0;
-  flex-direction: column;
-}
-
-.architect-topbar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 18px;
-  padding: 18px 22px;
-  background: rgba(255, 255, 255, 0.82);
-  backdrop-filter: blur(12px);
-  border-bottom: 1px solid rgba(192, 199, 212, 0.45);
-}
-
-.top-search {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  min-width: 0;
-  width: min(460px, 100%);
-  padding: 12px 16px;
-  border-radius: 999px;
-  background: #f1f3fa;
-  color: #5f6775;
-  text-align: left;
-}
-
-.architect-topbar__actions {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-}
-
-.top-icon-btn {
-  display: grid;
-  place-items: center;
-  width: 40px;
-  height: 40px;
-  border-radius: 999px;
-  background: transparent;
-  color: #5f6775;
-}
-
-.top-icon-btn:hover,
-.top-search:hover,
-.top-user:hover,
-.toolbar-ghost:hover,
-.soft-chip:hover,
-.selection-chip:hover,
-.model-chip:hover,
-.temp-file-chip__remove:hover {
-  background: #e6e8ef;
-}
-
-.top-user {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 4px;
-  border-radius: 999px;
-  background: transparent;
-}
-
-.top-user__meta {
-  display: flex;
-  flex-direction: column;
-  text-align: right;
-}
-
-.ai-workspace {
-  display: grid;
-  grid-template-columns: 300px minmax(0, 1fr);
-  flex: 1;
-  min-height: 0;
-}
-
-.conversation-history {
-  display: flex;
-  min-height: 0;
-  flex-direction: column;
-  gap: 16px;
-  padding: 20px;
-  background: #f1f3fa;
-  border-right: 1px solid rgba(192, 199, 212, 0.45);
-}
-
-.conversation-history__head,
-.knowledge-card__head,
-.chat-stage__header,
-.chat-stage__meta,
-.composer-box__toptools,
-.status-banner,
-.attachment-dialog__footer,
-.attachment-dialog__footer-actions,
-.transcript-item__head,
-.composer-box__toolbar,
-.composer-box__left-tools,
-.composer-box__right-tools {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-}
-
-.section-eyebrow,
-.transcript-item__label,
-.citation-panel__title {
-  font-size: 11px;
-  font-weight: 700;
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
-  color: #5f6775;
-}
-
-.section-caption {
-  color: #7a8392;
-  font-size: 12px;
-}
-
-.conversation-history__head h3,
-.chat-stage__header h2 {
-  margin: 4px 0 0;
-  font-size: 22px;
-  line-height: 1.2;
-  font-weight: 800;
-  color: #181c20;
-}
-
-.knowledge-card {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-  padding: 16px;
-  border-radius: 18px;
-  background: #ffffff;
-  border: 1px solid rgba(192, 199, 212, 0.45);
-}
-
-.knowledge-subtabs {
-  display: flex;
-  gap: 10px;
-}
-
-
-.knowledge-subtabs__item,
-.mini-link {
-  padding: 0;
-  background: transparent;
-  color: #0060a9;
-  font-weight: 700;
-}
-
-.knowledge-subtabs__item.is-active {
-  padding: 8px 12px;
-  border-radius: 999px;
-  background: rgba(233, 233, 234, 0.6);
-}
-
-.knowledge-subtabs__item:hover {
-
-  background: rgba(213, 213, 213, 0.6);
-}
-
-.knowledge-selected {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-}
-
-.knowledge-temp {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
-
-.knowledge-temp__head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-}
-
-.temp-file-list {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.temp-file-chip {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 12px;
-  align-items: center;
-  padding: 10px 12px;
-  border-radius: 14px;
-  border: 1px solid rgba(192, 199, 212, 0.45);
-  background: #fff;
-}
-
-.temp-file-chip.is-ready {
-  border-color: rgba(40, 108, 0, 0.16);
-  background: rgba(85, 175, 40, 0.08);
-}
-
-.temp-file-chip.is-pending {
-  border-color: rgba(0, 96, 169, 0.14);
-  background: rgba(64, 158, 255, 0.08);
-}
-
-.temp-file-chip.is-failed {
-  border-color: rgba(186, 26, 26, 0.16);
-  background: rgba(217, 107, 107, 0.08);
-}
-
-.temp-file-chip__copy {
-  display: flex;
-  min-width: 0;
-  flex-direction: column;
-  gap: 4px;
-}
-
-.temp-file-chip__copy strong {
-  color: #181c20;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.temp-file-chip__copy small {
-  color: #5f6775;
-}
-
-.temp-file-chip__remove {
-  width: 28px;
-  height: 28px;
-  border: 0;
-  border-radius: 999px;
-  background: rgba(255, 255, 255, 0.78);
-  color: #5f6775;
-  cursor: pointer;
-}
-
-.mini-link--block {
-  text-align: left;
-}
-
-.thread-list--history,
-.thread-list--drawer {
-  display: flex;
-  flex: 1;
-  min-height: 0;
-  max-height: calc(100dvh - 420px);
-  flex-direction: column;
-  gap: 10px;
-  overflow-y: auto;
-  padding-right: 4px;
-}
-
-.thread-item {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 8px;
-  padding: 4px;
-  border-radius: 16px;
-  background: transparent;
-  transition: background 0.2s ease;
-}
-
-.thread-item.is-active {
-  background: #fff;
-  box-shadow: 0 10px 24px rgba(0, 96, 169, 0.08);
-}
-
-.thread-item__main {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  min-width: 0;
-  padding: 12px;
-  border-radius: 12px;
-  text-align: left;
-  background: transparent;
-}
-
-.thread-item__title {
-  color: #181c20;
-  font-weight: 700;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.thread-item__meta,
-.transcript-item__time,
-.transcript-item__notice,
-.attachment-option__copy small,
-.citation-card span,
-.citation-card small,
-.composer-box__hint {
-  color: #5f6775;
-}
-
-.thread-item__delete {
-  width: 34px;
-  height: 34px;
-  align-self: center;
-  border-radius: 999px;
-  background: transparent;
-  color: #5f6775;
-}
-
-.chat-stage {
-  display: flex;
-  min-width: 0;
-  min-height: 0;
-  flex-direction: column;
-  overflow: hidden;
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.92), rgba(248, 249, 255, 0.96));
-}
-
-.chat-stage__header {
-  padding: 22px 24px 16px;
-  border-bottom: 1px solid;
-  /* background: #286c00; */
-}
-
-.run-chip,
-.model-chip,
-.toolbar-chip,
-.selection-chip,
-.soft-chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  padding: 8px 12px;
-  border-radius: 999px;
-  background: #e6e8ef;
-  color: #404752;
-}
-
-.run-chip.is-live {
-  background: rgba(64, 158, 255, 0.14);
-  color: #0060a9;
-}
-
-.run-chip__dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 999px;
-  background: currentColor;
-}
-
-.message-board {
-  flex: 1;
-  min-height: 0;
-  overflow-y: auto;
-  padding: 0 24px 24px;
-}
-
-.message-board__inner {
-  min-height: 100%;
-  display: flex;
-  flex-direction: column;
-}
-
-.transcript-list--modern {
-  display: flex;
-  flex-direction: column;
-  gap: 24px;
-  max-width: 980px;
-  width: 100%;
-  margin: 0 auto;
-}
-
-.transcript-item {
-  display: grid;
-  grid-template-columns: 44px minmax(0, 1fr);
-  gap: 14px;
-}
-
-.transcript-item.is-user {
-  grid-template-columns: minmax(0, 1fr) 44px;
-}
-
-.transcript-item.is-user .transcript-item__avatar {
-  order: 2;
-}
-
-.transcript-item.is-user .transcript-item__panel {
-  order: 1;
-}
-
-.transcript-item__avatar {
-  display: grid;
-  place-items: center;
-  width: 44px;
-  height: 44px;
-  border-radius: 14px;
-  background: rgba(85, 175, 40, 0.12);
-  color: #286c00;
-}
-
-.transcript-item.is-user .transcript-item__avatar {
-  border-radius: 999px;
-  background: rgba(64, 158, 255, 0.12);
-  color: #0060a9;
-}
-
-.transcript-item__panel {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.transcript-item.is-user .transcript-item__head {
-  justify-content: flex-end;
-}
-
-.transcript-item__body {
-  padding: 18px;
-  border-radius: 20px;
-  background: #f1f3fa;
-  color: #181c20;
-  box-shadow: 0 10px 28px rgba(0, 96, 169, 0.05);
-}
-
-.transcript-item.is-user .transcript-item__body {
-  background: rgba(64, 158, 255, 0.08);
-  border: 1px solid rgba(64, 158, 255, 0.18);
-}
-
-.empty-stage--architect {
-  display: flex;
-  flex: 1;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 14px;
-  padding: 40px 16px 24px;
-  text-align: center;
-}
-
-.empty-stage__robot {
-  width: 72px;
-  height: 72px;
-  border-radius: 24px;
-  font-size: 30px;
-  box-shadow: 0 20px 40px rgba(0, 96, 169, 0.18);
-}
-
-.empty-stage__title {
-  margin: 0;
-  font-size: 34px;
-  line-height: 1.1;
-  font-weight: 800;
-  color: #181c20;
-}
-
-.empty-stage__copy {
-  max-width: 620px;
-}
-
-.empty-stage__prompts {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 14px;
-  width: 100%;
-  max-width: 980px;
-}
-
-.prompt-card {
-  padding: 18px;
-  border-radius: 18px;
-  background: #fff;
-  border: 1px solid rgba(192, 199, 212, 0.45);
-  color: #181c20;
-  text-align: left;
-  box-shadow: 0 14px 30px rgba(0, 96, 169, 0.05);
-}
-
-.prompt-card:hover,
-.citation-card:hover {
-  transform: translateY(-1px);
-  box-shadow: 0 18px 32px rgba(0, 96, 169, 0.08);
-}
-
-.composer-wrap--architect {
-  position: sticky;
-  bottom: 0;
-  z-index: 3;
-  padding: 18px 24px 24px;
-  background: linear-gradient(180deg, rgba(248, 249, 255, 0), rgba(248, 249, 255, 1) 34%);
-}
-
-.composer-box--architect {
-  border-radius: 24px;
-  background: #fff;
-  border: 1px solid rgba(192, 199, 212, 0.45);
-  box-shadow: 0 20px 40px rgba(0, 96, 169, 0.08);
-}
-
-.composer-box__toptools {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 14px 16px 0;
-}
-
-.toolbar-ghost {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 8px 12px;
-  border-radius: 12px;
-  background: transparent;
-  color: #404752;
-}
-
-.toolbar-model-picker {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  padding: 6px 10px;
-  border-radius: 12px;
-  background: #f1f3fa;
-  color: #404752;
-}
-
-.toolbar-model-select {
-  width: 240px;
-}
-
-.composer-box__content {
-  padding: 8px 16px 16px;
-}
-
-.composer-box__input--architect {
-  min-height: 56px;
-  width: 100%;
-  resize: none;
-  border: 0;
-  background: transparent;
-  font: inherit;
-  color: #181c20;
-  outline: none;
-}
-
-.send-button {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-  padding: 10px 16px;
-  border-radius: 14px;
-  background: linear-gradient(135deg, #409eff, #0060a9);
-  color: #fff;
-  font-weight: 700;
-}
-
-.send-button--architect {
-  width: 48px;
-  height: 48px;
-  padding: 0;
-  border-radius: 14px;
-}
-
-.send-button.is-danger {
-  background: linear-gradient(135deg, #d96b6b, #ba1a1a);
-}
-
-.composer-footnote {
-  margin: 12px 4px 0;
-  text-align: center;
-  font-size: 11px;
-}
-
-.citation-panel--modern {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  margin-top: 14px;
-}
-
-.citation-card {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  padding: 12px 14px;
-  border-radius: 14px;
-  background: #fff;
-  border: 1px solid rgba(192, 199, 212, 0.45);
-  text-align: left;
-}
-
-.citation-card__title {
-  color: #181c20;
-  font-weight: 700;
-}
-
-.citation-card__title--single {
-  display: block;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.attachment-dialog--modern,
-.attachment-dialog__grid,
-.attachment-panel__list {
-  display: flex;
-}
-
-.attachment-dialog--modern {
-  flex-direction: column;
-  gap: 18px;
-}
-
-.attachment-dialog__grid {
-  gap: 16px;
-}
-
-.attachment-panel {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-  min-height: 280px;
-  padding: 16px;
-  border-radius: 18px;
-  background: #f8f9ff;
-  border: 1px solid rgba(192, 199, 212, 0.45);
-}
-
-.attachment-panel--secondary {
-  background: #f1f3fa;
-}
-
-.attachment-panel__title {
-  font-size: 14px;
-  font-weight: 700;
-  color: #181c20;
-}
-
-.attachment-panel__list {
-  flex-direction: column;
-  gap: 10px;
-  overflow-y: auto;
-}
-
-.attachment-option {
-  display: flex;
-  align-items: flex-start;
-  gap: 10px;
-  padding: 10px 12px;
-  border-radius: 14px;
-  background: #fff;
-}
-
-.attachment-option__copy {
-  display: flex;
-  min-width: 0;
-  flex-direction: column;
-  gap: 4px;
-}
-
-.status-banner {
-  margin: 0 auto 16px;
-  max-width: 980px;
-  padding: 12px 14px;
-  border-radius: 14px;
-  background: #fff3f0;
-  color: #ba1a1a;
-  border: 1px solid rgba(186, 26, 26, 0.18);
-}
-
-.thinking-dots {
-  display: inline-flex;
-  gap: 6px;
-}
-
-.thinking-dots span {
-  width: 8px;
-  height: 8px;
-  border-radius: 999px;
-  background: #0060a9;
-  opacity: 0.4;
-  animation: pulse 1.2s infinite ease-in-out;
-}
-
-.thinking-dots span:nth-child(2) {
-  animation-delay: 0.15s;
-}
-
-.thinking-dots span:nth-child(3) {
-  animation-delay: 0.3s;
-}
-
-@keyframes pulse {
-
-  0%,
-  80%,
-  100% {
-    transform: scale(0.75);
-    opacity: 0.35;
-  }
-
-  40% {
-    transform: scale(1);
-    opacity: 1;
-  }
-}
-
-@media (max-width: 1200px) {
-  .ai-workspace {
-    grid-template-columns: 280px minmax(0, 1fr);
-  }
-
-  .empty-stage__prompts {
-    grid-template-columns: 1fr;
-  }
-}
-
-@media (max-width: 960px) {
-
-  .architect-shell,
-  .ai-workspace,
-  .attachment-dialog__grid {
-    grid-template-columns: 1fr;
-  }
-
-  .architect-shell {
-    display: flex;
-    flex-direction: column;
-  }
-
-  .architect-nav {
-    gap: 12px;
-  }
-
-  .architect-menu {
-    display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-
-  .conversation-history {
-    border-right: 0;
-    border-bottom: 1px solid rgba(192, 199, 212, 0.45);
-  }
-
-  .thread-list--history {
-    max-height: 320px;
-  }
-}
-
-@media (max-width: 720px) {
-
-  .architect-topbar,
-  .chat-stage__header,
-  .composer-wrap--architect,
-  .message-board,
-  .conversation-history {
-    padding-left: 14px;
-    padding-right: 14px;
-  }
-
-  .architect-topbar,
-  .chat-stage__header,
-  .composer-box__toolbar,
-  .composer-box__toptools,
-  .architect-topbar__actions {
-    flex-wrap: wrap;
-  }
-
-  .toolbar-model-select {
-    width: 180px;
-  }
-
-  .transcript-item,
-  .transcript-item.is-user {
-    grid-template-columns: 1fr;
-  }
-
-  .transcript-item__avatar,
-  .transcript-item.is-user .transcript-item__avatar {
-    order: 0;
-  }
-
-  .transcript-item.is-user .transcript-item__panel {
-    order: 0;
-  }
-
-  .transcript-item.is-user .transcript-item__head {
-    justify-content: space-between;
-  }
-
-  .architect-menu {
-    grid-template-columns: 1fr;
-  }
-}
-</style>
+<style scoped src="./css/AiView.css"></style>

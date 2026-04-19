@@ -34,6 +34,8 @@ class ChatCompletionRequest(CamelModel):
     web_search_enabled: bool | None = None
     similarity_threshold: float | None = None
     top_k: int | None = None
+    query_rewrite_enabled: bool | None = None
+    strict_citation_enabled: bool | None = None
 
 
 class UsageView(CamelModel):

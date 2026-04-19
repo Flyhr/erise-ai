@@ -37,6 +37,19 @@ class AuditLogService {
         auditLogMapper.insert(entity);
     }
 
+    void log(Long operatorUserId, String actionCode, String resourceType, Long resourceId, Object detail) {
+        AuditLogEntity entity = new AuditLogEntity();
+        entity.setOperatorUserId(operatorUserId);
+        entity.setOperatorUsername(operatorUserId == null ? "system" : "ai-action:" + operatorUserId);
+        entity.setCreatedBy(operatorUserId == null ? 0L : operatorUserId);
+        entity.setUpdatedBy(operatorUserId == null ? 0L : operatorUserId);
+        entity.setActionCode(actionCode);
+        entity.setResourceType(resourceType);
+        entity.setResourceId(resourceId);
+        entity.setDetailJson(writeJson(detail));
+        auditLogMapper.insert(entity);
+    }
+
     private String writeJson(Object value) {
         if (value == null) {
             return null;

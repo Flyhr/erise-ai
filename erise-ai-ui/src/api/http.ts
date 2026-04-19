@@ -1,6 +1,8 @@
 import axios from "axios";
 import { ElMessage } from "element-plus";
+import type { InternalAxiosRequestConfig } from "axios";
 import type { ApiResponse } from "@/types/models";
+import { beginRouteLoadingRequest, finishRouteLoadingRequest } from "@/composables/useRouteLoading";
 import type { Router } from "vue-router";
 
 const apiBase = import.meta.env.VITE_API_BASE_URL || "/api";
@@ -8,13 +10,21 @@ const normalizedApiBase = apiBase.endsWith("/")
   ? apiBase.slice(0, -1)
   : apiBase;
 
+export const DEFAULT_REQUEST_TIMEOUT_MS = 30_000;
+export const FILE_UPLOAD_TIMEOUT_MS = 10 * 60 * 1000;
+
 const http = axios.create({
   baseURL: normalizedApiBase,
-  timeout: 30000,
+  timeout: DEFAULT_REQUEST_TIMEOUT_MS,
 });
 
 let router: Router | null = null;
 let onAuthError: (() => void) | null = null;
+
+interface RouteLoadingRequestConfig extends InternalAxiosRequestConfig {
+  __routeLoadingToken?: number | null;
+  skipRouteLoading?: boolean;
+}
 
 export const initHttpRouter = (r: Router, authErrorCallback?: () => void) => {
   router = r;
@@ -24,15 +34,20 @@ export const initHttpRouter = (r: Router, authErrorCallback?: () => void) => {
 };
 
 http.interceptors.request.use((config) => {
+  const trackedConfig = config as RouteLoadingRequestConfig;
+  trackedConfig.__routeLoadingToken = trackedConfig.skipRouteLoading
+    ? null
+    : beginRouteLoadingRequest();
   const token = localStorage.getItem("erise-access-token");
   if (token) {
-    config.headers.Authorization = `Bearer ${token}`;
+    trackedConfig.headers.Authorization = `Bearer ${token}`;
   }
-  return config;
+  return trackedConfig;
 });
 
 http.interceptors.response.use(
   (response): any => {
+    finishRouteLoadingRequest((response.config as RouteLoadingRequestConfig).__routeLoadingToken);
     const payload = response.data as ApiResponse<unknown>;
     if (payload.code !== 0) {
       const message = payload.message ?? payload.msg ?? "Request failed";
@@ -53,6 +68,7 @@ http.interceptors.response.use(
     return payload.data;
   },
   (error) => {
+    finishRouteLoadingRequest((error.config as RouteLoadingRequestConfig | undefined)?.__routeLoadingToken);
     const statusCode = error.response?.status;
     const message =
       error.response?.data?.message ??

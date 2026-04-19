@@ -15,7 +15,6 @@ services:
       - "${MYSQL_HOST_PORT:-3306}:3306"
     volumes:
       - mysql-data:/var/lib/mysql
-      - ./AiAssistant/sql/mysql:/docker-entrypoint-initdb.d:ro
     healthcheck:
       test:
         [
@@ -78,8 +77,6 @@ services:
         condition: service_healthy
       minio:
         condition: service_started
-      cloud:
-        condition: service_healthy
     ports:
       - "${BACKEND_PORT:-8080}:8080"
 
@@ -106,6 +103,8 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+      backend:
+        condition: service_started
     ports:
       - "${CLOUD_PORT:-8081}:8081"
 

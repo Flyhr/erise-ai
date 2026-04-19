@@ -1,3 +1,5 @@
+@import url("https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200");
+
 :root {
   --bg: #f4f7fb;
   --bg-alt: #ebf1f7;
@@ -19,6 +21,27 @@
 
 * {
   box-sizing: border-box;
+}
+
+.material-symbols-outlined {
+  font-family: "Material Symbols Outlined";
+  font-weight: normal;
+  font-style: normal;
+  font-size: 24px;
+  line-height: 1;
+  letter-spacing: normal;
+  text-transform: none;
+  display: inline-block;
+  white-space: nowrap;
+  word-wrap: normal;
+  direction: ltr;
+  -webkit-font-feature-settings: "liga";
+  -webkit-font-smoothing: antialiased;
+  font-variation-settings:
+    "FILL" 0,
+    "wght" 400,
+    "GRAD" 0,
+    "opsz" 24;
 }
 
 html,
@@ -403,8 +426,8 @@ body,
 }
 
 .app-brand-mark {
-  width: 42px;
-  height: 42px;
+  width: 44px;
+  height: 44px;
   border-radius: 14px;
   display: inline-grid;
   place-items: center;
@@ -708,6 +731,23 @@ body,
   --el-table-row-hover-bg-color: rgba(35, 88, 214, 0.04);
 }
 
+.app-table-name-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+  width: 320px;
+  max-width: 320px;
+}
+
+.app-table-name-copy__title,
+.app-table-name-copy__meta {
+  display: block;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .avatar-chip {
   display: inline-flex;
   align-items: center;
@@ -893,6 +933,11 @@ body,
   .app-card__header,
   .app-filter-bar {
     flex-direction: column;
+  }
+
+  .app-table-name-copy {
+    width: 220px;
+    max-width: 220px;
   }
 
   .app-filter-bar__fields {

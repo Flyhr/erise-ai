@@ -16,7 +16,9 @@ import java.util.ArrayList;
 import java.util.List;
 import lombok.Data;
 import lombok.RequiredArgsConstructor;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 @Service
 @RequiredArgsConstructor
@@ -24,7 +26,6 @@ class RagKnowledgeService {
 
     private static final String SCOPE_KB = "KB";
     private static final String SCOPE_TEMP = "TEMP";
-    private static final String STATUS_PENDING = "PENDING";
     private static final String STATUS_PROCESSING = "PROCESSING";
     private static final String STATUS_READY = "READY";
     private static final String STATUS_FAILED = "FAILED";
@@ -32,16 +33,17 @@ class RagKnowledgeService {
     private static final String STATUS_NEEDS_REPAIR = "NEEDS_REPAIR";
     private static final String TASK_TYPE_INDEX = "INDEX";
     private static final String TASK_TYPE_DELETE = "DELETE";
-    private static final int TARGET_CHUNK_SIZE = 420;
-    private static final int MAX_CHUNK_SIZE = 500;
-    private static final int OVERLAP_SIZE = 60;
+    private static final int MAX_CHUNKS_PER_SOURCE = 5000;
 
     private final RagSourceMapper ragSourceMapper;
     private final RagChunkMapper ragChunkMapper;
     private final RagTaskMapper ragTaskMapper;
     private final CloudAiClient cloudAiClient;
     private final ObjectMapper objectMapper;
+    private final SparseKnowledgeSupport sparseKnowledgeSupport;
+    private final JdbcTemplate jdbcTemplate;
 
+    @Transactional(noRollbackFor = Exception.class)
     void replaceKbSource(Long ownerUserId,
                          Long projectId,
                          String sourceType,
@@ -51,6 +53,7 @@ class RagKnowledgeService {
         replaceSource(SCOPE_KB, ownerUserId, projectId, 0L, sourceType, sourceId, sourceTitle, chunks);
     }
 
+    @Transactional(noRollbackFor = Exception.class)
     void replaceTempSource(Long ownerUserId,
                            Long projectId,
                            Long sessionId,
@@ -60,10 +63,12 @@ class RagKnowledgeService {
         replaceSource(SCOPE_TEMP, ownerUserId, projectId, sessionId, "TEMP_FILE", sourceId, sourceTitle, chunks);
     }
 
+    @Transactional(noRollbackFor = Exception.class)
     void deleteKbSource(Long ownerUserId, Long projectId, String sourceType, Long sourceId) {
         deleteSource(SCOPE_KB, ownerUserId, projectId, 0L, sourceType, sourceId);
     }
 
+    @Transactional(noRollbackFor = Exception.class)
     void deleteTempSource(Long ownerUserId, Long sessionId, Long sourceId) {
         deleteSource(SCOPE_TEMP, ownerUserId, null, sessionId, "TEMP_FILE", sourceId);
     }
@@ -82,47 +87,52 @@ class RagKnowledgeService {
                 ));
     }
 
-    List<ChunkInput> splitText(String text, Integer pageNo) {
-        List<ChunkInput> chunks = new ArrayList<>();
-        if (text == null || text.isBlank()) {
-            return chunks;
-        }
-        String normalized = text.replace("\r", "").trim();
-        String[] rawParagraphs = normalized.split("\\n\\s*\\n+");
-        List<String> paragraphs = new ArrayList<>();
-        for (String rawParagraph : rawParagraphs) {
-            String trimmed = rawParagraph.trim();
-            if (!trimmed.isBlank()) {
-                paragraphs.add(trimmed);
-            }
-        }
-        if (paragraphs.isEmpty()) {
-            return List.of(new ChunkInput(0, normalized, pageNo, null));
-        }
+    KnowledgeSyncStatusView kbSyncStatus(Long ownerUserId, String sourceType, Long sourceId) {
+        RagSourceEntity source = findSource(SCOPE_KB, ownerUserId, sourceType, sourceId, 0L);
+        return new KnowledgeSyncStatusView(
+                "SKIPPED",
+                mapIndexStatus(source == null ? null : source.getStatus()),
+                source == null ? null : source.getLastError()
+        );
+    }
 
-        int chunkIndex = 0;
-        String currentSection = null;
-        StringBuilder buffer = new StringBuilder();
-        for (String paragraph : paragraphs) {
-            if (isLikelyHeading(paragraph)) {
-                currentSection = paragraph;
-            }
-            if (buffer.length() == 0) {
-                buffer.append(paragraph);
-                continue;
-            }
-            if (buffer.length() + 2 + paragraph.length() <= TARGET_CHUNK_SIZE) {
-                buffer.append("\n\n").append(paragraph);
-                continue;
-            }
-            chunkIndex = flushBuffer(chunks, chunkIndex, buffer, pageNo, currentSection);
-            if (buffer.length() > 0) {
-                buffer.append("\n\n");
-            }
-            buffer.append(paragraph);
+    @Transactional(noRollbackFor = Exception.class)
+    void updateKbSourceTitle(Long ownerUserId,
+                             Long projectId,
+                             String sourceType,
+                             Long sourceId,
+                             String sourceTitle,
+                             Long actorUserId) {
+        RagSourceEntity source = findSource(SCOPE_KB, ownerUserId, sourceType, sourceId, 0L);
+        if (source == null) {
+            return;
         }
-        flushBuffer(chunks, chunkIndex, buffer, pageNo, currentSection);
-        return chunks;
+        source.setProjectId(projectId);
+        source.setSourceTitle(sourceTitle);
+        source.setUpdatedBy(actorUserId == null ? ownerUserId : actorUserId);
+        ragSourceMapper.updateById(source);
+        List<RagChunkEntity> chunks = ragChunkMapper.selectList(new LambdaQueryWrapper<RagChunkEntity>()
+                .eq(RagChunkEntity::getRagSourceId, source.getId())
+                .orderByAsc(RagChunkEntity::getChunkNum));
+        sparseKnowledgeSupport.rebuildSourceIndex(source, chunks, actorUserId == null ? ownerUserId : actorUserId);
+    }
+
+    private List<ChunkInput> normalizeChunks(List<ChunkInput> chunks) {
+        if (chunks == null || chunks.isEmpty()) {
+            return List.of();
+        }
+        List<ChunkInput> normalized = new ArrayList<>();
+        int nextChunkIndex = 0;
+        for (ChunkInput chunk : chunks) {
+            if (chunk == null || chunk.chunkText() == null || chunk.chunkText().isBlank()) {
+                continue;
+            }
+            if (normalized.size() >= MAX_CHUNKS_PER_SOURCE) {
+                break;
+            }
+            normalized.add(new ChunkInput(nextChunkIndex++, chunk.chunkText().trim(), chunk.pageNo(), chunk.sectionPath()));
+        }
+        return normalized;
     }
 
     private void replaceSource(String scopeType,
@@ -133,7 +143,9 @@ class RagKnowledgeService {
                                Long sourceId,
                                String sourceTitle,
                                List<ChunkInput> chunks) {
-        RagSourceEntity source = upsertSource(scopeType, ownerUserId, projectId, sessionId, sourceType, sourceId, sourceTitle);
+        Long normalizedSessionId = normalizeSessionId(sessionId);
+        List<ChunkInput> normalizedChunks = normalizeChunks(chunks);
+        RagSourceEntity source = upsertSource(scopeType, ownerUserId, projectId, normalizedSessionId, sourceType, sourceId, sourceTitle);
         RagTaskEntity task = createTask(source, ownerUserId, projectId, sessionId, sourceType, sourceId, TASK_TYPE_INDEX);
         try {
             CloudAiClient.RagIndexUpsertResponse response = cloudAiClient.upsertRagIndex(
@@ -142,11 +154,11 @@ class RagKnowledgeService {
                             ownerUserId,
                             scopeType,
                             projectId,
-                            sessionId,
+                            normalizedSessionId,
                             sourceType,
                             sourceId,
                             sourceTitle,
-                            chunks == null ? List.of() : chunks.stream()
+                            normalizedChunks.stream()
                                     .map(item -> new CloudAiClient.RagChunkRequest(
                                             item.chunkIndex(),
                                             item.chunkText(),
@@ -159,16 +171,17 @@ class RagKnowledgeService {
                     requestId(scopeType, sourceType, sourceId)
             );
 
-            ragChunkMapper.delete(new LambdaQueryWrapper<RagChunkEntity>().eq(RagChunkEntity::getRagSourceId, source.getId()));
+            hardDeleteChunks(source.getId());
             String collectionName = response == null || response.collectionName() == null
                     ? defaultCollection(scopeType)
                     : response.collectionName();
-            for (ChunkInput chunk : chunks == null ? List.<ChunkInput>of() : chunks) {
+            List<RagChunkEntity> insertedChunks = new ArrayList<>();
+            for (ChunkInput chunk : normalizedChunks) {
                 RagChunkEntity entity = new RagChunkEntity();
                 entity.setRagSourceId(source.getId());
                 entity.setOwnerUserId(ownerUserId);
                 entity.setProjectId(projectId);
-                entity.setSessionId(sessionId);
+                entity.setSessionId(normalizedSessionId);
                 entity.setSourceType(sourceType);
                 entity.setSourceId(sourceId);
                 entity.setChunkNum(chunk.chunkIndex());
@@ -176,20 +189,22 @@ class RagKnowledgeService {
                 entity.setPageNo(chunk.pageNo());
                 entity.setSectionPath(chunk.sectionPath());
                 entity.setVectorCollection(collectionName);
-                entity.setVectorPointId(pointId(scopeType, sourceType, sourceId, sessionId, chunk.chunkIndex()));
+                entity.setVectorPointId(pointId(scopeType, sourceType, sourceId, normalizedSessionId, chunk.chunkIndex()));
                 entity.setEmbeddingModelCode(response == null ? null : response.embeddingModelCode());
                 entity.setEmbeddingVersion(response == null ? null : response.embeddingVersion());
                 entity.setEmbeddingDimension(response == null ? null : response.embeddingDimension());
                 entity.setCreatedBy(ownerUserId);
                 entity.setUpdatedBy(ownerUserId);
                 ragChunkMapper.insert(entity);
+                insertedChunks.add(entity);
             }
+            sparseKnowledgeSupport.rebuildSourceIndex(source, insertedChunks, ownerUserId);
 
             source.setStatus(STATUS_READY);
-            source.setChunkCount(chunks == null ? 0 : chunks.size());
+            source.setChunkCount(normalizedChunks.size());
             source.setLastError(null);
             source.setLastIndexedAt(LocalDateTime.now());
-            source.setContentHash(contentHash(chunks));
+            source.setContentHash(contentHash(normalizedChunks));
             source.setEmbeddingModelCode(response == null ? null : response.embeddingModelCode());
             source.setEmbeddingVersion(response == null ? null : response.embeddingVersion());
             source.setEmbeddingDimension(response == null ? null : response.embeddingDimension());
@@ -202,7 +217,7 @@ class RagKnowledgeService {
             task.setUpdatedBy(ownerUserId);
             ragTaskMapper.updateById(task);
         } catch (Exception exception) {
-            ragChunkMapper.delete(new LambdaQueryWrapper<RagChunkEntity>().eq(RagChunkEntity::getRagSourceId, source.getId()));
+            hardDeleteChunks(source.getId());
             source.setStatus(STATUS_FAILED);
             source.setChunkCount(0);
             source.setLastError(trimError(exception.getMessage()));
@@ -241,7 +256,8 @@ class RagKnowledgeService {
                     ),
                     requestId(scopeType, sourceType, sourceId)
             );
-            ragChunkMapper.delete(new LambdaQueryWrapper<RagChunkEntity>().eq(RagChunkEntity::getRagSourceId, source.getId()));
+            hardDeleteChunks(source.getId());
+            sparseKnowledgeSupport.deleteSourceIndex(source.getId());
             source.setStatus(STATUS_DELETED);
             source.setChunkCount(0);
             source.setLastError(null);
@@ -298,6 +314,13 @@ class RagKnowledgeService {
         return source;
     }
 
+    private void hardDeleteChunks(Long ragSourceId) {
+        if (ragSourceId == null) {
+            return;
+        }
+        jdbcTemplate.update("delete from ea_rag_chunk where rag_source_id = ?", ragSourceId);
+    }
+
     private RagTaskEntity createTask(RagSourceEntity source,
                                      Long ownerUserId,
                                      Long projectId,
@@ -335,46 +358,6 @@ class RagKnowledgeService {
 
     private Long normalizeSessionId(Long sessionId) {
         return sessionId == null ? 0L : sessionId;
-    }
-
-    private int flushBuffer(List<ChunkInput> chunks,
-                            int chunkIndex,
-                            StringBuilder buffer,
-                            Integer pageNo,
-                            String sectionPath) {
-        while (buffer.length() > MAX_CHUNK_SIZE) {
-            int splitPosition = findSplitPosition(buffer.toString());
-            String piece = buffer.substring(0, splitPosition).trim();
-            chunks.add(new ChunkInput(chunkIndex++, piece, pageNo, sectionPath));
-            String remainder = buffer.substring(Math.max(0, splitPosition - OVERLAP_SIZE)).trim();
-            buffer.setLength(0);
-            buffer.append(remainder);
-        }
-        String finalText = buffer.toString().trim();
-        if (!finalText.isBlank()) {
-            chunks.add(new ChunkInput(chunkIndex++, finalText, pageNo, sectionPath));
-        }
-        buffer.setLength(0);
-        return chunkIndex;
-    }
-
-    private int findSplitPosition(String value) {
-        int candidate = Math.min(MAX_CHUNK_SIZE, value.length());
-        for (int index = candidate; index >= TARGET_CHUNK_SIZE; index--) {
-            char current = value.charAt(index - 1);
-            if (current == '\n' || current == ' ' || current == '。' || current == '；' || current == ';') {
-                return index;
-            }
-        }
-        return Math.min(TARGET_CHUNK_SIZE, value.length());
-    }
-
-    private boolean isLikelyHeading(String paragraph) {
-        return paragraph.length() <= 60
-                && !paragraph.contains("。")
-                && !paragraph.contains(".")
-                && !paragraph.contains("：")
-                && !paragraph.contains(":");
     }
 
     private String contentHash(List<ChunkInput> chunks) {
@@ -435,7 +418,21 @@ class RagKnowledgeService {
         return SCOPE_TEMP.equalsIgnoreCase(scopeType) ? "temp_chunks" : "kb_chunks";
     }
 
+    private String mapIndexStatus(String status) {
+        String normalized = status == null ? "" : status.trim().toUpperCase();
+        return switch (normalized) {
+            case STATUS_READY -> STATUS_READY;
+            case STATUS_PROCESSING -> STATUS_PROCESSING;
+            case STATUS_FAILED, STATUS_NEEDS_REPAIR -> STATUS_FAILED;
+            case STATUS_DELETED -> STATUS_DELETED;
+            default -> "PENDING";
+        };
+    }
+
     record ChunkInput(int chunkIndex, String chunkText, Integer pageNo, String sectionPath) {
+    }
+
+    record KnowledgeSyncStatusView(String parseStatus, String indexStatus, String errorMessage) {
     }
 }
 

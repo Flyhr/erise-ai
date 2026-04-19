@@ -71,6 +71,7 @@ class KnowledgeQueryService {
                                  List<Object> params) {
         boolean includeFiles = type == null || type.isBlank() || "FILE".equalsIgnoreCase(type);
         boolean includeDocuments = type == null || type.isBlank() || "DOCUMENT".equalsIgnoreCase(type);
+        boolean includeContents = type == null || type.isBlank() || "CONTENT".equalsIgnoreCase(type);
         List<String> parts = new ArrayList<>();
         if (includeFiles) {
             parts.add(fileSql(projectId, keyword, knowledgeOnly, userId, admin, params));
@@ -78,19 +79,29 @@ class KnowledgeQueryService {
         if (includeDocuments) {
             parts.add(documentSql(projectId, keyword, userId, admin, params));
         }
+        if (includeContents) {
+            parts.add(contentSql(projectId, keyword, userId, admin, params));
+        }
         if (parts.isEmpty()) {
             return """
                     select
                       'FILE' as asset_type,
                       0 as asset_id,
                       0 as project_id,
+                      0 as owner_user_id,
+                      '' as owner_name,
                       '' as title,
                       null as summary,
                       null as file_ext,
                       null as mime_type,
                       null as file_size,
                       null as parse_status,
+                      null as review_status,
+                      null as index_status,
+                      null as parse_error_message,
+                      null as review_comment,
                       null as doc_status,
+                      null as item_type,
                       now() as created_at,
                       now() as updated_at
                     where 1 = 0
@@ -110,16 +121,31 @@ class KnowledgeQueryService {
                   'FILE' as asset_type,
                   f.id as asset_id,
                   f.project_id,
+                  f.owner_user_id as owner_user_id,
+                  coalesce(up.display_name, u.username) as owner_name,
                   f.file_name as title,
                   null as summary,
                   f.file_ext,
                   f.mime_type,
                   f.file_size,
                   f.parse_status,
+                  f.review_status,
+                  f.index_status,
+                  (
+                    select t.last_error
+                    from ea_file_parse_task t
+                    where t.file_id = f.id
+                    order by t.updated_at desc, t.id desc
+                    limit 1
+                  ) as parse_error_message,
+                  f.review_comment,
                   null as doc_status,
+                  null as item_type,
                   f.created_at,
                   f.updated_at
                 from ea_file f
+                left join ea_user u on u.id = f.owner_user_id and u.deleted = 0
+                left join ea_user_profile up on up.user_id = f.owner_user_id and up.deleted = 0
                 where f.deleted = 0
                 """);
         if (!admin) {
@@ -150,16 +176,53 @@ class KnowledgeQueryService {
                   'DOCUMENT' as asset_type,
                   d.id as asset_id,
                   d.project_id,
+                  d.owner_user_id as owner_user_id,
+                  coalesce(up.display_name, u.username) as owner_name,
                   d.title as title,
                   d.summary as summary,
                   null as file_ext,
                   'DOCUMENT' as mime_type,
                   null as file_size,
-                  null as parse_status,
+                  'SKIPPED' as parse_status,
+                  null as review_status,
+                  coalesce((
+                    select case
+                      when upper(coalesce(s.status, '')) = 'READY' then 'READY'
+                      when upper(coalesce(s.status, '')) = 'PROCESSING' then 'PROCESSING'
+                      when upper(coalesce(s.status, '')) in ('FAILED', 'NEEDS_REPAIR') then 'FAILED'
+                      when upper(coalesce(s.status, '')) = 'DELETED' then 'DELETED'
+                      else 'PENDING'
+                    end
+                    from ea_rag_source s
+                    where s.deleted = 0
+                      and s.scope_type = 'KB'
+                      and s.source_type = 'DOCUMENT'
+                      and s.source_id = d.id
+                      and s.owner_user_id = d.owner_user_id
+                      and coalesce(s.session_id, 0) = 0
+                    order by s.updated_at desc, s.id desc
+                    limit 1
+                  ), 'PENDING') as index_status,
+                  (
+                    select s.last_error
+                    from ea_rag_source s
+                    where s.deleted = 0
+                      and s.scope_type = 'KB'
+                      and s.source_type = 'DOCUMENT'
+                      and s.source_id = d.id
+                      and s.owner_user_id = d.owner_user_id
+                      and coalesce(s.session_id, 0) = 0
+                    order by s.updated_at desc, s.id desc
+                    limit 1
+                  ) as parse_error_message,
+                  null as review_comment,
                   d.doc_status,
+                  null as item_type,
                   d.created_at,
                   d.updated_at
                 from ea_document d
+                left join ea_user u on u.id = d.owner_user_id and u.deleted = 0
+                left join ea_user_profile up on up.user_id = d.owner_user_id and up.deleted = 0
                 where d.deleted = 0
                 """);
         if (!admin) {
@@ -178,18 +241,102 @@ class KnowledgeQueryService {
         return sql.toString();
     }
 
+    private String contentSql(Long projectId,
+                              String keyword,
+                              Long userId,
+                              boolean admin,
+                              List<Object> params) {
+        StringBuilder sql = new StringBuilder("""
+                select
+                  'CONTENT' as asset_type,
+                  ci.id as asset_id,
+                  ci.project_id,
+                  ci.owner_user_id as owner_user_id,
+                  coalesce(up.display_name, u.username) as owner_name,
+                  ci.title as title,
+                  ci.summary as summary,
+                  null as file_ext,
+                  'CONTENT' as mime_type,
+                  null as file_size,
+                  'SKIPPED' as parse_status,
+                  null as review_status,
+                  coalesce((
+                    select case
+                      when upper(coalesce(s.status, '')) = 'READY' then 'READY'
+                      when upper(coalesce(s.status, '')) = 'PROCESSING' then 'PROCESSING'
+                      when upper(coalesce(s.status, '')) in ('FAILED', 'NEEDS_REPAIR') then 'FAILED'
+                      when upper(coalesce(s.status, '')) = 'DELETED' then 'DELETED'
+                      else 'PENDING'
+                    end
+                    from ea_rag_source s
+                    where s.deleted = 0
+                      and s.scope_type = 'KB'
+                      and s.source_type = ci.item_type
+                      and s.source_id = ci.id
+                      and s.owner_user_id = ci.owner_user_id
+                      and coalesce(s.session_id, 0) = 0
+                    order by s.updated_at desc, s.id desc
+                    limit 1
+                  ), 'PENDING') as index_status,
+                  (
+                    select s.last_error
+                    from ea_rag_source s
+                    where s.deleted = 0
+                      and s.scope_type = 'KB'
+                      and s.source_type = ci.item_type
+                      and s.source_id = ci.id
+                      and s.owner_user_id = ci.owner_user_id
+                      and coalesce(s.session_id, 0) = 0
+                    order by s.updated_at desc, s.id desc
+                    limit 1
+                  ) as parse_error_message,
+                  null as review_comment,
+                  null as doc_status,
+                  ci.item_type as item_type,
+                  ci.created_at,
+                  ci.updated_at
+                from ea_content_item ci
+                left join ea_user u on u.id = ci.owner_user_id and u.deleted = 0
+                left join ea_user_profile up on up.user_id = ci.owner_user_id and up.deleted = 0
+                where ci.deleted = 0
+                """);
+        if (!admin) {
+            sql.append(" and ci.owner_user_id = ? ");
+            params.add(userId);
+        }
+        if (projectId != null) {
+            sql.append(" and ci.project_id = ? ");
+            params.add(projectId);
+        }
+        if (keyword != null && !keyword.isBlank()) {
+            sql.append(" and (ci.title like ? or ci.summary like ? or ci.plain_text like ?) ");
+            String likeKeyword = "%" + keyword.trim() + "%";
+            params.add(likeKeyword);
+            params.add(likeKeyword);
+            params.add(likeKeyword);
+        }
+        return sql.toString();
+    }
+
     private KnowledgeAssetView mapAsset(ResultSet rs) throws SQLException {
         return new KnowledgeAssetView(
                 rs.getString("asset_type"),
                 rs.getLong("asset_id"),
                 rs.getLong("project_id"),
+                rs.getObject("owner_user_id") == null ? null : rs.getLong("owner_user_id"),
+                rs.getString("owner_name"),
                 rs.getString("title"),
                 rs.getString("summary"),
                 rs.getString("file_ext"),
                 rs.getString("mime_type"),
                 rs.getObject("file_size") == null ? null : rs.getLong("file_size"),
                 rs.getString("parse_status"),
+                rs.getString("review_status"),
+                rs.getString("index_status"),
+                rs.getString("parse_error_message"),
+                rs.getString("review_comment"),
                 rs.getString("doc_status"),
+                rs.getString("item_type"),
                 rs.getTimestamp("created_at").toLocalDateTime(),
                 rs.getTimestamp("updated_at").toLocalDateTime()
         );
@@ -200,13 +347,20 @@ record KnowledgeAssetView(
         String assetType,
         Long assetId,
         Long projectId,
+        Long ownerUserId,
+        String ownerName,
         String title,
         String summary,
         String fileExt,
         String mimeType,
         Long fileSize,
         String parseStatus,
+        String reviewStatus,
+        String indexStatus,
+        String parseErrorMessage,
+        String reviewComment,
         String docStatus,
+        String itemType,
         java.time.LocalDateTime createdAt,
         java.time.LocalDateTime updatedAt
 ) {

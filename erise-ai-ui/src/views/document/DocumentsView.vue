@@ -1,5 +1,78 @@
 <template>
-  <div class="page-shell">
+  <ProjectScopedListShell
+    v-if="scopedProjectId"
+    :project-id="scopedProjectId"
+    title="文档列表"
+    :keyword="keyword"
+    search-placeholder="按标题或摘要搜索文档"
+    @update:keyword="keyword = $event"
+    @search="handleSearch"
+  >
+    <template #actions>
+      <el-button @click="resetFilters">重置</el-button>
+      <el-button type="primary" @click="handleSearch">查询</el-button>
+      <el-button type="primary" @click="create">新建文档</el-button>
+    </template>
+
+    <AppSectionCard title="文档列表" :unpadded="Boolean(documents.length)">
+      <AppDataTable v-if="documents.length" :data="documents" stripe :row-class-name="rowClassName">
+        <el-table-column label="文档" min-width="220">
+          <template #default="{ row }">
+            <div class="document-title-cell">
+              <strong>{{ row.title }}</strong>
+              <span>{{ row.summary || '暂无摘要' }}</span>
+            </div>
+          </template>
+        </el-table-column>
+        <el-table-column label="状态" width="120">
+          <template #default="{ row }">
+            <AppStatusTag :label="documentStatusLabel(row.docStatus)" :tone="documentStatusTone(row.docStatus)" />
+          </template>
+        </el-table-column>
+        <el-table-column label="版本" width="100">
+          <template #default="{ row }">v{{ row.latestVersionNo }}</template>
+        </el-table-column>
+        <el-table-column label="创建时间" min-width="170">
+          <template #default="{ row }">{{ formatDateTime(row.createdAt) }}</template>
+        </el-table-column>
+        <el-table-column label="更新时间" min-width="170">
+          <template #default="{ row }">{{ formatDateTime(row.updatedAt) }}</template>
+        </el-table-column>
+        <el-table-column label="操作" min-width="220" fixed="right">
+          <template #default="{ row }">
+            <div class="table-actions">
+              <el-button text @click="router.push({ path: `/documents/${row.id}/edit`, query: { mode: 'preview' } })">
+                浏览
+              </el-button>
+              <el-button text @click="router.push(`/documents/${row.id}/edit`)">编辑</el-button>
+              <el-dropdown>
+                <el-button text>更多</el-button>
+                <template #dropdown>
+                  <el-dropdown-menu>
+                    <el-dropdown-item @click="removeDocument(row)">删除文档</el-dropdown-item>
+                  </el-dropdown-menu>
+                </template>
+              </el-dropdown>
+            </div>
+          </template>
+        </el-table-column>
+      </AppDataTable>
+      <AppEmptyState
+        v-else
+        title="当前项目还没有文档"
+        description="新建在线文档后，这里会显示文档状态、版本和最近更新时间。"
+      />
+
+      <template #footer>
+        <div class="documents-footer">
+          <span class="page-subtitle" style="margin: 0;">共 {{ total }} 份文档</span>
+          <CompactPager :page-num="pageNum" :page-size="pageSize" :total="total" @change="handlePageChange" />
+        </div>
+      </template>
+    </AppSectionCard>
+  </ProjectScopedListShell>
+
+  <div v-else class="page-shell">
     <AppFilterBar>
       <el-input
         v-model="keyword"
@@ -13,11 +86,12 @@
         style="grid-column: span 4"
         filterable
         clearable
-        :disabled="Boolean(scopedProjectId)"
         placeholder="筛选项目"
       >
         <el-option v-for="project in projects" :key="project.id" :label="project.name" :value="project.id" />
       </el-select>
+
+      <div class="documents-filter-copy">支持按项目筛选后浏览、创建和管理在线文档。</div>
 
       <template #actions>
         <el-button type="primary" @click="handleSearch">查询</el-button>
@@ -26,8 +100,8 @@
       </template>
     </AppFilterBar>
 
-    <AppSectionCard :unpadded="true">
-      <AppDataTable :data="documents" stripe :row-class-name="rowClassName">
+    <AppSectionCard title="文档列表" :unpadded="Boolean(documents.length)">
+      <AppDataTable v-if="documents.length" :data="documents" stripe :row-class-name="rowClassName">
         <el-table-column label="文档" min-width="180">
           <template #default="{ row }">
             <div class="document-title-cell">
@@ -56,7 +130,9 @@
         <el-table-column label="操作" min-width="220" fixed="right">
           <template #default="{ row }">
             <div class="table-actions">
-              <el-button text @click="router.push({ path: `/documents/${row.id}/edit`, query: { mode: 'preview' } })">浏览</el-button>
+              <el-button text @click="router.push({ path: `/documents/${row.id}/edit`, query: { mode: 'preview' } })">
+                浏览
+              </el-button>
               <el-button text @click="router.push(`/documents/${row.id}/edit`)">编辑</el-button>
               <el-dropdown>
                 <el-button text>更多</el-button>
@@ -70,6 +146,11 @@
           </template>
         </el-table-column>
       </AppDataTable>
+      <AppEmptyState
+        v-else
+        title="还没有匹配的文档"
+        description="调整筛选条件，或者先选择项目创建一份新文档。"
+      />
 
       <template #footer>
         <div class="documents-footer">
@@ -85,12 +166,14 @@
 import { computed, onMounted, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { useRoute, useRouter } from 'vue-router'
-import { createDocument, deleteDocument, getDocuments } from '@/api/document'
+import { deleteDocument, getDocuments } from '@/api/document'
 import AppDataTable from '@/components/common/AppDataTable.vue'
+import AppEmptyState from '@/components/common/AppEmptyState.vue'
 import AppFilterBar from '@/components/common/AppFilterBar.vue'
 import AppSectionCard from '@/components/common/AppSectionCard.vue'
 import AppStatusTag from '@/components/common/AppStatusTag.vue'
 import CompactPager from '@/components/common/CompactPager.vue'
+import ProjectScopedListShell from '@/components/common/ProjectScopedListShell.vue'
 import { useProjectDirectory } from '@/composables/useProjectDirectory'
 import type { DocumentSummaryView } from '@/types/models'
 import { documentStatusLabel, documentStatusTone, formatDateTime, resolveErrorMessage } from '@/utils/formatters'
@@ -173,13 +256,10 @@ const create = async () => {
     ElMessage.warning('请先选择一个项目，再创建文档。')
     return
   }
-  try {
-    const created = await createDocument({ projectId: createProjectId.value, title: '未命名文档', summary: '' })
-    ElMessage.success('文档已创建')
-    router.push({ path: `/documents/${created.id}/edit`, query: { mode: 'preview' } })
-  } catch (error) {
-    ElMessage.error(resolveErrorMessage(error, '文档创建失败'))
-  }
+  await router.push({
+    path: '/documents/new/edit',
+    query: { projectId: createProjectId.value },
+  })
 }
 
 const removeDocument = async (document: DocumentSummaryView) => {
@@ -204,6 +284,14 @@ watch(
 </script>
 
 <style scoped>
+.documents-filter-copy {
+  grid-column: span 3;
+  display: flex;
+  align-items: center;
+  color: var(--muted);
+  font-size: 13px;
+}
+
 .document-title-cell {
   display: flex;
   flex-direction: column;

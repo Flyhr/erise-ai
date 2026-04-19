@@ -2,7 +2,7 @@
   <div class="auth-shell">
     <section class="auth-shell__brand">
       <div class="app-brand-mark">E</div>
-      <div class="app-eyebrow">Erise 企业知识库</div>
+      <div class="app-eyebrow">Erise </div>
       <h1 class="auth-shell__title">把项目、文件、文档与 AI 协作汇聚到一个可靠入口</h1>
       <p class="auth-shell__copy">
         登录后即可创建项目空间、上传资料、在线编辑文档与 txt 文件，并基于知识库发起可追溯引用的 AI 对话。

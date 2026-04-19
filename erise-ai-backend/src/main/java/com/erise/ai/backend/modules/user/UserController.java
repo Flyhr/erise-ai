@@ -1,5 +1,6 @@
 package com.erise.ai.backend.modules;
 
+import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.erise.ai.backend.common.api.ApiResponse;
 import com.erise.ai.backend.common.exception.BizException;
 import com.erise.ai.backend.common.exception.ErrorCodes;
@@ -7,8 +8,10 @@ import com.erise.ai.backend.common.util.SecurityUtils;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
 import lombok.RequiredArgsConstructor;
+import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -37,17 +40,26 @@ public class UserController {
         userService.changePassword(request);
         return ApiResponse.success("success", null);
     }
+
+    @DeleteMapping("/me")
+    public ApiResponse<Void> deleteAccount(@Valid @RequestBody DeleteAccountRequest request) {
+        userService.deleteAccount(request);
+        return ApiResponse.success("success", null);
+    }
 }
 
 @RequiredArgsConstructor
 @Service
 class UserService {
 
+    private static final String REFRESH_PREFIX = "auth:refresh:";
+
     private final AuthService authService;
     private final UserMapper userMapper;
     private final UserProfileMapper userProfileMapper;
     private final PasswordEncoder passwordEncoder;
     private final AuditLogService auditLogService;
+    private final StringRedisTemplate redisTemplate;
 
     UserView current() {
         var currentUser = SecurityUtils.currentUser();
@@ -83,6 +95,23 @@ class UserService {
         userMapper.updateById(user);
         auditLogService.log(currentUser, "USER_PASSWORD_CHANGE", "USER", currentUser.userId(), null);
     }
+
+    void deleteAccount(DeleteAccountRequest request) {
+        var currentUser = SecurityUtils.currentUser();
+        UserEntity user = authService.activeUserById(currentUser.userId());
+        if ("ADMIN".equalsIgnoreCase(user.getRoleCode())) {
+            throw new BizException(ErrorCodes.BAD_REQUEST, "Admin account does not support self deletion");
+        }
+        if (!passwordEncoder.matches(request.password(), user.getPasswordHash())) {
+            throw new BizException(ErrorCodes.BAD_REQUEST, "Password is incorrect");
+        }
+
+        userProfileMapper.delete(new LambdaQueryWrapper<UserProfileEntity>()
+                .eq(UserProfileEntity::getUserId, currentUser.userId()));
+        userMapper.deleteById(currentUser.userId());
+        redisTemplate.delete(REFRESH_PREFIX + currentUser.userId());
+        auditLogService.log(currentUser, "USER_ACCOUNT_DELETE", "USER", currentUser.userId(), null);
+    }
 }
 
 record UpdateProfileRequest(
@@ -94,4 +123,7 @@ record UpdateProfileRequest(
 }
 
 record ChangePasswordRequest(@NotBlank String oldPassword, @NotBlank String newPassword) {
+}
+
+record DeleteAccountRequest(@NotBlank String password) {
 }

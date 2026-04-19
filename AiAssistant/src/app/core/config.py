@@ -38,10 +38,13 @@ class Settings(BaseSettings):
     embedding_api_key: str = ''
     embedding_version: str = 'v1'
     embedding_dimensions: int = 1536
+    embedding_local_fallback_enabled: bool = False
 
     rag_top_k: int = 5
     rag_keyword_top_k: int = 5
     rag_similarity_threshold: float = 0.75
+    rag_query_rewrite_enabled: bool = True
+    rag_strict_citation_enabled: bool = True
 
     web_search_provider: str = ''
     web_search_max_results: int = 5
@@ -53,10 +56,17 @@ class Settings(BaseSettings):
     message_page_size: int = 50
     blocked_terms: str = ''
     stream_cancel_ttl_seconds: int = 600
-    provider_timeout_seconds: int = 120
-    connect_timeout_seconds: int = 30
+    provider_timeout_seconds: int = 300
+    connect_timeout_seconds: int = 60
+    qdrant_timeout_seconds: int = 300
+    embedding_max_retries: int = 2
+    embedding_batch_size: int = 128
+    qdrant_max_retries: int = 2
+    qdrant_upsert_batch_size: int = 256
+    retry_backoff_seconds: float = 2.0
     default_org_id: int = 0
     sqlite_echo: bool = False
+    auto_init_sqlite_schema: bool = True
 
     model_config = SettingsConfigDict(
         env_file='.env',
