@@ -1,6 +1,6 @@
 import type { AxiosRequestConfig } from 'axios'
 import http, { FILE_UPLOAD_TIMEOUT_MS, resolveApiUrl } from './http'
-import type { EditableOfficeFileView, FileView, PageResponse } from '@/types/models'
+import type { EditableOfficeFileView, FileStatusWatchView, FileView, PageResponse } from '@/types/models'
 
 export interface InitUploadResponse {
   fileId: number
@@ -40,6 +40,16 @@ export const getFile = (id: number, options?: RequestBehaviorOptions) =>
     `/v1/files/${id}`,
     { skipRouteLoading: options?.background } as AxiosRequestConfig & { skipRouteLoading?: boolean },
   )
+
+export const watchFileStatuses = (params: { fileIds: number[]; cursor?: string; timeoutMs?: number }, options?: RequestBehaviorOptions) =>
+  http.get<never, FileStatusWatchView>('/v1/files/status-watch', {
+    params: {
+      fileIds: params.fileIds.join(','),
+      cursor: params.cursor,
+      timeoutMs: params.timeoutMs,
+    },
+    skipRouteLoading: options?.background,
+  } as AxiosRequestConfig & { skipRouteLoading?: boolean })
 
 export const retryFileParse = (id: number) =>
   http.post<never, FileView>(`/v1/files/${id}/retry-parse`)

@@ -352,6 +352,190 @@ export interface AiIndexTaskQuery {
   errorOnly?: boolean
 }
 
+export interface AdminAiProviderHealthView {
+  role: string
+  providerCode: string
+  modelCode: string
+  baseUrl: string
+  configured: boolean
+  status: string
+  latencyMs?: number
+  errorCode?: string
+  message?: string
+}
+
+export interface AdminAiServiceProviderSummaryView {
+  status: string
+  routes: AdminAiProviderHealthView[]
+}
+
+export interface AdminAiServiceHealthView {
+  service: string
+  status: string
+  database: string
+  redis: string
+  providers: AdminAiServiceProviderSummaryView
+}
+
+export interface AdminAiProviderRecentErrorView {
+  errorCode: string
+  count: number
+  lastSeenAt?: string
+}
+
+export interface AdminAiProviderRouteView {
+  role: string
+  providerCode: string
+  modelCode: string
+  modelName?: string
+  baseUrl: string
+  endpointUrl: string
+  probeUrl: string
+  configured: boolean
+  status: string
+  timeoutSeconds: number
+  source: string
+  latencyMs?: number
+  errorCode?: string
+  message?: string
+  isDefault: boolean
+  isEffective: boolean
+  recentRequestCount24h: number
+  recentErrorCount24h: number
+  recentErrorCodes: AdminAiProviderRecentErrorView[]
+}
+
+export interface AdminAiProviderHealthInventoryView {
+  status: string
+  generatedAt: string
+  defaultProviderCode?: string
+  defaultModelCode?: string
+  effectiveRoutes: AdminAiProviderRouteView[]
+  enabledRoutes: AdminAiProviderRouteView[]
+}
+
+export interface AdminAiParserRuntimeView {
+  parserCode: string
+  label: string
+  status: string
+  errorCode?: string
+  message?: string
+  supportedExtensions: string[]
+}
+
+export interface AdminAiFileTypeCapabilityView {
+  extension: string
+  label: string
+  primaryParser: string
+  fallbackParser: string
+  supportsOcr: boolean
+  supportsPages: boolean
+  parseStatuses: string[]
+  retryPolicy: string
+  notes: string
+}
+
+export interface AdminAiFileCapabilityMatrixView {
+  parserOrder: string[]
+  parseStatuses: string[]
+  parserRuntimes: AdminAiParserRuntimeView[]
+  fileTypes: AdminAiFileTypeCapabilityView[]
+}
+
+export interface AdminAiN8nErrorMetricView {
+  errorCode: string
+  count: number
+}
+
+export interface AdminAiN8nEventView {
+  id: number
+  requestId: string
+  eventType: string
+  workflowHint?: string
+  approvalId?: number
+  sessionId?: number
+  userId?: number
+  projectId?: number
+  targetUrl?: string
+  deliveryStatus: string
+  workflowStatus?: string
+   workflowName?: string
+   workflowVersion?: string
+   workflowDomain?: string
+   workflowOwner?: string
+   externalExecutionId?: string
+   workflowErrorSummary?: string
+   workflowDurationMs?: number
+   deliveryRetryable: boolean
+   manualStatus?: string
+   manualReason?: string
+   manualReplayCount: number
+   replayedFromEventId?: number
+   lastCallbackAt?: string
+  statusCode?: number
+  successFlag: boolean
+  errorCode?: string
+  errorMessage?: string
+  attemptCount: number
+  maxAttempts: number
+  idempotencyKey?: string
+   callbackPayloadJson?: string
+  createdAt: string
+  updatedAt: string
+}
+
+export interface AdminAiN8nEventSummaryView {
+  windowHours: number
+  totalEvents: number
+  deliveredCount: number
+  failedCount: number
+  pendingCount: number
+  skippedCount: number
+   workflowFailedCount: number
+   workflowRunningCount: number
+   manualPendingCount: number
+   retryableFailedCount: number
+  successRate: number
+  latestFailure?: AdminAiN8nEventView
+  topErrorCodes: AdminAiN8nErrorMetricView[]
+}
+
+export interface AdminAiInfrastructureWarningView {
+  section: string
+  message: string
+}
+
+export interface AdminAiInfrastructureOverviewView {
+  serviceHealth: AdminAiServiceHealthView
+  providers: AdminAiProviderHealthInventoryView
+  n8nSummary: AdminAiN8nEventSummaryView
+  fileCapabilities: AdminAiFileCapabilityMatrixView
+  warnings: AdminAiInfrastructureWarningView[]
+}
+
+export interface AdminAiN8nRetryView {
+  retried: boolean
+  sourceEventId: number
+  event: AdminAiN8nEventView
+}
+
+export interface AdminAiN8nEventDetailView {
+  event: AdminAiN8nEventView
+  sourceEvent?: AdminAiN8nEventView
+  replayEvents: AdminAiN8nEventView[]
+}
+
+export interface AdminAiN8nEventQuery {
+  pageNum?: number
+  pageSize?: number
+  q?: string
+  deliveryStatus?: string
+  workflowStatus?: string
+   manualStatus?: string
+  eventType?: string
+  createdDate?: string
+}
+
 export const getAiModels = () => http.get<never, ModelConfigView[]>('/v1/admin/ai/models')
 
 export const createAiModel = (payload: ModelConfigCreatePayload) =>
@@ -392,3 +576,22 @@ export const getAiFeedback = (params: AiFeedbackQuery) =>
 
 export const getAiIndexTasks = (params: AiIndexTaskQuery) =>
   http.get<never, PageResponse<AiIndexTaskAdminView>>('/v1/admin/ai/index-tasks', { params })
+
+export const getAiInfrastructureOverview = (hours = 24) =>
+  http.get<never, AdminAiInfrastructureOverviewView>('/v1/admin/ai/infrastructure/overview', {
+    params: { hours },
+  })
+
+export const getAiInfrastructureN8nEvents = (params: AdminAiN8nEventQuery) =>
+  http.get<never, PageResponse<AdminAiN8nEventView>>('/v1/admin/ai/infrastructure/n8n/events', { params })
+
+export const getAiInfrastructureN8nEventDetail = (eventId: number) =>
+  http.get<never, AdminAiN8nEventDetailView>(`/v1/admin/ai/infrastructure/n8n/events/${eventId}`)
+
+export const retryAiInfrastructureN8nEvent = (eventId: number) =>
+  http.post<never, AdminAiN8nRetryView>(`/v1/admin/ai/infrastructure/n8n/events/${eventId}/retry`)
+
+export const manualHandoffAiInfrastructureN8nEvent = (eventId: number, reason?: string) =>
+  http.post<never, AdminAiN8nEventView>(`/v1/admin/ai/infrastructure/n8n/events/${eventId}/manual-handoff`, {
+    reason,
+  })

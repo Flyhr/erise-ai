@@ -105,6 +105,7 @@ CREATE TABLE IF NOT EXISTS ea_file_parse_task (
   owner_user_id BIGINT NOT NULL,
   project_id BIGINT NOT NULL,
   task_status VARCHAR(32) NOT NULL DEFAULT 'PENDING',
+  queue_lane VARCHAR(16) NOT NULL DEFAULT 'NORMAL',
   retry_count INT NOT NULL DEFAULT 0,
   last_error VARCHAR(1000),
   created_by BIGINT,
@@ -113,6 +114,7 @@ CREATE TABLE IF NOT EXISTS ea_file_parse_task (
   updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   deleted TINYINT NOT NULL DEFAULT 0,
   KEY idx_ea_file_parse_task_status_created (task_status, created_at),
+  KEY idx_ea_file_parse_task_lane_status_created (queue_lane, task_status, created_at),
   KEY idx_ea_file_parse_task_file (file_id)
 );
 
@@ -369,6 +371,24 @@ CREATE TABLE IF NOT EXISTS ea_file_edit_content (
   updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   deleted TINYINT NOT NULL DEFAULT 0,
   UNIQUE KEY uk_ea_file_edit_content_file (file_id)
+);
+
+CREATE TABLE IF NOT EXISTS ea_file_parse_result (
+  id BIGINT PRIMARY KEY AUTO_INCREMENT,
+  file_id BIGINT NOT NULL,
+  owner_user_id BIGINT NOT NULL,
+  project_id BIGINT NOT NULL,
+  file_name VARCHAR(255) NOT NULL,
+  chunk_count INT NOT NULL DEFAULT 0,
+  chunk_payload_json LONGTEXT NOT NULL,
+  plain_text LONGTEXT NULL,
+  created_by BIGINT,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_by BIGINT,
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  deleted TINYINT NOT NULL DEFAULT 0,
+  UNIQUE KEY uk_ea_file_parse_result_file (file_id),
+  KEY idx_ea_file_parse_result_owner_project (owner_user_id, project_id)
 );
 
 CREATE TABLE IF NOT EXISTS ea_ai_user_setting (
@@ -818,15 +838,44 @@ CREATE TABLE IF NOT EXISTS n8n_event_log (
   user_id BIGINT NULL,
   project_id BIGINT NULL,
   target_url VARCHAR(1000) NULL,
+  delivery_status VARCHAR(32) NOT NULL DEFAULT 'PENDING',
+  workflow_status VARCHAR(64) NULL,
+  workflow_name VARCHAR(128) NULL,
+  workflow_version VARCHAR(32) NULL,
+  workflow_domain VARCHAR(64) NULL,
+  workflow_owner VARCHAR(128) NULL,
+  external_execution_id VARCHAR(128) NULL,
+  workflow_error_summary VARCHAR(500) NULL,
+  workflow_duration_ms INT NULL,
+  delivery_retryable TINYINT NOT NULL DEFAULT 0,
+  manual_status VARCHAR(32) NULL,
+  manual_reason VARCHAR(500) NULL,
+  manual_replay_count INT NOT NULL DEFAULT 0,
+  replayed_from_event_id BIGINT NULL,
+  last_callback_at DATETIME NULL,
   status_code INT NULL,
   success_flag TINYINT NOT NULL DEFAULT 0,
+  error_code VARCHAR(64) NULL,
   error_message VARCHAR(500) NULL,
+  attempt_count INT NOT NULL DEFAULT 0,
+  max_attempts INT NOT NULL DEFAULT 1,
+  idempotency_key VARCHAR(255) NULL,
+  signature VARCHAR(128) NULL,
   payload_json LONGTEXT NULL,
+  callback_payload_json LONGTEXT NULL,
   created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   KEY idx_n8n_event_request (request_id),
   KEY idx_n8n_event_type (event_type),
-  KEY idx_n8n_event_workflow (workflow_hint)
+  KEY idx_n8n_event_workflow (workflow_hint),
+  KEY idx_n8n_event_delivery_status (delivery_status, created_at),
+  KEY idx_n8n_event_workflow_status (workflow_status, created_at),
+  KEY idx_n8n_event_idempotency_key (idempotency_key),
+  KEY idx_n8n_event_workflow_name (workflow_name, created_at),
+  KEY idx_n8n_event_external_execution (external_execution_id),
+  KEY idx_n8n_event_manual_status (manual_status, created_at),
+  KEY idx_n8n_event_replayed_from (replayed_from_event_id),
+  KEY idx_n8n_event_last_callback (last_callback_at)
 );
 
 CREATE TABLE IF NOT EXISTS automation_webhook_log (

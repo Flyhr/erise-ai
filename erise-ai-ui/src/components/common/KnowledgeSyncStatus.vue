@@ -1,8 +1,8 @@
 <template>
   <div class="knowledge-sync-status" :class="{ 'is-compact': compact }">
     <AppStatusTag
-      :label="knowledgeReadinessLabel(parseStatus, indexStatus)"
-      :tone="knowledgeReadinessTone(parseStatus, indexStatus)"
+      :label="knowledgeProgressLabel(parseStatus, indexStatus)"
+      :tone="knowledgeProgressTone(parseStatus, indexStatus)"
     />
     <span v-if="parseErrorMessage" class="knowledge-sync-status__error">{{ parseErrorMessage }}</span>
     <el-button
@@ -19,7 +19,7 @@
 
 <script setup lang="ts">
 import AppStatusTag from '@/components/common/AppStatusTag.vue'
-import { knowledgeReadinessLabel, knowledgeReadinessTone } from '@/utils/formatters'
+import { knowledgeProgressLabel, knowledgeProgressTone } from '@/utils/formatters'
 
 withDefaults(defineProps<{
   parseStatus?: string

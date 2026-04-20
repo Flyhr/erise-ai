@@ -188,9 +188,10 @@ import {
   formatDateTime,
   formatFileSize,
   isKnowledgeFailed,
+  isKnowledgeInFlight,
   isOfficeEditableFile,
-  knowledgeReadinessLabel,
-  knowledgeReadinessTone,
+  knowledgeProgressLabel,
+  knowledgeProgressTone,
   normalizeFileTypeLabel,
   resolveErrorMessage,
 } from '@/utils/formatters'
@@ -220,11 +221,8 @@ const exportDialogVisible = ref(false)
 const exporting = ref(false)
 const exportTarget = ref<KnowledgeAssetView>()
 
-const ACTIVE_FILE_STATUSES = new Set(['INIT', 'UPLOADING', 'PENDING', 'PROCESSING'])
-const normalizeFileStatus = (value?: string) => (value || '').trim().toUpperCase()
 const hasActiveFileStatus = (record?: { parseStatus?: string; indexStatus?: string }) =>
-  ACTIVE_FILE_STATUSES.has(normalizeFileStatus(record?.parseStatus)) ||
-  ACTIVE_FILE_STATUSES.has(normalizeFileStatus(record?.indexStatus))
+  isKnowledgeInFlight(record?.parseStatus, record?.indexStatus)
 
 const tabItems = [
   { key: 'overview', label: '概览' },
@@ -253,12 +251,12 @@ const assetTypeLabel = (row: KnowledgeAssetView) => {
 const assetStatusLabel = (row: KnowledgeAssetView) =>
   row.assetType === 'DOCUMENT'
     ? documentStatusLabel(row.docStatus)
-    : knowledgeReadinessLabel(row.parseStatus, row.indexStatus)
+    : knowledgeProgressLabel(row.parseStatus, row.indexStatus)
 
 const assetTone = (row: KnowledgeAssetView) =>
   row.assetType === 'DOCUMENT'
     ? documentStatusTone(row.docStatus)
-    : knowledgeReadinessTone(row.parseStatus, row.indexStatus)
+    : knowledgeProgressTone(row.parseStatus, row.indexStatus)
 
 const assetStatusIcon = (row: KnowledgeAssetView) =>
   ({ success: 'check_circle', warning: 'schedule', primary: 'visibility', danger: 'cancel', info: 'edit_note' }[assetTone(row)] ||
@@ -384,7 +382,7 @@ useVisibleFileStatusPolling({
   isFileActive: (row) => row.assetType === 'FILE' && hasActiveFileStatus(row),
   applyDetail: applyFileDetailToAssetRow,
   onTimeout: () => {
-    ElMessage.warning('文件解析仍在处理中，已暂停自动刷新，请稍后手动刷新查看结果')
+    ElMessage.warning('文件解析耗时较长，系统会继续自动刷新状态。')
   },
 })
 

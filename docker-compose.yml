@@ -8,9 +8,9 @@ services:
       MYSQL_USER: ${MYSQL_USER}
       MYSQL_PASSWORD: ${MYSQL_PASSWORD}
       MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
-    command: >
-      --character-set-server=utf8mb4
-      --collation-server=utf8mb4_unicode_ci
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
     ports:
       - "${MYSQL_HOST_PORT:-3306}:3306"
     volumes:
@@ -21,9 +21,9 @@ services:
           "CMD-SHELL",
           "mysqladmin ping -h localhost -uroot -p${MYSQL_ROOT_PASSWORD}",
         ]
-      interval: 10s
-      timeout: 5s
-      retries: 10
+      interval: 20s
+      timeout: 10s
+      retries: 20
 
   redis:
     image: redis:7.4
@@ -59,7 +59,7 @@ services:
     container_name: erise-ai-qdrant
     restart: unless-stopped
     environment:
-      QDRANT__SERVICE__API_KEY: ${QDRANT_API_KEY:-}
+      QDRANT__SERVICE__API_KEY: ${QDRANT_API_KEY:-dev-qdrant-key}
     ports:
       - "${QDRANT_HOST_PORT:-6333}:6333"
       - "${QDRANT_GRPC_PORT:-6334}:6334"
@@ -75,7 +75,77 @@ services:
       timeout: 5s
       retries: 12
 
+  ollama:
+    image: ollama/ollama:0.6.8
+    container_name: erise-ai-ollama
+    restart: unless-stopped
+    environment:
+      OLLAMA_HOST: 0.0.0.0:11434
+    ports:
+      - "${OLLAMA_HOST_PORT:-11434}:11434"
+    volumes:
+      - ollama-data:/root/.ollama
+    command: ["serve"]
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      interval: 20s
+      timeout: 10s
+      retries: 10
+
+  ollama-init:
+    image: ollama/ollama:0.6.8
+    container_name: erise-ai-ollama-init
+    restart: "no"
+    environment:
+      OLLAMA_HOST: http://ollama:11434
+      OLLAMA_CHAT_MODEL: ${OLLAMA_CHAT_MODEL:-qwen3:1.7b}
+      OLLAMA_EMBEDDING_MODEL: ${OLLAMA_EMBEDDING_MODEL:-nomic-embed-text}
+    depends_on:
+      ollama:
+        condition: service_healthy
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        set -eu
+        ollama pull "$${OLLAMA_CHAT_MODEL}"
+        if [ "$${OLLAMA_EMBEDDING_MODEL}" != "$${OLLAMA_CHAT_MODEL}" ]; then
+          ollama pull "$${OLLAMA_EMBEDDING_MODEL}"
+        fi
+        ollama list
+
+  litellm:
+    image: ghcr.io/berriai/litellm:main-stable
+    container_name: erise-ai-litellm
+    restart: unless-stopped
+    command: ["--config", "/app/config.yaml", "--port", "4000", "--num_workers", "1"]
+    environment:
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_BASE_URL: ${OPENAI_BASE_URL:-https://api.openai.com/v1}
+      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
+      DEEPSEEK_BASE_URL: ${DEEPSEEK_BASE_URL:-https://api.deepseek.com/v1}
+      LITELLM_API_KEY: ${LITELLM_API_KEY:-}
+    volumes:
+      - ./deploy/litellm/litellm.prod.yaml:/app/config.yaml:ro
+    depends_on:
+      ollama:
+        condition: service_healthy
+      ollama-init:
+        condition: service_completed_successfully
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "python -c \"import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:4000/health/liveliness').status == 200 else 1)\"",
+        ]
+      interval: 15s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+    expose:
+      - "4000"
+
   backend:
+    image: erise-ai/backend:latest
     build:
       context: ./erise-ai-backend
       dockerfile: Dockerfile
@@ -100,28 +170,46 @@ services:
         condition: service_started
       qdrant:
         condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/actuator/health"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 90s
     ports:
       - "${BACKEND_PORT:-8080}:8080"
 
   cloud:
+    image: erise-ai/cloud:latest
     build:
       context: ./AiAssistant
+      dockerfile: Dockerfile
+      args:
+        PIP_INDEX_URL: ${PIP_INDEX_URL:-https://pypi.tuna.tsinghua.edu.cn/simple}
+        PIP_EXTRA_INDEX_URL: ${PIP_EXTRA_INDEX_URL:-https://pypi.org/simple}
+        PIP_TRUSTED_HOST: ${PIP_TRUSTED_HOST:-pypi.tuna.tsinghua.edu.cn pypi.org files.pythonhosted.org}
     container_name: erise-ai-chat-service
     restart: unless-stopped
     env_file:
       - .env
     environment:
+      APP_ENV: prod
       MYSQL_DSN: mysql+pymysql://${MYSQL_USER}:${MYSQL_PASSWORD}@mysql:3306/${MYSQL_DATABASE}?charset=utf8mb4
       REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379/0
       INTERNAL_SERVICE_TOKEN: ${INTERNAL_API_KEY}
       JAVA_INTERNAL_BASE_URL: http://backend:8080/internal/v1
       JAVA_INTERNAL_API_KEY: ${INTERNAL_API_KEY}
       QDRANT_URL: http://qdrant:6333
-      OPENAI_API_KEY: ${OPENAI_API_KEY}
-      OPENAI_BASE_URL: ${OPENAI_BASE_URL}
-      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY}
-      DEEPSEEK_BASE_URL: ${DEEPSEEK_BASE_URL}
-      DEFAULT_MODEL_CODE: ${DEFAULT_MODEL_CODE}
+      MODEL_PROVIDER: LITELLM
+      MODEL_BASE_URL: http://litellm:4000/v1
+      MODEL_API_KEY: ${LITELLM_API_KEY:-}
+      LITELLM_BASE_URL: http://litellm:4000/v1
+      LITELLM_API_KEY: ${LITELLM_API_KEY:-}
+      LITELLM_MODEL: ${LITELLM_MODEL:-deepseek-chat}
+      DEFAULT_MODEL_CODE: ${LITELLM_MODEL:-deepseek-chat}
+      EMBEDDING_PROVIDER_CODE: LITELLM
+      EMBED_BASE_URL: http://litellm:4000/v1
+      EMBEDDING_MODEL: ${EMBEDDING_MODEL:-text-embedding-3-small}
     depends_on:
       mysql:
         condition: service_healthy
@@ -130,24 +218,28 @@ services:
       qdrant:
         condition: service_healthy
       backend:
-        condition: service_started
+        condition: service_healthy
+      litellm:
+        condition: service_healthy
     ports:
       - "${CLOUD_PORT:-8081}:8081"
 
   ui:
+    image: erise-ai/ui:latest
     build:
       context: ./erise-ai-ui
+      dockerfile: Dockerfile
     container_name: erise-ai-ui
     restart: unless-stopped
     env_file:
       - .env
     environment:
       VITE_API_BASE_URL: /api
-      VITE_WS_BASE_URL: ws://localhost:${BACKEND_PORT}
-      VITE_APP_TITLE: Erise-AI
+      VITE_WS_BASE_URL: ws://localhost:${BACKEND_PORT:-8080}
+      VITE_APP_TITLE: ${VITE_APP_TITLE:-Erise-AI}
     depends_on:
       backend:
-        condition: service_started
+        condition: service_healthy
     ports:
       - "${UI_PORT:-5173}:80"
 
@@ -156,9 +248,12 @@ services:
     container_name: erise-ai-nginx
     restart: unless-stopped
     depends_on:
-      - ui
-      - backend
-      - cloud
+      ui:
+        condition: service_started
+      backend:
+        condition: service_healthy
+      cloud:
+        condition: service_healthy
     ports:
       - "${NGINX_HTTP_PORT:-8088}:80"
     volumes:
@@ -169,3 +264,4 @@ volumes:
   redis-data:
   minio-data:
   qdrant-data:
+  ollama-data:

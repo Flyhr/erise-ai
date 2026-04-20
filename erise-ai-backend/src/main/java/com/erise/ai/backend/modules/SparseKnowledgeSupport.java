@@ -28,6 +28,14 @@ import org.springframework.stereotype.Service;
 
 @Service
 @RequiredArgsConstructor
+/*
+ * 废弃说明（仅针对 AI 检索，2026-04）：
+ * AI 助手主检索链路已经迁移到 Python 侧直接访问 Qdrant dense+sparse 一体化索引。
+ * 这套 Java 侧倒排/BM25 风格的稀疏实现不再服务 AI 聊天检索。
+ *
+ * 当前仍然保留它，是因为工作台页面搜索还在复用这套能力。
+ * 也就是说：它对 AI 来说已经废弃，对页面搜索来说暂时仍然有效。
+ */
 class SparseKnowledgeSupport {
 
     static final String FIELD_TITLE = "TITLE";

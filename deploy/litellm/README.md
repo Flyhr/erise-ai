@@ -1,40 +1,44 @@
-# LiteLLM 网关 Overlay
+# LiteLLM 说明
 
-此目录用于存放 Erise-AI 的 LiteLLM Docker 叠加配置。
+LiteLLM 现在已经直接并入主运行栈，不再需要单独叠加开发态 compose。
 
-## 文件说明
+## 当前定位
 
-- `docker-compose.dev.yml`：开发环境 overlay，LiteLLM 作为 Ollama 的前置网关
-- `docker-compose.vllm.yml`：生产风格 overlay，LiteLLM 作为 vLLM 服务的前置网关
-- `litellm.ollama.yaml`：面向 Docker Ollama 的 LiteLLM 模型映射
-- `litellm.vllm.yaml`：面向 vLLM 聊天与 embedding 服务的 LiteLLM 模型映射
-- `litellm.env.example`：两种 overlay 共用的环境变量示例
+- LiteLLM 是唯一官方 AI 网关
+- `cloud` 统一只连 LiteLLM
+- LiteLLM 再转发到：
+  - DeepSeek API
+  - OpenAI API
+  - 本地 Ollama
 
-## 开发环境用法
+## 当前使用方式
 
-```bash
-docker compose \
-  --env-file .env.dev \
-  -f docker-compose.dev.yml \
-  -f deploy/litellm/docker-compose.dev.yml \
-  up --build
-```
-
-在该模式下，`cloud` 连接 LiteLLM，LiteLLM 再把聊天与 embedding 请求转发到同一 Docker 网络内的 Ollama 容器。
-
-## vLLM 网关模式用法
+直接使用根目录主配置即可：
 
 ```bash
-docker compose \
-  -f docker-compose.yml \
-  -f deploy/vllm/docker-compose.prod.yml \
-  -f deploy/litellm/docker-compose.vllm.yml \
-  --env-file .env \
-  --env-file deploy/vllm/vllm.env.example \
-  --env-file deploy/litellm/litellm.env.example \
-  --profile vllm \
-  --profile litellm \
-  up -d
+docker compose --env-file .env -f docker-compose.yml up -d
 ```
 
-在该模式下，`cloud` 只感知 LiteLLM，而 LiteLLM 会把聊天请求路由到 `vllm`，把 embedding 请求路由到 `vllm-embed`。
+## 已废弃内容
+
+以下历史文件不再作为官方入口：
+
+- `deploy/litellm/docker-compose.dev.yml`
+- `deploy/litellm/docker-compose.prod.yml` 作为“必须叠加”的入口
+
+说明：
+
+- `docker-compose.prod.yml` 仍可保留作历史参考
+- 但当前推荐直接使用根目录 `docker-compose.yml`
+
+## 关键环境变量
+
+- `MODEL_PROVIDER=LITELLM`
+- `MODEL_BASE_URL=http://litellm:4000/v1`
+- `LITELLM_MODEL=deepseek-chat`
+- `DEFAULT_MODEL_CODE=deepseek-chat`
+
+## 相关文件
+
+- `deploy/litellm/litellm.prod.yaml`
+- `deploy/litellm/litellm.env.example`

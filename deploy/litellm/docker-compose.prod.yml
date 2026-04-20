@@ -1,0 +1,91 @@
+# 废弃说明：
+# LiteLLM 已经直接并入根目录 `docker-compose.yml`，
+# 本文件只保留作历史兼容和结构参考，不再是官方启动入口。
+services:
+  ollama:
+    image: ollama/ollama:0.6.8
+    container_name: erise-ai-ollama
+    restart: unless-stopped
+    profiles: ["litellm"]
+    environment:
+      OLLAMA_HOST: 0.0.0.0:11434
+    ports:
+      - "${OLLAMA_HOST_PORT:-11434}:11434"
+    volumes:
+      - ollama-data:/root/.ollama
+    command: ["serve"]
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      interval: 20s
+      timeout: 10s
+      retries: 10
+
+  ollama-init:
+    image: ollama/ollama:0.6.8
+    container_name: erise-ai-ollama-init
+    restart: "no"
+    profiles: ["litellm"]
+    environment:
+      OLLAMA_HOST: http://ollama:11434
+      OLLAMA_CHAT_MODEL: ${OLLAMA_CHAT_MODEL:-qwen3:1.7b}
+    depends_on:
+      ollama:
+        condition: service_healthy
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        set -eu
+        ollama pull "$${OLLAMA_CHAT_MODEL}"
+        ollama list
+
+  litellm:
+    image: ghcr.io/berriai/litellm:main-stable
+    container_name: erise-ai-litellm
+    restart: unless-stopped
+    profiles: ["litellm"]
+    command: ["--config", "/app/config.yaml", "--port", "4000", "--num_workers", "1"]
+    environment:
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_BASE_URL: ${OPENAI_BASE_URL:-https://api.openai.com/v1}
+      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
+      DEEPSEEK_BASE_URL: ${DEEPSEEK_BASE_URL:-https://api.deepseek.com/v1}
+      LITELLM_API_KEY: ${LITELLM_API_KEY:-}
+    volumes:
+      - ./deploy/litellm/litellm.prod.yaml:/app/config.yaml:ro
+    depends_on:
+      ollama:
+        condition: service_healthy
+      ollama-init:
+        condition: service_completed_successfully
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "python -c \"import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:4000/health/liveliness').status == 200 else 1)\"",
+        ]
+      interval: 15s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+    expose:
+      - "4000"
+
+  cloud:
+    environment:
+      APP_ENV: prod
+      MODEL_PROVIDER: LITELLM
+      MODEL_BASE_URL: http://litellm:4000/v1
+      MODEL_API_KEY: ${LITELLM_API_KEY:-}
+      LITELLM_BASE_URL: http://litellm:4000/v1
+      LITELLM_API_KEY: ${LITELLM_API_KEY:-}
+      LITELLM_MODEL: ${LITELLM_MODEL:-deepseek-chat}
+      DEFAULT_MODEL_CODE: ${LITELLM_MODEL:-deepseek-chat}
+      EMBEDDING_PROVIDER_CODE: LITELLM
+      EMBED_BASE_URL: http://litellm:4000/v1
+      EMBEDDING_MODEL: ${EMBEDDING_MODEL:-text-embedding-3-small}
+    depends_on:
+      litellm:
+        condition: service_healthy
+
+volumes:
+  ollama-data:

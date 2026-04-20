@@ -39,7 +39,7 @@ def build_default_model_rows(
     normalized_ollama_chat_model = (ollama_chat_model or 'qwen2.5:7b').strip() or 'qwen2.5:7b'
     normalized_vllm_model = (vllm_model or 'Qwen/Qwen2.5-7B-Instruct').strip() or 'Qwen/Qwen2.5-7B-Instruct'
     normalized_litellm_model = (litellm_model or 'deepseek/deepseek-chat').strip() or 'deepseek/deepseek-chat'
-    return (
+    rows = (
         {
             'provider_code': 'DEEPSEEK',
             'model_code': normalized_deepseek_model,
@@ -106,6 +106,15 @@ def build_default_model_rows(
             'priority_no': 5,
         },
     )
+    deduped_rows: list[dict[str, Any]] = []
+    seen_model_codes: set[str] = set()
+    for row in rows:
+        model_code = (row.get('model_code') or '').strip()
+        if not model_code or model_code in seen_model_codes:
+            continue
+        deduped_rows.append(row)
+        seen_model_codes.add(model_code)
+    return tuple(deduped_rows)
 
 
 DEFAULT_MODEL_ROWS = build_default_model_rows()

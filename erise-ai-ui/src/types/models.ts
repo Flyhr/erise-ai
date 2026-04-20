@@ -71,6 +71,13 @@ export interface FileView {
   updatedAt: string;
 }
 
+export interface FileStatusWatchView {
+  changed: boolean;
+  timedOut: boolean;
+  details: FileView[];
+  cursor: string;
+}
+
 export interface EditableOfficeFileView {
   id: number;
   projectId: number;

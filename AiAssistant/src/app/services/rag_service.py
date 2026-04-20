@@ -4,14 +4,27 @@ import hashlib
 import logging
 import math
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from time import sleep
+from time import perf_counter
 from typing import Any
 
 from qdrant_client import QdrantClient
-from qdrant_client.models import Distance, FieldCondition, Filter, FilterSelector, MatchAny, MatchValue, PointStruct, VectorParams
-
-from src.app.adapters.java.knowledge_client import query_knowledge
+from qdrant_client.models import (
+    Distance,
+    FieldCondition,
+    Filter,
+    FilterSelector,
+    MatchAny,
+    MatchValue,
+    Modifier,
+    PointIdsList,
+    PointStruct,
+    SparseIndexParams,
+    SparseVector,
+    SparseVectorParams,
+    VectorParams,
+)
 from src.app.api.deps import RequestContext
 from src.app.core.config import get_settings
 from src.app.schemas.chat import AttachmentContext, ChatCompletionRequest, ChatContext
@@ -25,11 +38,20 @@ from src.app.schemas.rag import (
 )
 from src.app.services.embedding_service import embedding_service
 from src.app.services.model_registry import get_embedding_model_code
-from src.app.services.query_rewrite_service import QueryVariant, query_rewrite_service
+from src.app.services.query_rewrite_service import QueryRewritePlan, QueryVariant, query_rewrite_service
+from src.app.services.retrieval_llm_service import retrieval_llm_service
+from src.app.services.sparse_vector_service import sparse_vector_service
 from src.app.services.web_search_service import search_web
 
 
 logger = logging.getLogger(__name__)
+MAX_PRIVATE_CONTEXT_HITS = 3
+MAX_PRIVATE_CONTEXT_TOTAL_CHARS = 1200
+MAX_WEB_CONTEXT_ITEMS = 3
+MAX_WEB_CONTEXT_TOTAL_CHARS = 900
+MAX_CONTEXT_SNIPPET_CHARS = 320
+MAX_CONTEXT_TITLE_CHARS = 80
+MAX_CONTEXT_SECTION_CHARS = 80
 
 WEB_SEARCH_EXPLICIT_PATTERNS = [
     re.compile(pattern, re.IGNORECASE)
@@ -111,6 +133,20 @@ class RetrievalStage:
     hits: list[RagQueryHit]
     sufficient: bool
     confidence: float | None
+    used_tools: list[str] = field(default_factory=list)
+
+
+@dataclass(slots=True)
+class RetrievalWeights:
+    vector_weight: float
+    keyword_weight: float
+    profile: str
+
+
+@dataclass(slots=True)
+class PrivateRetrievalResult:
+    hits: list[RagQueryHit]
+    used_tools: list[str]
 
 
 class RagService:
@@ -119,6 +155,8 @@ class RagService:
     MAX_FUSION_CANDIDATES = 30
     FALLBACK_CONFIDENCE_CAP = 0.82
     RERANK_MODEL_NAME = 'BAAI/bge-reranker-base'
+    DENSE_VECTOR_NAME = 'dense'
+    SPARSE_VECTOR_NAME = 'sparse'
 
     def __init__(self) -> None:
         self.settings = get_settings()
@@ -126,7 +164,7 @@ class RagService:
             url=self.settings.qdrant_url,
             api_key=self.settings.qdrant_api_key or None,
             check_compatibility=False,
-            timeout=self.settings.qdrant_timeout_seconds,
+            timeout=self.settings.resolved_qdrant_timeout_seconds,
         )
         self._ready_collections: set[str] = set()
         self._reranker: Any | None = None
@@ -140,7 +178,7 @@ class RagService:
             for item in self._run_qdrant('list collections', lambda: self.client.get_collections()).collections
         }
         if collection_name in collections and not self._collection_matches_embedding_dimension(collection_name):
-            self._recreate_empty_collection(collection_name)
+            self._recreate_incompatible_collection(collection_name)
             self._ready_collections.add(collection_name)
             return
         if collection_name not in collections:
@@ -153,33 +191,47 @@ class RagService:
     def _create_collection(self, collection_name: str) -> None:
         self.client.create_collection(
             collection_name=collection_name,
-            vectors_config=VectorParams(
-                size=self.settings.embedding_dimensions,
-                distance=Distance.COSINE,
-            ),
+            vectors_config={
+                self.DENSE_VECTOR_NAME: VectorParams(
+                    size=self.settings.embedding_dimensions,
+                    distance=Distance.COSINE,
+                )
+            },
+            sparse_vectors_config={
+                self.SPARSE_VECTOR_NAME: SparseVectorParams(
+                    index=SparseIndexParams(),
+                    modifier=Modifier.IDF,
+                )
+            },
         )
 
     def _collection_matches_embedding_dimension(self, collection_name: str) -> bool:
         info = self._run_qdrant(f'get collection `{collection_name}`', lambda: self.client.get_collection(collection_name))
-        vector_config = info.config.params.vectors
-        current_size = getattr(vector_config, 'size', None)
-        return current_size == self.settings.embedding_dimensions
+        params = getattr(info.config, 'params', None)
+        vector_config = getattr(params, 'vectors', None)
+        sparse_config = getattr(params, 'sparse_vectors', None)
+        current_size = self._extract_dense_vector_size(vector_config)
+        has_sparse = self._has_sparse_vector(sparse_config)
+        return current_size == self.settings.embedding_dimensions and has_sparse
 
-    def _recreate_empty_collection(self, collection_name: str) -> None:
+    def _recreate_incompatible_collection(self, collection_name: str) -> None:
         info = self._run_qdrant(f'get collection `{collection_name}`', lambda: self.client.get_collection(collection_name))
         points_count = int(getattr(info, 'points_count', 0) or 0)
-        current_size = getattr(info.config.params.vectors, 'size', None)
-        if points_count > 0:
-            raise RuntimeError(
-                f'Qdrant collection `{collection_name}` vector size is {current_size}, '
-                f'but EMBEDDING_DIMENSIONS is {self.settings.embedding_dimensions}. '
-                'Please migrate or rebuild the collection before indexing new files.'
-            )
+        params = getattr(info.config, 'params', None)
+        current_size = self._extract_dense_vector_size(getattr(params, 'vectors', None))
+        has_sparse = self._has_sparse_vector(getattr(params, 'sparse_vectors', None))
         logger.warning(
-            'Recreating empty Qdrant collection `%s` because vector size changed from %s to %s',
+            '检测到 Qdrant collection `%s` 仍是旧索引结构，准备强制重建为 dense+sparse 一体化结构。'
+            '当前点数=%s，旧 dense 维度=%s，是否包含 sparse=%s，目标 dense 维度=%s。',
             collection_name,
+            points_count,
             current_size,
             self.settings.embedding_dimensions,
+            has_sparse,
+        )
+        logger.warning(
+            '由于当前环境中的历史数据均视为可丢弃测试数据，系统将直接删除并重建 `%s`。',
+            collection_name,
         )
         self._run_qdrant(f'delete collection `{collection_name}`', lambda: self.client.delete_collection(collection_name))
         self._run_qdrant(f'create collection `{collection_name}`', lambda: self._create_collection(collection_name))
@@ -199,8 +251,40 @@ class RagService:
             or 'gateway timeout' in normalized
         )
 
+    def _extract_dense_vector_size(self, vector_config: Any) -> int | None:
+        if vector_config is None:
+            return None
+        if hasattr(vector_config, 'size'):
+            return getattr(vector_config, 'size', None)
+        if isinstance(vector_config, dict):
+            dense_config = vector_config.get(self.DENSE_VECTOR_NAME)
+            return getattr(dense_config, 'size', None) if dense_config is not None else None
+        dense_config = getattr(vector_config, self.DENSE_VECTOR_NAME, None)
+        if dense_config is not None:
+            return getattr(dense_config, 'size', None)
+        if hasattr(vector_config, 'model_dump'):
+            dumped = vector_config.model_dump()
+            if isinstance(dumped, dict):
+                dense_config = dumped.get(self.DENSE_VECTOR_NAME)
+                if isinstance(dense_config, dict):
+                    return dense_config.get('size')
+        return None
+
+    def _has_sparse_vector(self, sparse_config: Any) -> bool:
+        if sparse_config is None:
+            return False
+        if isinstance(sparse_config, dict):
+            return self.SPARSE_VECTOR_NAME in sparse_config
+        if hasattr(sparse_config, self.SPARSE_VECTOR_NAME):
+            return True
+        if hasattr(sparse_config, 'model_dump'):
+            dumped = sparse_config.model_dump()
+            if isinstance(dumped, dict):
+                return self.SPARSE_VECTOR_NAME in dumped
+        return False
+
     def _run_qdrant(self, action: str, operation: Any) -> Any:
-        attempts = max(1, self.settings.qdrant_max_retries + 1)
+        attempts = max(1, self.settings.resolved_qdrant_max_retries + 1)
         last_error: Exception | None = None
         for attempt in range(1, attempts + 1):
             try:
@@ -209,7 +293,7 @@ class RagService:
                 last_error = exc
                 message = str(exc)
                 if self._is_retryable_qdrant_error(message) and attempt < attempts:
-                    wait_seconds = self.settings.retry_backoff_seconds * attempt
+                    wait_seconds = self.settings.resolved_retry_backoff_seconds * attempt
                     logger.warning(
                         'Qdrant %s failed on attempt %s/%s, retrying in %.1fs: %s',
                         action,
@@ -226,22 +310,37 @@ class RagService:
         raise RuntimeError(f'Qdrant {action} failed')
 
     async def upsert(self, request: RagIndexUpsertRequest) -> dict[str, Any]:
+        started_at = perf_counter()
         collection_name = self._collection_name(request.scope_type)
         self._ensure_collection(collection_name)
-        await self.delete(
-            RagIndexDeleteRequest(
-                user_id=request.user_id,
-                scope_type=request.scope_type,
-                project_id=request.project_id,
-                session_id=request.session_id,
-                source_type=request.source_type,
-                source_id=request.source_id,
-            )
-        )
         if not request.chunks:
+            await self.delete(
+                RagIndexDeleteRequest(
+                    user_id=request.user_id,
+                    scope_type=request.scope_type,
+                    project_id=request.project_id,
+                    session_id=request.session_id,
+                    source_type=request.source_type,
+                    source_id=request.source_id,
+                )
+            )
             return self._upsert_result(collection_name, 0)
 
-        vectors = await embedding_service.embed([item.chunk_text for item in request.chunks])
+        embedding_started_at = perf_counter()
+        try:
+            vectors = await embedding_service.embed([item.chunk_text for item in request.chunks])
+            embedding_duration_ms = int((perf_counter() - embedding_started_at) * 1000)
+        except Exception as exc:
+            embedding_duration_ms = int((perf_counter() - embedding_started_at) * 1000)
+            return self._handle_upsert_failure(
+                request=request,
+                collection_name=collection_name,
+                stage='embedding',
+                error=exc,
+                started_at=started_at,
+                embedding_duration_ms=embedding_duration_ms,
+                qdrant_duration_ms=None,
+            )
         points = [
             PointStruct(
                 id=self._point_id(
@@ -251,7 +350,14 @@ class RagService:
                     request.session_id,
                     chunk.chunk_num,
                 ),
-                vector=vectors[index],
+                vector={
+                    self.DENSE_VECTOR_NAME: vectors[index],
+                    self.SPARSE_VECTOR_NAME: sparse_vector_service.build_document_vector(
+                        source_title=request.source_name,
+                        section_path=chunk.section_path,
+                        chunk_text=chunk.chunk_text,
+                    ),
+                },
                 payload={
                     'scope_type': request.scope_type.upper(),
                     'user_id': request.user_id,
@@ -287,17 +393,127 @@ class RagService:
             for index, chunk in enumerate(request.chunks)
         ]
         batch_size = max(1, self.settings.qdrant_upsert_batch_size)
-        for start in range(0, len(points), batch_size):
-            batch = points[start:start + batch_size]
-            self._run_qdrant(
-                f'upsert into `{collection_name}`',
-                lambda batch=batch: self.client.upsert(collection_name=collection_name, points=batch),
+        qdrant_started_at = perf_counter()
+        try:
+            for start in range(0, len(points), batch_size):
+                batch = points[start:start + batch_size]
+                self._run_qdrant(
+                    f'upsert into `{collection_name}`',
+                    lambda batch=batch: self.client.upsert(collection_name=collection_name, points=batch),
+                )
+            stale_point_ids = self._stale_point_ids(request)
+            if stale_point_ids:
+                self._run_qdrant(
+                    f'delete stale points from `{collection_name}`',
+                    lambda: self.client.delete(
+                        collection_name=collection_name,
+                        points_selector=PointIdsList(points=stale_point_ids),
+                    ),
+                )
+        except Exception as exc:
+            qdrant_duration_ms = int((perf_counter() - qdrant_started_at) * 1000)
+            return self._handle_upsert_failure(
+                request=request,
+                collection_name=collection_name,
+                stage='qdrant',
+                error=exc,
+                started_at=started_at,
+                embedding_duration_ms=embedding_duration_ms,
+                qdrant_duration_ms=qdrant_duration_ms,
             )
+        qdrant_duration_ms = int((perf_counter() - qdrant_started_at) * 1000)
+        total_duration_ms = int((perf_counter() - started_at) * 1000)
+        logger.info(
+            'rag_upsert_complete scope_type=%s source_type=%s source_id=%s chunk_count=%s batch_size=%s '
+            'embedding_ms=%s qdrant_ms=%s total_ms=%s collection=%s',
+            request.scope_type,
+            request.source_type,
+            request.source_id,
+            len(points),
+            batch_size,
+            embedding_duration_ms,
+            qdrant_duration_ms,
+            total_duration_ms,
+            collection_name,
+        )
         return self._upsert_result(collection_name, len(points))
+
+    def _handle_upsert_failure(
+        self,
+        request: RagIndexUpsertRequest,
+        collection_name: str,
+        stage: str,
+        error: Exception,
+        started_at: float,
+        embedding_duration_ms: int | None,
+        qdrant_duration_ms: int | None,
+    ) -> dict[str, Any]:
+        total_duration_ms = int((perf_counter() - started_at) * 1000)
+        message = str(error)
+        logger.warning(
+            'rag_upsert_failed scope_type=%s source_type=%s source_id=%s stage=%s embedding_ms=%s qdrant_ms=%s total_ms=%s error=%s',
+            request.scope_type,
+            request.source_type,
+            request.source_id,
+            stage,
+            embedding_duration_ms,
+            qdrant_duration_ms,
+            total_duration_ms,
+            message,
+        )
+        if not (self.settings.is_dev_env and self.settings.dev_rag_degrade_enabled):
+            raise error
+        logger.warning(
+            'rag_upsert_degraded scope_type=%s source_type=%s source_id=%s stage=%s mode=sparse-only',
+            request.scope_type,
+            request.source_type,
+            request.source_id,
+            stage,
+        )
+        return self._upsert_result(
+            collection_name,
+            0,
+            {
+                'degraded': True,
+                'indexMode': 'SPARSE_ONLY',
+                'warning': f'{stage} unavailable in dev, falling back to sparse-only indexing',
+                'failureStage': stage,
+                'failureReason': message,
+                'embeddingMs': embedding_duration_ms,
+                'qdrantMs': qdrant_duration_ms,
+                'totalMs': total_duration_ms,
+            },
+        )
 
     async def delete(self, request: RagIndexDeleteRequest) -> dict[str, Any]:
         collection_name = self._collection_name(request.scope_type)
         self._ensure_collection(collection_name)
+        self._run_qdrant(
+            f'delete from `{collection_name}`',
+            lambda: self.client.delete(
+                collection_name=collection_name,
+                points_selector=FilterSelector(filter=self._source_filter(request)),
+            ),
+        )
+        return {'deleted': True, 'collectionName': collection_name}
+
+    def _stale_point_ids(self, request: RagIndexUpsertRequest) -> list[str]:
+        previous_chunk_count = request.previous_chunk_count or 0
+        current_chunk_count = len(request.chunks)
+        if previous_chunk_count <= current_chunk_count:
+            return []
+        return [
+            self._point_id(
+                request.scope_type,
+                request.source_type,
+                request.source_id,
+                request.session_id,
+                chunk_num,
+            )
+            for chunk_num in range(current_chunk_count, previous_chunk_count)
+        ]
+
+    def _source_filter(self, request: RagIndexDeleteRequest | RagIndexUpsertRequest) -> Filter:
         must: list[FieldCondition] = [
             FieldCondition(key='user_id', match=MatchValue(value=request.user_id)),
             FieldCondition(key='source_type', match=MatchValue(value=request.source_type)),
@@ -305,14 +521,7 @@ class RagService:
         ]
         if request.session_id is not None:
             must.append(FieldCondition(key='session_id', match=MatchValue(value=request.session_id)))
-        self._run_qdrant(
-            f'delete from `{collection_name}`',
-            lambda: self.client.delete(
-                collection_name=collection_name,
-                points_selector=FilterSelector(filter=Filter(must=must)),
-            ),
-        )
-        return {'deleted': True, 'collectionName': collection_name}
+        return Filter(must=must)
 
     async def query(self, request: ChatCompletionRequest, context: RequestContext) -> RetrievalDecision:
         top_k = self._resolve_top_k(request)
@@ -321,7 +530,7 @@ class RagService:
         candidate_limit = self._candidate_limit(top_k)
         priority_attachments = self._knowledge_attachments(request)
         project_scope_ids = self._explicit_project_scope_ids(request)
-        query_plan = query_rewrite_service.build_plan(
+        query_plan = await query_rewrite_service.build_plan_async(
             request.message,
             project_scope_ids=project_scope_ids,
             attachments=priority_attachments,
@@ -339,12 +548,13 @@ class RagService:
                 candidate_limit,
                 top_k,
                 threshold,
-                query_plan.variants,
+                query_plan,
                 key='priority_source',
                 label='Priority 1: temporary files and @ references',
                 mode='SCOPED',
             )
             used_tools.append(attachment_stage.key)
+            used_tools = self._append_used_tools(used_tools, attachment_stage.used_tools)
             if attachment_stage.sufficient:
                 return self._private_decision(
                     selected_stage=attachment_stage,
@@ -364,12 +574,13 @@ class RagService:
                 candidate_limit,
                 top_k,
                 threshold,
-                query_plan.variants,
+                query_plan,
                 key='project_knowledge',
                 label='Priority 2: project files',
                 mode='SCOPED',
             )
             used_tools.append(project_stage.key)
+            used_tools = self._append_used_tools(used_tools, project_stage.used_tools)
             if project_stage.sufficient:
                 return self._private_decision(
                     selected_stage=project_stage,
@@ -440,13 +651,13 @@ class RagService:
         candidate_limit: int,
         top_k: int,
         threshold: float,
-        query_variants: list[QueryVariant],
+        query_plan: QueryRewritePlan,
         key: str,
         label: str,
         mode: str,
     ) -> RetrievalStage:
-        hits = await self._private_hits(request, context, candidate_limit, mode, query_variants)
-        top_hits = hits[:top_k]
+        private_result = await self._private_hits(request, context, candidate_limit, mode, query_plan)
+        top_hits = private_result.hits[:top_k]
         confidence = top_hits[0].score if top_hits else None
         return RetrievalStage(
             key=key,
@@ -454,6 +665,7 @@ class RagService:
             hits=top_hits,
             sufficient=bool(top_hits and confidence is not None and confidence >= threshold),
             confidence=confidence,
+            used_tools=private_result.used_tools,
         )
 
     def _private_decision(
@@ -489,9 +701,20 @@ class RagService:
         used_tools: list[str] = []
         if any(item.kind == 'rewrite' for item in query_variants):
             used_tools.append('query_rewrite')
+        if any(item.kind == 'llm_rewrite' for item in query_variants):
+            used_tools.append('llm_query_rewrite')
         if any(item.kind == 'expansion' for item in query_variants):
             used_tools.append('query_expansion')
+        if any(item.kind == 'llm_expansion' for item in query_variants):
+            used_tools.append('llm_query_expansion')
         return used_tools
+
+    def _append_used_tools(self, existing: list[str], additions: list[str]) -> list[str]:
+        merged = list(existing)
+        for item in additions:
+            if item and item not in merged:
+                merged.append(item)
+        return merged
 
     def _limited_unique_hits(self, hits: list[RagQueryHit], limit: int) -> list[RagQueryHit]:
         if limit <= 0:
@@ -557,20 +780,20 @@ class RagService:
         )
         context = RequestContext(user_id=user_id, org_id=0, request_id='rag-debug')
         decision = await self.query(fake_request, context)
-        query_plan = query_rewrite_service.build_plan(
+        query_plan = await query_rewrite_service.build_plan_async(
             fake_request.message,
             project_scope_ids=self._project_scope_ids(fake_request),
             attachments=self._knowledge_attachments(fake_request),
             mode='GENERAL',
             enabled=fake_request.query_rewrite_enabled if fake_request.query_rewrite_enabled is not None else self.settings.rag_query_rewrite_enabled,
         )
-        hits = await self._private_hits(fake_request, context, self._candidate_limit(limit), 'GENERAL', query_plan.variants)
+        private_result = await self._private_hits(fake_request, context, self._candidate_limit(limit), 'GENERAL', query_plan)
         return RagQueryResponse(
-            hits=hits[:limit],
+            hits=private_result.hits[:limit],
             citations=decision.citations,
             confidence=decision.confidence,
             answer_source=decision.answer_source,
-            used_tools=decision.used_tools,
+            used_tools=self._append_used_tools(decision.used_tools, private_result.used_tools),
             rewritten_queries=decision.rewritten_queries,
             rewrite_hints=decision.rewrite_hints,
         )
@@ -581,14 +804,38 @@ class RagService:
         context: RequestContext,
         candidate_limit: int,
         mode: str,
-        query_variants: list[QueryVariant],
-    ) -> list[RagQueryHit]:
+        query_plan: QueryRewritePlan | list[QueryVariant],
+    ) -> PrivateRetrievalResult:
+        if isinstance(query_plan, QueryRewritePlan):
+            query_variants = query_plan.variants
+            plan = query_plan
+        else:
+            query_variants = query_plan
+            plan = QueryRewritePlan(
+                original_query=request.message,
+                normalized_query=request.message,
+                rewritten_query=None,
+                expanded_queries=[],
+                hints=[],
+                variants=query_variants,
+            )
         vector_hits = await self._safe_vector_search(request, context, candidate_limit, mode, query_variants)
         keyword_hits = await self._safe_keyword_search(request, context, candidate_limit, mode, query_variants)
-        fused_hits = self._fuse_hits(vector_hits, keyword_hits)[:candidate_limit]
+        used_tools: list[str] = []
+        if vector_hits:
+            used_tools.append('vector_retrieval')
+        if keyword_hits:
+            used_tools.append('keyword_retrieval')
+        weights = self._resolve_retrieval_weights(request.message, plan)
+        if vector_hits and keyword_hits:
+            used_tools.append(f'hybrid_retrieval:{weights.profile.lower()}')
+        fused_hits = self._fuse_hits(vector_hits, keyword_hits, weights)[:candidate_limit]
         if not fused_hits:
-            return []
-        return self._rerank_hits(request.message, fused_hits)[:candidate_limit]
+            return PrivateRetrievalResult(hits=[], used_tools=used_tools)
+        reranked_hits, rerank_tool = await self._rerank_hits(request.message, fused_hits)
+        if rerank_tool:
+            used_tools.append(rerank_tool)
+        return PrivateRetrievalResult(hits=reranked_hits[:candidate_limit], used_tools=used_tools)
 
     async def _safe_vector_search(
         self,
@@ -639,7 +886,13 @@ class RagService:
                 self._ensure_collection(collection_name)
                 response = self._run_qdrant(
                     f'search `{collection_name}`',
-                    lambda: self._search_points(collection_name, vector, query_filter, top_k),
+                    lambda: self._search_points(
+                        collection_name=collection_name,
+                        query=vector,
+                        query_filter=query_filter,
+                        limit=top_k,
+                        using=self.DENSE_VECTOR_NAME,
+                    ),
                 )
                 hits.extend(self._response_to_hits(response, boost=variant.boost))
         return self._dedupe_hits(hits)[:top_k]
@@ -647,21 +900,15 @@ class RagService:
     def _search_points(
         self,
         collection_name: str,
-        vector: list[float],
+        query: list[float] | SparseVector,
         query_filter: Filter,
         limit: int,
+        using: str,
     ) -> list[Any]:
-        if hasattr(self.client, 'search'):
-            return self.client.search(
-                collection_name=collection_name,
-                query_vector=vector,
-                query_filter=query_filter,
-                limit=limit,
-                with_payload=True,
-            )
         response = self.client.query_points(
             collection_name=collection_name,
-            query=vector,
+            query=query,
+            using=using,
             query_filter=query_filter,
             limit=limit,
             with_payload=True,
@@ -676,42 +923,25 @@ class RagService:
         mode: str,
         query_variants: list[QueryVariant],
     ) -> list[RagQueryHit]:
-        attachments = self._keyword_attachments(request)
-        project_scope_ids = self._project_scope_ids(request)
-        if mode == 'SCOPED' and attachments:
-            project_scope_ids = []
         hits: list[RagQueryHit] = []
         for variant in query_variants:
-            payload = await query_knowledge(
-                user_id=context.user_id,
-                keyword=variant.text,
-                request_id=context.request_id,
-                project_scope_ids=project_scope_ids,
-                attachments=attachments,
-                limit=max(1, top_k),
-            )
-            for index, item in enumerate(payload, start=1):
-                if item.get('sourceId') is None:
-                    continue
-                hits.append(
-                    RagQueryHit(
-                        score=(1.0 / index) * variant.boost,
-                        source_type=str(item.get('sourceType') or ''),
-                        source_id=int(item.get('sourceId') or 0),
-                        source_title=str(item.get('title') or 'knowledge-snippet'),
-                        snippet=str(item.get('snippet') or ''),
-                        page_no=int(item['pageNo']) if item.get('pageNo') is not None else None,
-                        section_path=str(item.get('sectionPath') or '') or None,
-                        url=self._build_citation_url(
-                            str(item.get('sourceType') or ''),
-                            int(item.get('sourceId') or 0),
-                            int(item['pageNo']) if item.get('pageNo') is not None else None,
-                            str(item.get('sectionPath') or '') or None,
-                            None,
-                        ),
-                    )
+            sparse_query = sparse_vector_service.build_query_vector(variant.text)
+            if not sparse_query.indices:
+                continue
+            for collection_name, query_filter in self._vector_queries(request, context, mode):
+                self._ensure_collection(collection_name)
+                response = self._run_qdrant(
+                    f'sparse search `{collection_name}`',
+                    lambda sparse_query=sparse_query: self._search_points(
+                        collection_name=collection_name,
+                        query=sparse_query,
+                        query_filter=query_filter,
+                        limit=top_k,
+                        using=self.SPARSE_VECTOR_NAME,
+                    ),
                 )
-        return hits
+                hits.extend(self._response_to_hits(response, boost=variant.boost))
+        return self._dedupe_hits(hits)[:top_k]
 
     def _vector_queries(
         self,
@@ -840,12 +1070,59 @@ class RagService:
                 deduped[key] = item
         return sorted(deduped.values(), key=lambda item: item.score, reverse=True)
 
-    def _fuse_hits(self, vector_hits: list[RagQueryHit], keyword_hits: list[RagQueryHit]) -> list[RagQueryHit]:
+    def _resolve_retrieval_weights(self, query: str, query_plan: QueryRewritePlan) -> RetrievalWeights:
+        profile = (query_plan.retrieval_profile or 'BALANCED').strip().upper()
+        if profile == 'KEYWORD_HEAVY':
+            keyword_weight = max(0.0, min(self.settings.rag_keyword_heavy_weight, 1.0))
+            return RetrievalWeights(
+                vector_weight=max(0.0, 1.0 - keyword_weight),
+                keyword_weight=keyword_weight,
+                profile=profile,
+            )
+        if profile == 'VECTOR_HEAVY':
+            keyword_weight = max(0.0, min(self.settings.rag_keyword_weight, 1.0))
+            vector_weight = max(0.0, min(max(self.settings.rag_vector_weight, 0.8), 1.0))
+            total = vector_weight + keyword_weight
+            if total <= 0:
+                return RetrievalWeights(vector_weight=0.8, keyword_weight=0.2, profile=profile)
+            return RetrievalWeights(
+                vector_weight=vector_weight / total,
+                keyword_weight=keyword_weight / total,
+                profile=profile,
+            )
+        vector_weight = max(0.0, min(self.settings.rag_vector_weight, 1.0))
+        keyword_weight = max(0.0, min(self.settings.rag_keyword_weight, 1.0))
+        total = vector_weight + keyword_weight
+        if total <= 0:
+            return RetrievalWeights(vector_weight=0.7, keyword_weight=0.3, profile='BALANCED')
+        return RetrievalWeights(
+            vector_weight=vector_weight / total,
+            keyword_weight=keyword_weight / total,
+            profile='BALANCED',
+        )
+
+    def _fuse_hits(
+        self,
+        vector_hits: list[RagQueryHit],
+        keyword_hits: list[RagQueryHit],
+        weights: RetrievalWeights | None = None,
+    ) -> list[RagQueryHit]:
+        weights = weights or RetrievalWeights(
+            vector_weight=max(0.0, min(self.settings.rag_vector_weight, 1.0)) or 0.7,
+            keyword_weight=max(0.0, min(self.settings.rag_keyword_weight, 1.0)) or 0.3,
+            profile='BALANCED',
+        )
         merged: dict[str, RagQueryHit] = {}
-        for hits in (self._dedupe_hits(vector_hits), self._dedupe_hits(keyword_hits)):
+        weighted_groups = (
+            (self._dedupe_hits(vector_hits), weights.vector_weight),
+            (self._dedupe_hits(keyword_hits), weights.keyword_weight),
+        )
+        for hits, group_weight in weighted_groups:
+            if group_weight <= 0:
+                continue
             for rank, item in enumerate(hits, start=1):
                 key = self._candidate_key(item)
-                contribution = 1.0 / (self.RRF_RANK_CONSTANT + rank)
+                contribution = group_weight / (self.RRF_RANK_CONSTANT + rank)
                 existing = merged.get(key)
                 if existing is None:
                     merged[key] = item.model_copy(update={'score': contribution})
@@ -863,12 +1140,19 @@ class RagService:
             'url': existing.url or incoming.url,
         })
 
-    def _rerank_hits(self, query: str, hits: list[RagQueryHit]) -> list[RagQueryHit]:
+    async def _rerank_hits(self, query: str, hits: list[RagQueryHit]) -> tuple[list[RagQueryHit], str | None]:
         if len(hits) <= 1:
-            return self._fallback_hits(hits)
+            return self._fallback_hits(hits), None
+        llm_result = await retrieval_llm_service.rerank_hits(
+            query=query,
+            hits=hits,
+            top_n=max(1, min(len(hits), self._resolve_top_n_for_rerank())),
+        )
+        if llm_result is not None and llm_result.ranked_hits:
+            return llm_result.ranked_hits, 'llm_rerank'
         reranker = self._get_reranker()
         if reranker is None:
-            return self._fallback_hits(hits)
+            return self._fallback_hits(hits), None
         documents = [self._rerank_document(hit) for hit in hits]
         try:
             raw_scores = list(reranker.rerank(query, documents))
@@ -876,14 +1160,14 @@ class RagService:
             logger.warning('Rerank failed, falling back to conservative RRF ordering: %s', exception, exc_info=True)
             self._reranker_unavailable = True
             self._reranker = None
-            return self._fallback_hits(hits)
+            return self._fallback_hits(hits), None
         if len(raw_scores) != len(hits):
-            return self._fallback_hits(hits)
+            return self._fallback_hits(hits), None
         reranked = [
             hit.model_copy(update={'score': self._sigmoid(float(raw_score))})
             for hit, raw_score in zip(hits, raw_scores, strict=False)
         ]
-        return sorted(reranked, key=lambda item: item.score, reverse=True)
+        return sorted(reranked, key=lambda item: item.score, reverse=True), 'cross_encoder_rerank'
 
     def _fallback_hits(self, hits: list[RagQueryHit]) -> list[RagQueryHit]:
         if not hits:
@@ -989,6 +1273,7 @@ class RagService:
         return hashlib.sha256((chunk_text or '').encode('utf-8')).hexdigest()
 
     def _build_priority_context(self, hits: list[RagQueryHit], stage_label: str) -> str:
+        hits = self._prepare_hits_for_context(hits, MAX_PRIVATE_CONTEXT_HITS, MAX_PRIVATE_CONTEXT_TOTAL_CHARS)
         lines = [
             f'当前采用{stage_label}作为主要依据。',
             '请优先依据下面命中的证据回答；不要编造未命中的私有资料内容。',
@@ -999,6 +1284,7 @@ class RagService:
         return '\n'.join(lines).strip()
 
     def _build_private_context(self, hits: list[RagQueryHit], mode: str) -> str:
+        hits = self._prepare_hits_for_context(hits, MAX_PRIVATE_CONTEXT_HITS, MAX_PRIVATE_CONTEXT_TOTAL_CHARS)
         lines = [
             '以下资料来自私有知识库，请优先依据这些证据回答。',
             '如证据不足，可以说明不足；不要伪造私有引用。',
@@ -1010,6 +1296,7 @@ class RagService:
         return '\n'.join(lines).strip()
 
     def _build_auxiliary_private_context(self, hits: list[RagQueryHit], mode: str) -> str:
+        hits = self._prepare_hits_for_context(hits, MAX_PRIVATE_CONTEXT_HITS, MAX_PRIVATE_CONTEXT_TOTAL_CHARS)
         lines = [
             '以下私有资料相关性不足，只能作为辅助背景，不能作为唯一依据。',
         ]
@@ -1020,6 +1307,7 @@ class RagService:
         return '\n'.join(lines).strip()
 
     def _build_web_context(self, hits: list[Any], has_auxiliary_private: bool) -> str:
+        hits = self._prepare_web_hits_for_context(hits)
         lines = [
             '以下资料来自联网搜索，请把联网结果作为本轮回答的主要依据。',
             '只引用真实链接，不要编造来源。',
@@ -1058,6 +1346,56 @@ class RagService:
             lines.append('')
         return lines
 
+    def _prepare_hits_for_context(
+        self,
+        hits: list[RagQueryHit],
+        max_hits: int,
+        total_char_budget: int,
+    ) -> list[RagQueryHit]:
+        prepared: list[RagQueryHit] = []
+        remaining = max(0, total_char_budget)
+        for hit in self._dedupe_hits(hits)[:max_hits]:
+            if remaining <= 0:
+                break
+            snippet_limit = min(MAX_CONTEXT_SNIPPET_CHARS, remaining)
+            snippet = self._trim_context_text(hit.snippet, snippet_limit)
+            if not snippet:
+                continue
+            remaining -= len(snippet)
+            prepared.append(
+                hit.model_copy(update={
+                    'source_title': self._trim_context_text(hit.source_title, MAX_CONTEXT_TITLE_CHARS),
+                    'section_path': self._trim_context_text(hit.section_path or '', MAX_CONTEXT_SECTION_CHARS) or None,
+                    'snippet': snippet,
+                })
+            )
+        return prepared
+
+    def _prepare_web_hits_for_context(self, hits: list[Any]) -> list[Any]:
+        prepared: list[Any] = []
+        remaining = MAX_WEB_CONTEXT_TOTAL_CHARS
+        for item in hits[:MAX_WEB_CONTEXT_ITEMS]:
+            if remaining <= 0:
+                break
+            snippet_limit = min(MAX_CONTEXT_SNIPPET_CHARS, remaining)
+            snippet = self._trim_context_text(str(getattr(item, 'snippet', '') or ''), snippet_limit)
+            if not snippet:
+                continue
+            remaining -= len(snippet)
+            title = self._trim_context_text(str(getattr(item, 'title', '') or ''), MAX_CONTEXT_TITLE_CHARS)
+            prepared.append(item.__class__(title=title, url=getattr(item, 'url', ''), snippet=snippet))
+        return prepared
+
+    def _trim_context_text(self, text: str, limit: int) -> str:
+        normalized = ' '.join((text or '').split())
+        if not normalized or limit <= 0:
+            return ''
+        if len(normalized) <= limit:
+            return normalized
+        if limit <= 1:
+            return normalized[:limit]
+        return normalized[: max(0, limit - 3)].rstrip() + '...'
+
     def _normalized_mode(self, mode: str | None) -> str:
         normalized = (mode or 'GENERAL').strip().upper()
         return 'SCOPED' if normalized == 'SCOPED' else 'GENERAL'
@@ -1069,6 +1407,10 @@ class RagService:
         requested = request.top_k if request.top_k is not None else self.settings.rag_top_k
         return max(1, min(requested, 10))
 
+    def _resolve_top_n_for_rerank(self) -> int:
+        candidate_limit = max(1, self.settings.rag_llm_rerank_candidate_limit)
+        return min(candidate_limit, self.settings.rag_top_k or 5)
+
     def _resolve_threshold(self, request: ChatCompletionRequest) -> float:
         threshold = request.similarity_threshold if request.similarity_threshold is not None else self.settings.rag_similarity_threshold
         return max(0.0, min(threshold, 1.0))
@@ -1076,14 +1418,17 @@ class RagService:
     def _collection_name(self, scope_type: str) -> str:
         return self.settings.qdrant_temp_collection if scope_type.upper() == 'TEMP' else self.settings.qdrant_kb_collection
 
-    def _upsert_result(self, collection_name: str, upserted: int) -> dict[str, Any]:
-        return {
+    def _upsert_result(self, collection_name: str, upserted: int, extra: dict[str, Any] | None = None) -> dict[str, Any]:
+        payload = {
             'upserted': upserted,
             'collectionName': collection_name,
             'embeddingModelCode': get_embedding_model_code(),
             'embeddingVersion': self.settings.embedding_version,
             'embeddingDimension': self.settings.embedding_dimensions,
         }
+        if extra:
+            payload.update(extra)
+        return payload
 
     def _point_id(
         self,

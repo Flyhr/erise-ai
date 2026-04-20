@@ -40,22 +40,27 @@ export interface AiMessageFeedbackPayload {
   feedbackNote?: string
 }
 
+const AI_METADATA_TIMEOUT_MS = 8000
+
 export const chat = (payload: AiChatPayload) =>
   http.post<never, AiChatResponse>('/v1/ai/chat', payload)
 
 export const cancelChat = (requestId: string) =>
   http.post<never, void>(`/v1/ai/chat/${requestId}/cancel`)
 
-export const getSessions = () => http.get<never, AiSessionSummaryView[]>('/v1/ai/sessions')
+export const getSessions = () =>
+  http.get<never, AiSessionSummaryView[]>('/v1/ai/sessions', { timeout: AI_METADATA_TIMEOUT_MS })
 
 export const createSession = (payload: AiCreateSessionPayload) =>
   http.post<never, AiSessionSummaryView>('/v1/ai/sessions', payload)
 
-export const getSession = (id: number) => http.get<never, AiSessionDetailView>(`/v1/ai/sessions/${id}`)
+export const getSession = (id: number) =>
+  http.get<never, AiSessionDetailView>(`/v1/ai/sessions/${id}`, { timeout: AI_METADATA_TIMEOUT_MS })
 
 export const deleteSession = (id: number) => http.delete(`/v1/ai/sessions/${id}`)
 
-export const getModels = () => http.get<never, AiModelView[]>('/v1/ai/models')
+export const getModels = () =>
+  http.get<never, AiModelView[]>('/v1/ai/models', { timeout: AI_METADATA_TIMEOUT_MS })
 
 export const uploadTempFile = (payload: FormData) =>
   http.post<never, AiTempFileView>('/v1/ai/temp-files', payload, {
@@ -68,6 +73,7 @@ export const uploadTempFile = (payload: FormData) =>
 export const getTempFiles = (sessionId: number) =>
   http.get<never, AiTempFileView[]>('/v1/ai/temp-files', {
     params: { sessionId },
+    timeout: AI_METADATA_TIMEOUT_MS,
   })
 
 export const deleteTempFile = (id: number) =>

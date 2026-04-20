@@ -1,8 +1,9 @@
 <template>
   <div class="page-shell ai-index-tasks-page">
-    <AppSectionCard title="索引任务状态" description="查看文件解析、知识索引与临时附件处理任务，并支持失败后重试。" :unpadded="true">
+    <AppSectionCard title="索引任务状态" :unpadded="true">
       <AppFilterBar>
-        <el-input v-model="filters.q" clearable placeholder="搜索资源标题、任务类型或错误信息" @clear="handleSearch" @keyup.enter="handleSearch" />
+        <el-input v-model="filters.q" clearable placeholder="搜索资源标题、任务类型或错误信息" @clear="handleSearch"
+          @keyup.enter="handleSearch" />
         <el-select v-model="filters.taskOrigin" clearable placeholder="来源" @change="handleSearch">
           <el-option label="文件解析" value="FILE_PARSE" />
           <el-option label="RAG 索引" value="RAG" />
@@ -68,7 +69,8 @@
 
         <div class="table-footer">
           <span class="table-count">共 {{ total }} 条</span>
-          <CompactPager variant="project" :page-num="pageNum" :page-size="pageSize" :total="total" @change="handlePageChange" />
+          <CompactPager variant="project" :page-num="pageNum" :page-size="pageSize" :total="total"
+            @change="handlePageChange" />
         </div>
       </template>
     </AppSectionCard>
@@ -101,11 +103,11 @@ const filters = reactive({
 })
 
 const originLabel = (value?: string) =>
-  ({
-    FILE_PARSE: '文件解析',
-    RAG: 'RAG 索引',
-    TEMP_FILE_PARSE: '临时附件',
-  }[value || ''] || value || '--')
+({
+  FILE_PARSE: '文件解析',
+  RAG: 'RAG 索引',
+  TEMP_FILE_PARSE: '临时附件',
+}[value || ''] || value || '--')
 
 const originTone = (value?: string) =>
   ({
@@ -115,14 +117,14 @@ const originTone = (value?: string) =>
   }[value || ''] || 'info') as 'primary' | 'success' | 'warning' | 'danger' | 'info'
 
 const statusLabel = (value?: string) =>
-  ({
-    PENDING: '等待中',
-    PROCESSING: '处理中',
-    SUCCESS: '成功',
-    READY: '成功',
-    FAILED: '失败',
-    NEEDS_REPAIR: '待修复',
-  }[String(value || '').toUpperCase()] || value || '--')
+({
+  PENDING: '等待中',
+  PROCESSING: '处理中',
+  SUCCESS: '成功',
+  READY: '成功',
+  FAILED: '失败',
+  NEEDS_REPAIR: '待修复',
+}[String(value || '').toUpperCase()] || value || '--')
 
 const statusTone = (value?: string) =>
   ({

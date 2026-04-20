@@ -1,3 +1,11 @@
+"""废弃说明：
+
+AI 检索主链路已经迁移到 Qdrant dense+sparse 一体化存储，
+不再使用 Java `/internal/v1/knowledge/retrieve` 接口。
+
+当前文件仅为回滚排障时保留的历史参考，不再参与正式检索流程。
+"""
+
 from __future__ import annotations
 
 import httpx

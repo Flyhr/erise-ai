@@ -47,6 +47,10 @@ from src.app.utils.sse import sse_event
 SYSTEM_PROVIDER_CODE = 'SYSTEM'
 ATTACHMENT_CONTEXT_GUARD_MODEL = 'attachment-context-guard'
 STRICT_CITATION_GUARD_MODEL = 'strict-citation-guard'
+ATTACHMENT_DIRECT_CONTEXT_SOURCE = 'ATTACHMENT_CONTEXT'
+ATTACHMENT_DIRECT_CONTEXT_CONFIDENCE = 0.88
+MAX_ATTACHMENT_DIRECT_CONTEXT_TOTAL_CHARS = 2200
+MAX_ATTACHMENT_DIRECT_CONTEXT_PER_FILE_CHARS = 1100
 DEFAULT_SESSION_TITLE = '新会话'
 SESSION_TITLE_MAX_LENGTH = 30
 logger = logging.getLogger(__name__)
@@ -395,6 +399,51 @@ class ChatService:
         lines.append('建议等资料解析完成后再继续追问“这个文档写了什么”之类的问题，我会优先基于这些资料回答。')
         return '\n'.join(lines)
 
+    def _normalize_attachment_excerpt(self, text: str) -> str:
+        return ' '.join((text or '').split())
+
+    def _build_attachment_direct_context(self, attachments: list[LoadedAttachmentContext]) -> RetrievalDecision:
+        remaining_budget = MAX_ATTACHMENT_DIRECT_CONTEXT_TOTAL_CHARS
+        context_lines = [
+            'The user explicitly attached knowledge files for this turn.',
+            'Answer from the attached file excerpts below first.',
+            'If the excerpts are still insufficient, say what remains unclear instead of inventing details.',
+        ]
+        citations: list[CitationView] = []
+
+        for attachment in attachments:
+            if remaining_budget <= 0:
+                break
+            excerpt_limit = min(MAX_ATTACHMENT_DIRECT_CONTEXT_PER_FILE_CHARS, remaining_budget)
+            excerpt_source = attachment.plain_text or attachment.summary or attachment.snippet or ''
+            excerpt = self._normalize_attachment_excerpt(excerpt_source)[:excerpt_limit].rstrip()
+            if not excerpt:
+                continue
+            remaining_budget -= len(excerpt)
+            context_lines.append(f'Attachment: {attachment.title}')
+            context_lines.append(f'Attachment type: {attachment.attachment_type}')
+            context_lines.append(f'Excerpt: {excerpt}')
+            citations.append(
+                CitationView(
+                    source_type=attachment.attachment_type,
+                    source_id=attachment.source_id,
+                    source_title=attachment.title,
+                    snippet=excerpt[:320],
+                    score=1.0,
+                    url=None,
+                )
+            )
+
+        return RetrievalDecision(
+            answer_source=ATTACHMENT_DIRECT_CONTEXT_SOURCE,
+            citations=citations,
+            used_tools=['attachment_context', 'attachment_direct_context'],
+            confidence=ATTACHMENT_DIRECT_CONTEXT_CONFIDENCE if citations else None,
+            context_messages=[{'role': 'system', 'content': '\n'.join(context_lines)}] if citations else [],
+            rewritten_queries=[],
+            rewrite_hints=[],
+        )
+
     def _strict_citation_enabled(self, request: ChatCompletionRequest) -> bool:
         if request.strict_citation_enabled is not None:
             return request.strict_citation_enabled
@@ -445,6 +494,67 @@ class ChatService:
         if not retrieval_decision.context_messages:
             return prompt_messages
         return prompt_messages[:-1] + retrieval_decision.context_messages + prompt_messages[-1:]
+
+    def _log_prompt_shape(
+        self,
+        *,
+        request_id: str,
+        model_code: str,
+        prompt_messages: list[dict[str, str]],
+        retrieval_decision: RetrievalDecision,
+        attachment_contexts: list[LoadedAttachmentContext],
+    ) -> None:
+        total_chars = sum(len(str(item.get('content') or '')) for item in prompt_messages)
+        retrieval_chars = sum(len(str(item.get('content') or '')) for item in retrieval_decision.context_messages)
+        attachment_chars = sum(len((item.summary or '') + (item.snippet or '')) for item in attachment_contexts)
+        logger.info(
+            'chat_prompt_shape request_id=%s model=%s message_count=%s prompt_chars=%s retrieval_chars=%s attachment_chars=%s citations=%s attachments=%s',
+            request_id,
+            model_code,
+            len(prompt_messages),
+            total_chars,
+            retrieval_chars,
+            attachment_chars,
+            len(retrieval_decision.citations),
+            len(attachment_contexts),
+        )
+
+    def _prompt_char_count(self, prompt_messages: list[dict[str, str]]) -> int:
+        return sum(len(str(item.get('content') or '')) for item in prompt_messages)
+
+    def _resolve_effective_model_code(
+        self,
+        *,
+        request: ChatCompletionRequest,
+        model,
+        prompt_messages: list[dict[str, str]],
+        retrieval_decision: RetrievalDecision,
+        attachment_contexts: list[LoadedAttachmentContext],
+    ) -> str:
+        if request.model_code:
+            return model.model_code
+        if not self.settings.is_dev_env:
+            return model.model_code
+        if (model.provider_code or '').upper() != 'OLLAMA':
+            return model.model_code
+        if not (self.settings.ollama_fast_chat_model or '').strip():
+            return model.model_code
+        if self.settings.ollama_fast_chat_model.strip() == model.model_code:
+            return model.model_code
+        if not (retrieval_decision.citations or attachment_contexts):
+            return model.model_code
+        prompt_chars = self._prompt_char_count(prompt_messages)
+        if prompt_chars < max(1, int(self.settings.dev_ollama_context_fallback_chars or 700)):
+            return model.model_code
+        logger.info(
+            'chat_model_fallback session_id=%s from_model=%s to_model=%s provider=%s prompt_chars=%s',
+            request.session_id or '-',
+            model.model_code,
+            self.settings.ollama_fast_chat_model.strip(),
+            model.provider_code,
+            prompt_chars,
+        )
+        return self.settings.ollama_fast_chat_model.strip()
 
     def _compose_response_payload(
         self,
@@ -692,7 +802,12 @@ class ChatService:
                 None,
             )
 
-        retrieval_decision = await rag_service.query(request, context)
+        if request.context.attachments and ready_attachment_contexts and (
+            self._attachment_focused_question(request.message) or (request.mode or '').upper() == 'SCOPED'
+        ):
+            retrieval_decision = self._build_attachment_direct_context(ready_attachment_contexts)
+        else:
+            retrieval_decision = await rag_service.query(request, context)
         effective_citations = retrieval_decision.citations
         effective_used_tools = self._merge_used_tools(retrieval_decision.used_tools, ready_attachment_contexts)
         strict_citation_enabled = self._strict_citation_enabled(request)
@@ -790,16 +905,30 @@ class ChatService:
             attachment_contexts=attachment_contexts,
         )
         prompt_messages = self._inject_context_messages(prompt_messages, retrieval_decision)
+        self._log_prompt_shape(
+            request_id=request_id,
+            model_code=model.model_code,
+            prompt_messages=prompt_messages,
+            retrieval_decision=retrieval_decision,
+            attachment_contexts=attachment_contexts,
+        )
+        effective_model_code = self._resolve_effective_model_code(
+            request=request,
+            model=model,
+            prompt_messages=prompt_messages,
+            retrieval_decision=retrieval_decision,
+            attachment_contexts=attachment_contexts,
+        )
         started_at = perf_counter()
         try:
-            result = await adapter.chat(model.model_code, prompt_messages, request.temperature, request.max_tokens)
+            result = await adapter.chat(effective_model_code, prompt_messages, request.temperature, request.max_tokens)
         except AiServiceError as exc:
             latency_ms = max(1, int((perf_counter() - started_at) * 1000))
             logger.warning(
                 'chat_completion_failed request_id=%s provider=%s model=%s error_code=%s latency_ms=%s',
                 request_id,
                 exc.provider_code or model.provider_code,
-                exc.model_code or model.model_code,
+                exc.model_code or effective_model_code,
                 exc.error_code,
                 latency_ms,
                 exc_info=True,
@@ -812,7 +941,7 @@ class ChatService:
                 '',
                 STATUS_FAILED,
                 request_id=request_id,
-                model_code=exc.model_code or model.model_code,
+                model_code=exc.model_code or effective_model_code,
                 provider_code=exc.provider_code or model.provider_code,
             )
             assistant_message.error_code = exc.error_code
@@ -828,7 +957,7 @@ class ChatService:
                 user_message_id=user_message.id,
                 assistant_message_id=assistant_message.id,
                 provider_code=exc.provider_code or model.provider_code,
-                model_code=exc.model_code or model.model_code,
+                model_code=exc.model_code or effective_model_code,
                 temperature=request.temperature,
                 max_tokens=request.max_tokens,
                 stream=False,
@@ -851,7 +980,7 @@ class ChatService:
                 'chat_completion_failed request_id=%s provider=%s model=%s error_code=%s latency_ms=%s',
                 request_id,
                 model.provider_code,
-                model.model_code,
+                effective_model_code,
                 'AI_PROVIDER_ERROR',
                 latency_ms,
                 exc_info=True,
@@ -864,7 +993,7 @@ class ChatService:
                 '',
                 STATUS_FAILED,
                 request_id=request_id,
-                model_code=model.model_code,
+                model_code=effective_model_code,
                 provider_code=model.provider_code,
             )
             assistant_message.error_code = 'AI_PROVIDER_ERROR'
@@ -880,7 +1009,7 @@ class ChatService:
                 user_message_id=user_message.id,
                 assistant_message_id=assistant_message.id,
                 provider_code=model.provider_code,
-                model_code=model.model_code,
+                model_code=effective_model_code,
                 temperature=request.temperature,
                 max_tokens=request.max_tokens,
                 stream=False,
@@ -900,7 +1029,7 @@ class ChatService:
                 error_message,
                 status_code=502,
                 provider_code=model.provider_code,
-                model_code=model.model_code,
+                model_code=effective_model_code,
             ) from exc
         latency_ms = max(1, int((perf_counter() - started_at) * 1000))
         consistency_assessment = citation_guard_service.assess_answer_consistency(
@@ -1113,7 +1242,12 @@ class ChatService:
 
             return attachment_guard_stream()
 
-        retrieval_decision = await rag_service.query(request, context)
+        if request.context.attachments and ready_attachment_contexts and (
+            self._attachment_focused_question(request.message) or (request.mode or '').upper() == 'SCOPED'
+        ):
+            retrieval_decision = self._build_attachment_direct_context(ready_attachment_contexts)
+        else:
+            retrieval_decision = await rag_service.query(request, context)
         effective_citations = retrieval_decision.citations
         effective_used_tools = self._merge_used_tools(retrieval_decision.used_tools, ready_attachment_contexts)
         strict_citation_enabled = self._strict_citation_enabled(request)
@@ -1211,17 +1345,6 @@ class ChatService:
 
         model = get_model_config(db, request.model_code)
         adapter = get_model_adapter(model)
-        assistant_message = self._create_message(
-            db,
-            session.id,
-            context.user_id,
-            ROLE_ASSISTANT,
-            '',
-            STATUS_STREAMING,
-            request_id=request_id,
-            model_code=model.model_code,
-            provider_code=model.provider_code,
-        )
         prompt_messages = await build_prompt_messages(
             db,
             context,
@@ -1231,6 +1354,31 @@ class ChatService:
             attachment_contexts=attachment_contexts,
         )
         prompt_messages = self._inject_context_messages(prompt_messages, retrieval_decision)
+        self._log_prompt_shape(
+            request_id=request_id,
+            model_code=model.model_code,
+            prompt_messages=prompt_messages,
+            retrieval_decision=retrieval_decision,
+            attachment_contexts=attachment_contexts,
+        )
+        effective_model_code = self._resolve_effective_model_code(
+            request=request,
+            model=model,
+            prompt_messages=prompt_messages,
+            retrieval_decision=retrieval_decision,
+            attachment_contexts=attachment_contexts,
+        )
+        assistant_message = self._create_message(
+            db,
+            session.id,
+            context.user_id,
+            ROLE_ASSISTANT,
+            '',
+            STATUS_STREAMING,
+            request_id=request_id,
+            model_code=effective_model_code,
+            provider_code=model.provider_code,
+        )
         db.commit()
 
         async def event_stream() -> AsyncGenerator[str, None]:
@@ -1246,7 +1394,7 @@ class ChatService:
                         'assistantMessageId': assistant_message.id,
                     },
                 )
-                async for event in adapter.stream_chat(model.model_code, prompt_messages, request.temperature, request.max_tokens):
+                async for event in adapter.stream_chat(effective_model_code, prompt_messages, request.temperature, request.max_tokens):
                     if await self.cancellation_store.is_cancelled(request_id):
                         raise AiServiceError('AI_CANCELLED', 'generation cancelled', status_code=409)
                     if event.delta:
@@ -1288,7 +1436,7 @@ class ChatService:
                     user_message_id=user_message.id,
                     assistant_message_id=stored_message.id,
                     provider_code=model.provider_code,
-                    model_code=model.model_code,
+                    model_code=effective_model_code,
                     temperature=request.temperature,
                     max_tokens=request.max_tokens,
                     stream=True,
@@ -1344,7 +1492,7 @@ class ChatService:
                     user_message_id=user_message.id,
                     assistant_message_id=assistant_message.id,
                     provider_code=model.provider_code,
-                    model_code=model.model_code,
+                    model_code=effective_model_code,
                     temperature=request.temperature,
                     max_tokens=request.max_tokens,
                     stream=True,
@@ -1383,7 +1531,7 @@ class ChatService:
                     user_message_id=user_message.id,
                     assistant_message_id=assistant_message.id,
                     provider_code=model.provider_code,
-                    model_code=model.model_code,
+                    model_code=effective_model_code,
                     temperature=request.temperature,
                     max_tokens=request.max_tokens,
                     stream=True,

@@ -20,10 +20,25 @@ class QueryRewriteServiceTest(unittest.TestCase):
 
         self.assertGreaterEqual(len(plan.variants), 2)
         self.assertEqual('请帮我总结这份 PDF 文档讲了什么', plan.original_query)
+        self.assertEqual('总结摘要', plan.intent)
+        self.assertEqual('BALANCED', plan.retrieval_profile)
         self.assertTrue(any('总结' in query for query in plan.all_queries))
         self.assertTrue(any(item.kind == 'rewrite' for item in plan.variants))
         self.assertTrue(any('主要内容' in query or '摘要' in query for query in plan.all_queries))
         self.assertTrue(any('pdf 文档' in query.lower() or '文档' in query for query in plan.expanded_queries))
+
+    def test_build_plan_marks_error_query_as_keyword_heavy(self) -> None:
+        plan = query_rewrite_service.build_plan(
+            '这玩意儿咋弄，启动就报 NullPointerException',
+            project_scope_ids=[],
+            attachments=[],
+            mode='GENERAL',
+            enabled=True,
+        )
+
+        self.assertEqual('报错排查', plan.intent)
+        self.assertEqual('KEYWORD_HEAVY', plan.retrieval_profile)
+        self.assertTrue(any('排查' in query or '解决方法' in query for query in plan.all_queries))
 
 
 class CitationGuardServiceTest(unittest.TestCase):
@@ -44,7 +59,7 @@ class CitationGuardServiceTest(unittest.TestCase):
                 source_type='DOCUMENT',
                 source_id=1,
                 source_title='员工请假制度',
-                snippet='年假申请需至少提前三个工作日提交。',
+                snippet='年假申请需要至少提前三个工作日提交。',
                 page_no=1,
                 section_path='请假流程',
                 score=0.91,

@@ -39,9 +39,19 @@ class FileTypeCapabilityView(CamelModel):
     notes: str = ''
 
 
+class ParserRuntimeView(CamelModel):
+    parser_code: str
+    label: str
+    status: str
+    error_code: str | None = None
+    message: str | None = None
+    supported_extensions: list[str] = Field(default_factory=list)
+
+
 class FileCapabilityMatrixView(CamelModel):
     parser_order: list[str] = Field(default_factory=list)
     parse_statuses: list[str] = Field(default_factory=list)
+    parser_runtimes: list[ParserRuntimeView] = Field(default_factory=list)
     file_types: list[FileTypeCapabilityView] = Field(default_factory=list)
 
 

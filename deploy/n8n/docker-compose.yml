@@ -1,10 +1,12 @@
+# Optional peripheral automation overlay for the official production stack.
+# n8n stays outside the synchronous AI chat path and only handles external workflows.
 services:
   n8n:
     image: docker.n8n.io/n8nio/n8n:1.90.0
     container_name: erise-ai-n8n
     restart: unless-stopped
     env_file:
-      - ../../.env.dev
+      - ../../.env
     environment:
       N8N_HOST: ${N8N_HOST:-localhost}
       N8N_PORT: ${N8N_PORT:-5678}

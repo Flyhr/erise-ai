@@ -12,6 +12,11 @@ settings = get_settings()
 engine_kwargs: dict[str, object] = {'pool_pre_ping': True}
 if settings.mysql_dsn.startswith('sqlite'):
     engine_kwargs['echo'] = settings.sqlite_echo
+else:
+    engine_kwargs['pool_size'] = settings.db_pool_size
+    engine_kwargs['max_overflow'] = settings.db_max_overflow
+    engine_kwargs['pool_timeout'] = settings.db_pool_timeout_seconds
+    engine_kwargs['pool_recycle'] = settings.db_pool_recycle_seconds
 
 engine = create_engine(settings.mysql_dsn, **engine_kwargs)
 SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False, expire_on_commit=False, class_=Session)
@@ -55,6 +60,29 @@ REQUIRED_COLUMNS = {
         'input_price_per_million',
         'output_price_per_million',
         'currency_code',
+    },
+    'n8n_event_log': {
+        'delivery_status',
+        'workflow_status',
+        'workflow_name',
+        'workflow_version',
+        'workflow_domain',
+        'workflow_owner',
+        'external_execution_id',
+        'workflow_error_summary',
+        'workflow_duration_ms',
+        'error_code',
+        'attempt_count',
+        'max_attempts',
+        'idempotency_key',
+        'signature',
+        'delivery_retryable',
+        'manual_status',
+        'manual_reason',
+        'manual_replay_count',
+        'replayed_from_event_id',
+        'last_callback_at',
+        'callback_payload_json',
     },
 }
 

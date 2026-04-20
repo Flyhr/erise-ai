@@ -31,6 +31,21 @@ class OcrService:
         self._engine = RapidOCR()
         return self._engine
 
+    def runtime_status(self) -> list[tuple[str, str, str | None, str | None]]:
+        runtimes: list[tuple[str, str, str | None, str | None]] = []
+        try:
+            import fitz  # noqa: F401
+
+            runtimes.append(('pymupdf-text', 'UP', None, 'PyMuPDF native text extraction is available'))
+        except Exception as exc:
+            runtimes.append(('pymupdf-text', 'DOWN', 'AI_OCR_UNAVAILABLE', f'PyMuPDF runtime is unavailable: {exc}'))
+        try:
+            self._get_engine()
+            runtimes.append(('rapidocr', 'UP', None, 'RapidOCR fallback engine is available'))
+        except AiServiceError as exc:
+            runtimes.append(('rapidocr', 'DOWN', exc.error_code, exc.message))
+        return runtimes
+
     def extract_pdf_text(self, pdf_bytes: bytes) -> PdfOcrResult:
         if not pdf_bytes:
             raise AiServiceError('AI_OCR_INVALID_PDF', 'PDF payload is empty', status_code=400)

@@ -1,0 +1,9 @@
+# 废弃说明：
+# 历史上的本地热更新 override 配置已废弃。
+# 现在不再维护与 `docker-compose.yml` 平行的开发态运行面。
+#
+# 如需运行系统，请直接使用：
+#   docker compose --env-file .env -f docker-compose.yml up -d
+#
+# 保留空 override 仅用于兼容本地工具链。
+services: {}

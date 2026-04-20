@@ -466,7 +466,7 @@
       </section>
     </el-drawer>
 
-    <el-dialog v-model="attachmentDialogVisible" title="资料托盘" width="760px">
+    <el-dialog v-model="attachmentDialogVisible" title="资料托盘" width="960px">
       <div class="attachment-dialog attachment-dialog--modern">
         <div class="attachment-dialog__project">
           <div class="attachment-dialog__label">项目</div>
@@ -475,47 +475,118 @@
             <el-option v-for="project in selectableProjects" :key="project.id" :label="project.name"
               :value="project.id" />
           </el-select>
-          <div class="attachment-dialog__hint">先选项目，再勾选要带进本轮对话的资料。当前页优先强调文件，其他资料类型保留原功能。</div>
+          <div class="attachment-dialog__hint">
+            支持按文件、文档与表格内容搜索资料；文件和文档可直接加入对话，表格内容支持快速跳转查看。
+          </div>
         </div>
 
-        <div class="attachment-dialog__grid">
-          <section class="attachment-panel">
-            <div class="attachment-panel__title">文件</div>
-            <div v-if="!draftProjectId" class="attachment-panel__empty">请先选择项目。</div>
-            <div v-else-if="loadingAttachmentOptions" class="attachment-panel__empty">正在加载文件列表...</div>
-            <div v-else-if="draftFiles.length" class="attachment-panel__list">
-              <label v-for="file in draftFiles" :key="`file-${file.id}`" class="attachment-option"
-                :class="{ 'is-disabled': !canAttachKnowledgeFile(file) }">
-                <input type="checkbox" :checked="draftAttachmentSelected('FILE', file.id)"
-                  :disabled="!canAttachKnowledgeFile(file)" @change="toggleDraftFileAttachment(file)" />
-                <span class="attachment-option__copy">
-                  <strong>{{ file.fileName }}</strong>
-                  <small>{{ knowledgeFileStatusText(file) }}</small>
-                  <small v-if="file.parseErrorMessage" class="attachment-option__error">{{ file.parseErrorMessage
-                    }}</small>
-                </span>
-              </label>
-            </div>
-            <div v-else class="attachment-panel__empty">当前项目还没有文件。</div>
-          </section>
+        <section class="attachment-dialog__toolbar">
+          <div class="attachment-dialog__search">
+            <el-input v-model="attachmentKeyword" clearable placeholder="搜索文件、文档、表格内容"
+              :disabled="loadingAttachmentOptions || !draftProjectId" @clear="runAttachmentSearch"
+              @keyup.enter="runAttachmentSearch">
+              <template #prefix>
+                <span class="material-symbols-outlined">search</span>
+              </template>
+              <template #suffix>
+                <SearchSuffixButton @click="runAttachmentSearch" />
+              </template>
+            </el-input>
+          </div>
+          <div class="attachment-dialog__summary">
+            <span>{{ attachmentSelectedSummary }}</span>
+            <span v-if="draftProjectId && attachmentTotal > 0">共 {{ attachmentTotal }} 条</span>
+          </div>
+        </section>
 
-          <section class="attachment-panel attachment-panel--secondary">
-            <div class="attachment-panel__title">更多资料</div>
-            <div v-if="!draftProjectId" class="attachment-panel__empty">请先选择项目。</div>
-            <div v-else-if="loadingAttachmentOptions" class="attachment-panel__empty">正在加载资料...</div>
-            <div v-else-if="draftDocuments.length" class="attachment-panel__list">
-              <label v-for="document in draftDocuments" :key="`document-${document.id}`" class="attachment-option">
-                <input type="checkbox" :checked="draftAttachmentSelected('DOCUMENT', document.id)"
-                  @change="toggleDraftAttachment('DOCUMENT', document.id, document.title)" />
-                <span class="attachment-option__copy">
-                  <strong>{{ document.title }}</strong>
-                  <small>{{ document.summary || '暂无摘要' }}</small>
-                </span>
-              </label>
+        <section class="attachment-dialog__subnav">
+          <ProjectSubnav :project-id="0" mode="value" :model-value="attachmentAssetTab" :items="attachmentSubnavItems"
+            @update:modelValue="switchAttachmentAssetTab" />
+        </section>
+
+        <section class="attachment-results-shell">
+          <div v-if="!draftProjectId" class="attachment-results-shell__state">
+            <el-empty :image-size="78" description="请先选择项目，再搜索或挑选知识库资料。" />
+          </div>
+
+          <div v-else-if="loadingAttachmentOptions && !attachmentResults.length" class="attachment-results-shell__state">
+            <el-skeleton animated>
+              <template #template>
+                <el-skeleton-item variant="rect" style="width: 100%; height: 56px; border-radius: 18px;" />
+                <el-skeleton-item variant="rect"
+                  style="width: 100%; height: 88px; margin-top: 14px; border-radius: 16px;" />
+                <el-skeleton-item variant="rect"
+                  style="width: 100%; height: 88px; margin-top: 12px; border-radius: 16px;" />
+              </template>
+            </el-skeleton>
+          </div>
+
+          <div v-else-if="attachmentError && !attachmentResults.length" class="attachment-results-shell__state">
+            <el-result icon="warning" title="资料加载失败" :sub-title="attachmentError">
+              <template #extra>
+                <el-button type="primary" @click="refreshAttachmentOptions(draftProjectId)">重新加载</el-button>
+              </template>
+            </el-result>
+          </div>
+
+          <template v-else>
+            <div v-if="loadingAttachmentOptions && attachmentResults.length" class="attachment-results-shell__refreshing">
+              <span class="material-symbols-outlined attachment-results-shell__refreshing-icon">progress_activity</span>
+              <span>正在刷新资料列表...</span>
             </div>
-            <div v-else class="attachment-panel__empty">当前项目还没有文档。</div>
-          </section>
-        </div>
+
+            <div v-if="attachmentResults.length" class="attachment-results-list">
+              <article v-for="asset in attachmentResults" :key="`${asset.assetType}-${asset.assetId}`"
+                class="attachment-result-card" :class="attachmentResultCardClass(asset)">
+                <label v-if="canToggleKnowledgeAsset(asset)" class="attachment-result-card__selector">
+                  <input type="checkbox" :checked="draftAttachmentSelected(asset.assetType, asset.assetId)"
+                    @change="toggleDraftAsset(asset)" />
+                </label>
+                <div v-else class="attachment-result-card__selector attachment-result-card__selector--placeholder">
+                  <span class="material-symbols-outlined">{{ attachmentActionIcon(asset) }}</span>
+                </div>
+
+                <button type="button" class="attachment-result-card__main" @click="openAttachmentAsset(asset)">
+                  <div class="attachment-result-card__icon" :class="`is-${attachmentAssetTone(asset)}`">
+                    <span class="material-symbols-outlined">{{ attachmentAssetIcon(asset) }}</span>
+                  </div>
+                  <div class="attachment-result-card__copy">
+                    <div class="attachment-result-card__title-row">
+                      <strong>{{ asset.title }}</strong>
+                      <span class="attachment-result-card__type">{{ attachmentAssetTypeLabel(asset) }}</span>
+                    </div>
+                    <small class="attachment-result-card__meta">{{ attachmentAssetMeta(asset) }}</small>
+                    <p v-if="asset.summary" class="attachment-result-card__summary">{{ asset.summary }}</p>
+                    <div class="attachment-result-card__status-row">
+                      <span class="attachment-result-card__status" :class="`is-${attachmentAssetTone(asset)}`">
+                        <span class="material-symbols-outlined">{{ attachmentAssetStatusIcon(asset) }}</span>
+                        <span>{{ attachmentAssetStatusText(asset) }}</span>
+                      </span>
+                      <small v-if="asset.parseErrorMessage" class="attachment-option__error">{{ asset.parseErrorMessage }}</small>
+                    </div>
+                  </div>
+                </button>
+
+                <div class="attachment-result-card__actions">
+                  <el-button text @click="openAttachmentAsset(asset)">跳转</el-button>
+                  <el-button v-if="canToggleKnowledgeAsset(asset)" type="primary" text
+                    @click="toggleDraftAsset(asset)">
+                    {{ draftAttachmentSelected(asset.assetType, asset.assetId) ? '移除' : '加入对话' }}
+                  </el-button>
+                  <span v-else class="attachment-result-card__hint">{{ attachmentActionHint(asset) }}</span>
+                </div>
+              </article>
+            </div>
+
+            <el-empty v-else :image-size="78" :description="attachmentEmptyText" />
+          </template>
+
+          <div v-if="draftProjectId && !attachmentError" class="attachment-results-shell__footer">
+            <span class="attachment-results-shell__count">共 {{ attachmentTotal }} 条资料</span>
+            <CompactPager variant="project" :page-num="attachmentPageNum" :page-size="attachmentPageSize"
+              :total="attachmentTotal" @change="handleAttachmentPageChange" />
+          </div>
+        </section>
       </div>
 
       <template #footer>
@@ -557,12 +628,15 @@ import {
   uploadTempFile,
 } from '@/api/ai'
 import type { AiChatPayload } from '@/api/ai'
-import { getDocuments } from '@/api/document'
-import { getFile, getFiles } from '@/api/file'
+import { getFile } from '@/api/file'
+import { getKnowledgeAssets } from '@/api/knowledge'
 import { getProjects } from '@/api/project'
 import { resolveApiUrl } from '@/api/http'
+import CompactPager from '@/components/common/CompactPager.vue'
 import AppStatusTag from '@/components/common/AppStatusTag.vue'
 import KnowledgeSyncStatus from '@/components/common/KnowledgeSyncStatus.vue'
+import ProjectSubnav from '@/components/common/ProjectSubnav.vue'
+import SearchSuffixButton from '@/components/common/SearchSuffixButton.vue'
 import WorkspaceNavigationShell from '@/components/common/WorkspaceNavigationShell.vue'
 import { useKnowledgeStatusPolling } from '@/composables/useKnowledgeStatusPolling'
 import type {
@@ -574,17 +648,19 @@ import type {
   AiRetrievalSettingView,
   AiSessionSummaryView,
   AiTempFileView,
-  DocumentSummaryView,
   FileView,
+  KnowledgeAssetView,
   ProjectDetailView,
 } from '@/types/models'
 import {
   formatDateTime,
   formatTokenCountInK,
-  knowledgeReadinessLabel,
-  knowledgeReadinessTone,
+  knowledgeProgressLabel,
+  knowledgeProgressTone,
+  isKnowledgeCompleted,
+  normalizeFileTypeLabel,
   pickPreferredAiModel,
-  resolveKnowledgeReadiness,
+  resolveKnowledgeProgressPhase,
   sortAiModelsByPreference,
 } from '@/utils/formatters'
 import { copyToClipboard } from '@/utils/object-operations'
@@ -645,6 +721,8 @@ interface DraftAttachmentOption {
   title: string
 }
 
+type AttachmentAssetTab = 'overview' | 'files' | 'documents' | 'content'
+
 interface CitationGroup {
   key: string
   sourceType: string
@@ -661,6 +739,13 @@ const DEFAULT_RETRIEVAL_SETTINGS: AiRetrievalSettingView = {
   topK: 5,
   webSearchEnabledDefault: false,
 }
+
+const attachmentSubnavItems: Array<{ key: AttachmentAssetTab; label: string }> = [
+  { key: 'overview', label: '概览' },
+  { key: 'files', label: '文件' },
+  { key: 'documents', label: '文档' },
+  { key: 'content', label: '表格' },
+]
 /**
  * 显示“敬请期待”弹窗提示。
  * @param feature 要提示的功能名称
@@ -816,12 +901,17 @@ const sessions = ref<AiSessionSummaryView[]>([])
 const messages = ref<UiMessage[]>([])
 const availableModels = ref<AiModelView[]>([])
 const selectableProjects = ref<ProjectDetailView[]>([])
-const draftDocuments = ref<DocumentSummaryView[]>([])
-const draftFiles = ref<FileView[]>([])
+const attachmentResults = ref<KnowledgeAssetView[]>([])
 const draftAttachmentOptions = ref<DraftAttachmentOption[]>([])
 const loadingModels = ref(false)
 const loadingAttachmentOptions = ref(false)
 const attachmentDialogVisible = ref(false)
+const attachmentKeyword = ref('')
+const attachmentAssetTab = ref<AttachmentAssetTab>('overview')
+const attachmentPageNum = ref(1)
+const attachmentPageSize = 8
+const attachmentTotal = ref(0)
+const attachmentError = ref('')
 const selectedModelCode = ref('')
 const currentRequestId = ref('')
 const searchKeyword = ref('')
@@ -857,6 +947,13 @@ const hasScopedContext = computed(() =>
   Boolean(activeProjectId.value || selectedAttachments.value.length || tempFiles.value.length),
 )
 
+const selectedAttachmentType = computed<'FILE' | 'DOCUMENT' | 'CONTENT' | undefined>(() => {
+  if (attachmentAssetTab.value === 'files') return 'FILE'
+  if (attachmentAssetTab.value === 'documents') return 'DOCUMENT'
+  if (attachmentAssetTab.value === 'content') return 'CONTENT'
+  return undefined
+})
+
 const baseAiPath = computed(() => (props.id ? `/projects/${props.id}/ai` : '/ai'))
 const visibleSessions = computed(() => {
   const keyword = sessionKeyword.value.trim().toLowerCase()
@@ -871,7 +968,23 @@ const visibleSessions = computed(() => {
     : scoped
 })
 const modelChoices = computed(() => {
-  return sortAiModelsByPreference(availableModels.value)
+  const seen = new Set<string>()
+  return sortAiModelsByPreference(
+    availableModels.value.filter((model) => {
+      const providerCode = (model.providerCode || '').trim()
+      const modelCode = (model.modelCode || '').trim()
+      const modelName = (model.modelName || '').trim()
+      if (!providerCode || !modelCode || !modelName) {
+        return false
+      }
+      const key = `${providerCode.toUpperCase()}:${modelCode}`
+      if (seen.has(key)) {
+        return false
+      }
+      seen.add(key)
+      return true
+    }),
+  )
 })
 const activeSessionSummary = computed(() => sessions.value.find((session) => session.id === activeSessionId.value))
 const activeModel = computed(() => {
@@ -1072,6 +1185,8 @@ const quickPrompts = computed(() => [
 
 let tickHandle: number | undefined
 let tempFilePollHandle: number | undefined
+let streamFlushHandle: number | undefined
+let pendingStreamText = ''
 
 const hoveredDeleteId = ref<number | undefined>(undefined)
 const onDeleteMouseEnter = (id: number) => {
@@ -1083,13 +1198,13 @@ const onDeleteMouseLeave = (id: number) => {
   }
 }
 
-const tempFileState = (file: AiTempFileView) => resolveKnowledgeReadiness(file.parseStatus, file.indexStatus)
-const isTempFileReady = (file: AiTempFileView) => tempFileState(file) === 'ready'
-const isTempFilePending = (file: AiTempFileView) => ['pending', 'processing'].includes(tempFileState(file))
+const tempFileState = (file: AiTempFileView) => resolveKnowledgeProgressPhase(file.parseStatus, file.indexStatus)
+const isTempFileReady = (file: AiTempFileView) => isKnowledgeCompleted(file.parseStatus, file.indexStatus)
+const isTempFilePending = (file: AiTempFileView) => ['pending', 'parsing', 'parsed', 'indexing'].includes(tempFileState(file))
 const indexedTempFiles = computed(() => tempFiles.value.filter((item) => isTempFileReady(item)))
 
 const tempFileStatusLabel = (file: AiTempFileView) => {
-  return `${knowledgeReadinessLabel(file.parseStatus, file.indexStatus)} · ${formatBytes(file.sizeBytes)}`
+  return `${knowledgeProgressLabel(file.parseStatus, file.indexStatus)} · ${formatBytes(file.sizeBytes)}`
 }
 
 const tempFileMetaText = (file: AiTempFileView) => {
@@ -1101,14 +1216,108 @@ const tempFileMetaText = (file: AiTempFileView) => {
 const attachmentFocusedQuestion = (value: string) =>
   /(这个|这份|该|上传的|附加的|发给你的).{0,8}(文档|文件|附件|资料|pdf)|(?:总结|概括|介绍|解释|说明).{0,8}(文档|文件|附件|pdf)|(?:this|the)\s+(?:document|file|attachment|pdf)|(?:uploaded|attached)\s+(?:document|file|pdf)/i.test(value)
 
-const knowledgeFileState = (file: FileView) => resolveKnowledgeReadiness(file.parseStatus, file.indexStatus)
+const knowledgeFileState = (file: FileView) => resolveKnowledgeProgressPhase(file.parseStatus, file.indexStatus)
 
-const canAttachKnowledgeFile = (file: FileView) => knowledgeFileState(file) === 'ready'
+const canAttachKnowledgeFile = (file: FileView) => isKnowledgeCompleted(file.parseStatus, file.indexStatus)
 
 const knowledgeFileStatusText = (file: FileView) => {
   const fileType = (file.fileExt || 'file').toUpperCase()
-  return `${fileType} · ${knowledgeReadinessLabel(file.parseStatus, file.indexStatus)}`
+  return `${fileType} · ${knowledgeProgressLabel(file.parseStatus, file.indexStatus)}`
 }
+
+const attachmentAssetTypeLabel = (asset: KnowledgeAssetView) => {
+  if (asset.assetType === 'FILE') {
+    return normalizeFileTypeLabel(asset.fileExt, asset.mimeType)
+  }
+  if (asset.assetType === 'DOCUMENT') {
+    return '文档'
+  }
+  return '表格'
+}
+
+const attachmentAssetTone = (asset: KnowledgeAssetView) => knowledgeProgressTone(asset.parseStatus, asset.indexStatus)
+
+const attachmentAssetStatusIcon = (asset: KnowledgeAssetView) =>
+  ({
+    success: 'check_circle',
+    warning: 'schedule',
+    primary: 'visibility',
+    danger: 'cancel',
+    info: asset.assetType === 'CONTENT' ? 'table_chart' : 'description',
+  }[attachmentAssetTone(asset)] || 'info') as string
+
+const attachmentAssetStatusText = (asset: KnowledgeAssetView) => {
+  if (asset.assetType === 'CONTENT') {
+    return asset.summary ? '支持跳转查看' : '表格内容'
+  }
+  if (!asset.parseStatus && !asset.indexStatus) {
+    return asset.assetType === 'DOCUMENT' ? '可加入对话' : '可查看详情'
+  }
+  return knowledgeProgressLabel(asset.parseStatus, asset.indexStatus)
+}
+
+const attachmentAssetIcon = (asset: KnowledgeAssetView) => {
+  if (asset.assetType === 'DOCUMENT') return 'description'
+  if (asset.assetType === 'CONTENT') return 'table_chart'
+  const ext = (asset.fileExt || '').toLowerCase()
+  if (ext === 'pdf') return 'picture_as_pdf'
+  if (['doc', 'docx'].includes(ext)) return 'article'
+  if (['xls', 'xlsx', 'csv'].includes(ext)) return 'table_chart'
+  if (['png', 'jpg', 'jpeg', 'gif', 'webp'].includes(ext)) return 'image'
+  return 'insert_drive_file'
+}
+
+const attachmentAssetMeta = (asset: KnowledgeAssetView) => {
+  const parts = [projectLookup.value.get(asset.projectId || 0)?.name || selectedProjectDisplay.value || '当前项目']
+  if (asset.assetType === 'FILE' && asset.fileSize) {
+    parts.push(formatBytes(asset.fileSize))
+  }
+  parts.push(formatDateTime(asset.updatedAt, 'MM-DD HH:mm'))
+  return parts.filter(Boolean).join(' · ')
+}
+
+const canToggleKnowledgeAsset = (asset: KnowledgeAssetView) => {
+  if (asset.assetType === 'CONTENT') {
+    return false
+  }
+  if (asset.assetType === 'DOCUMENT') {
+    return true
+  }
+  return isKnowledgeCompleted(asset.parseStatus, asset.indexStatus)
+}
+
+const attachmentActionIcon = (asset: KnowledgeAssetView) =>
+  asset.assetType === 'CONTENT' ? 'north_east' : 'radio_button_unchecked'
+
+const attachmentActionHint = (asset: KnowledgeAssetView) => {
+  if (asset.assetType === 'CONTENT') {
+    return '暂不支持加入对话'
+  }
+  if (asset.assetType === 'FILE' && !canToggleKnowledgeAsset(asset)) {
+    return '等待解析完成'
+  }
+  return ''
+}
+
+const attachmentResultCardClass = (asset: KnowledgeAssetView) => ({
+  'is-selected': asset.assetType !== 'CONTENT' && draftAttachmentSelected(asset.assetType, asset.assetId),
+  'is-disabled': !canToggleKnowledgeAsset(asset),
+})
+
+const attachmentSelectedSummary = computed(() => {
+  const totalSelected = draftAttachmentKeys.value.length
+  if (!totalSelected) {
+    return '尚未选择对话资料'
+  }
+  return `已选择 ${totalSelected} 项资料`
+})
+
+const attachmentEmptyText = computed(() => {
+  if (attachmentKeyword.value.trim()) {
+    return '没有找到符合条件的资料，可以换个关键词试试。'
+  }
+  return '当前筛选下还没有可用资料。'
+})
 
 const modelOptionLabel = (model: AiModelView) => {
   const provider = (model.providerCode || '').toUpperCase()
@@ -1450,7 +1659,7 @@ const surfaceClasses = (message: UiMessage) => ({
   'is-assistant-surface': message.roleCode === 'ASSISTANT',
   'is-failed': message.status === 'failed',
 })
-const draftAttachmentSelected = (attachmentType: 'DOCUMENT' | 'FILE', sourceId: number) =>
+const draftAttachmentSelected = (attachmentType: 'DOCUMENT' | 'FILE' | 'CONTENT', sourceId: number) =>
   draftAttachmentKeys.value.includes(`${attachmentType}:${sourceId}`)
 
 /**
@@ -1516,6 +1725,34 @@ const stopTempFilePolling = () => {
     window.clearInterval(tempFilePollHandle)
     tempFilePollHandle = undefined
   }
+}
+
+const stopStreamFlush = () => {
+  if (streamFlushHandle) {
+    window.cancelAnimationFrame(streamFlushHandle)
+    streamFlushHandle = undefined
+  }
+  pendingStreamText = ''
+}
+
+const flushStreamChunk = (assistantMessage: UiMessage) => {
+  if (!pendingStreamText) {
+    streamFlushHandle = undefined
+    return
+  }
+  assistantMessage.content += pendingStreamText
+  pendingStreamText = ''
+  streamFlushHandle = undefined
+}
+
+const enqueueStreamChunk = (assistantMessage: UiMessage, chunk: string) => {
+  pendingStreamText += chunk
+  if (streamFlushHandle) {
+    return
+  }
+  streamFlushHandle = window.requestAnimationFrame(() => {
+    flushStreamChunk(assistantMessage)
+  })
 }
 
 /**
@@ -1584,10 +1821,10 @@ const syncReferencedFileTitle = async (fileId: number) => {
         ? { ...attachment, title: nextTitle }
         : attachment,
     )
-    draftFiles.value = draftFiles.value.map((file) =>
-      file.id === fileId
-        ? { ...file, fileName: nextTitle }
-        : file,
+    attachmentResults.value = attachmentResults.value.map((asset) =>
+      asset.assetType === 'FILE' && asset.assetId === fileId
+        ? { ...asset, title: nextTitle }
+        : asset,
     )
     draftAttachmentOptions.value = draftAttachmentOptions.value.map((item) =>
       item.attachmentType === 'FILE' && item.sourceId === fileId
@@ -1704,41 +1941,33 @@ const refreshTempFiles = async (sessionId = activeSessionId.value, silent = true
 }
 
 const refreshAttachmentOptions = async (projectId?: number) => {
-  draftDocuments.value = []
-  draftFiles.value = []
-  draftAttachmentOptions.value = []
+  attachmentResults.value = []
+  attachmentTotal.value = 0
+  attachmentError.value = ''
   if (!projectId) {
     return
   }
   loadingAttachmentOptions.value = true
   try {
-    const [documentsPage, filesPage] = await Promise.all([
-      getDocuments({ projectId, pageNum: 1, pageSize: 100 }),
-      getFiles({ projectId, pageNum: 1, pageSize: 100 }),
-    ])
-    draftDocuments.value = documentsPage.records
-    draftFiles.value = filesPage.records
-    draftAttachmentOptions.value = [
-      ...documentsPage.records.map((document) => ({
-        attachmentType: 'DOCUMENT' as const,
-        sourceId: document.id,
-        title: document.title,
-      })),
-      ...filesPage.records.map((file) => ({
-        attachmentType: 'FILE' as const,
-        sourceId: file.id,
-        title: file.fileName,
-      })),
-    ]
+    const page = await getKnowledgeAssets({
+      projectId,
+      type: selectedAttachmentType.value,
+      q: attachmentKeyword.value.trim() || undefined,
+      knowledgeOnly: false,
+      pageNum: attachmentPageNum.value,
+      pageSize: attachmentPageSize,
+    })
+    attachmentResults.value = page.records
+    attachmentTotal.value = page.total
   } catch (error) {
-    ElMessage.error(errorMessageOf(error))
+    attachmentError.value = errorMessageOf(error)
   } finally {
     loadingAttachmentOptions.value = false
   }
 }
 
 useKnowledgeStatusPolling({
-  records: draftFiles,
+  records: attachmentResults,
   reload: async () => {
     await refreshAttachmentOptions(draftProjectId.value)
   },
@@ -1748,11 +1977,20 @@ useKnowledgeStatusPolling({
 const setDraftSelectionFromCurrent = () => {
   draftProjectId.value = activeProjectId.value
   draftAttachmentKeys.value = selectedAttachments.value.map((attachment) => attachmentKeyOf(attachment))
+  draftAttachmentOptions.value = selectedAttachments.value.map((attachment) => ({
+    attachmentType: attachment.attachmentType,
+    sourceId: attachment.sourceId,
+    title: attachment.title || `${citationSourceLabel(attachment.attachmentType)} #${attachment.sourceId}`,
+  }))
 }
 
 const openAttachmentPicker = async () => {
   await loadProjects(false)
   setDraftSelectionFromCurrent()
+  attachmentKeyword.value = ''
+  attachmentAssetTab.value = 'overview'
+  attachmentPageNum.value = 1
+  attachmentError.value = ''
   await refreshAttachmentOptions(draftProjectId.value)
   attachmentDialogVisible.value = true
 }
@@ -1777,13 +2015,27 @@ const toggleDraftFileAttachment = (file: FileView) => {
   toggleDraftAttachment('FILE', file.id, file.fileName)
 }
 
+const toggleDraftAsset = (asset: KnowledgeAssetView) => {
+  if (asset.assetType === 'CONTENT') {
+    void openAttachmentAsset(asset)
+    return
+  }
+  if (asset.assetType === 'FILE' && !isKnowledgeCompleted(asset.parseStatus, asset.indexStatus)) {
+    ElMessage.warning(asset.parseErrorMessage || '当前文件尚未完成解析，暂时不能加入对话')
+    return
+  }
+  toggleDraftAttachment(asset.assetType, asset.assetId, asset.title)
+}
+
 const clearAttachmentSelection = () => {
   draftAttachmentKeys.value = []
+  draftAttachmentOptions.value = []
   if (!projectLocked.value) {
     draftProjectId.value = undefined
-    draftDocuments.value = []
-    draftFiles.value = []
-    draftAttachmentOptions.value = []
+    attachmentResults.value = []
+    attachmentTotal.value = 0
+    attachmentKeyword.value = ''
+    attachmentPageNum.value = 1
   }
 }
 
@@ -1799,6 +2051,37 @@ const applyAttachmentSelection = () => {
     }))
   attachmentDialogVisible.value = false
   persistAttachmentState(activeSessionId.value)
+}
+
+const runAttachmentSearch = async () => {
+  attachmentPageNum.value = 1
+  await refreshAttachmentOptions(draftProjectId.value)
+}
+
+const handleAttachmentPageChange = async (value: number) => {
+  attachmentPageNum.value = value
+  await refreshAttachmentOptions(draftProjectId.value)
+}
+
+const switchAttachmentAssetTab = async (value: string) => {
+  if (value === attachmentAssetTab.value) {
+    return
+  }
+  attachmentAssetTab.value = value as AttachmentAssetTab
+  attachmentPageNum.value = 1
+  await refreshAttachmentOptions(draftProjectId.value)
+}
+
+const openAttachmentAsset = async (asset: KnowledgeAssetView) => {
+  if (asset.assetType === 'FILE') {
+    await router.push(`/files/${asset.assetId}`)
+    return
+  }
+  if (asset.assetType === 'DOCUMENT') {
+    await router.push({ path: `/documents/${asset.assetId}/edit`, query: { mode: 'preview' } })
+    return
+  }
+  await router.push({ path: `/contents/${asset.assetId}/edit`, query: { mode: 'preview' } })
 }
 
 const removeAttachment = (attachment: AiAttachmentPayload) => {
@@ -2382,6 +2665,7 @@ const send = async (presetQuestion?: string) => {
   const useStream = activeModel.value?.supportStream !== false
   let opened = false
   let chunkReceived = false
+  stopStreamFlush()
 
   try {
     if (!useStream) {
@@ -2413,9 +2697,10 @@ const send = async (presetQuestion?: string) => {
         }
         chunkReceived = true
         userMessage.status = 'sent'
-        assistantMessage.content += chunk
+        enqueueStreamChunk(assistantMessage, chunk)
       },
       onDone: async (donePayload) => {
+        flushStreamChunk(assistantMessage)
         userMessage.status = 'sent'
         assistantMessage.status = 'sent'
         assistantMessage.streamStartedAt = undefined
@@ -2444,6 +2729,7 @@ const send = async (presetQuestion?: string) => {
   } catch (error) {
     const message = errorMessageOf(error)
     if (error instanceof DOMException && error.name === 'AbortError') {
+      flushStreamChunk(assistantMessage)
       userMessage.status = 'sent'
       assistantMessage.status = 'failed'
       assistantMessage.streamStartedAt = undefined
@@ -2455,6 +2741,7 @@ const send = async (presetQuestion?: string) => {
       return
     }
     if (/cancel|取消|停止/i.test(message)) {
+      flushStreamChunk(assistantMessage)
       userMessage.status = 'sent'
       assistantMessage.status = 'failed'
       assistantMessage.streamStartedAt = undefined
@@ -2474,6 +2761,8 @@ const send = async (presetQuestion?: string) => {
       markSendFailed(userMessage, assistantMessage, message, text)
     }
   } finally {
+    flushStreamChunk(assistantMessage)
+    stopStreamFlush()
     currentRequestId.value = ''
     streamAbortController.value = null
     sending.value = false
@@ -2594,7 +2883,11 @@ watch(
     if (projectId === previousProjectId) {
       return
     }
-    draftAttachmentKeys.value = []
+    attachmentPageNum.value = 1
+    if (projectId !== activeProjectId.value) {
+      draftAttachmentKeys.value = []
+      draftAttachmentOptions.value = []
+    }
     await refreshAttachmentOptions(projectId)
   },
 )
@@ -2622,6 +2915,7 @@ onMounted(async () => {
 onBeforeUnmount(() => {
   stopClock()
   stopTempFilePolling()
+  stopStreamFlush()
 })
 </script>
 

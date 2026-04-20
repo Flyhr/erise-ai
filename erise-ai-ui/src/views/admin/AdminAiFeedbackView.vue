@@ -1,13 +1,15 @@
 <template>
   <div class="page-shell ai-feedback-page">
-    <AppSectionCard title="用户反馈" description="查看 AI 助理回复的正负反馈，快速定位需要优化的回答。" :unpadded="true">
+    <AppSectionCard title="用户反馈" :unpadded="true">
       <AppFilterBar>
-        <el-input v-model="filters.q" clearable placeholder="搜索用户、项目、反馈备注或回答片段" @clear="handleSearch" @keyup.enter="handleSearch" />
+        <el-input v-model="filters.q" clearable placeholder="搜索用户、项目、反馈备注或回答片段" @clear="handleSearch"
+          @keyup.enter="handleSearch" />
         <el-select v-model="filters.feedbackType" clearable placeholder="反馈类型" @change="handleSearch">
           <el-option label="赞同" value="UP" />
           <el-option label="不满意" value="DOWN" />
         </el-select>
-        <el-date-picker v-model="filters.createdDate" type="date" value-format="YYYY-MM-DD" placeholder="日期" @change="handleSearch" />
+        <el-date-picker v-model="filters.createdDate" type="date" value-format="YYYY-MM-DD" placeholder="日期"
+          @change="handleSearch" />
         <template #actions>
           <el-button @click="resetFilters">重置</el-button>
         </template>
@@ -27,7 +29,8 @@
         <AppDataTable :data="records" stripe>
           <el-table-column label="反馈" width="120">
             <template #default="{ row }">
-              <AppStatusTag :label="row.feedbackType === 'UP' ? '赞同' : '不满意'" :tone="row.feedbackType === 'UP' ? 'success' : 'warning'" />
+              <AppStatusTag :label="row.feedbackType === 'UP' ? '赞同' : '不满意'"
+                :tone="row.feedbackType === 'UP' ? 'success' : 'warning'" />
             </template>
           </el-table-column>
           <el-table-column label="用户 / 项目" min-width="180">
@@ -54,7 +57,8 @@
 
         <div class="table-footer">
           <span class="table-count">共 {{ total }} 条</span>
-          <CompactPager variant="project" :page-num="pageNum" :page-size="pageSize" :total="total" @change="handlePageChange" />
+          <CompactPager variant="project" :page-num="pageNum" :page-size="pageSize" :total="total"
+            @change="handlePageChange" />
         </div>
       </template>
     </AppSectionCard>

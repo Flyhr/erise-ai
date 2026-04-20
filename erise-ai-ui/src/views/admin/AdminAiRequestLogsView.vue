@@ -70,7 +70,7 @@
               </div>
             </template>
           </el-table-column>
-          <el-table-column label="模型" min-width="180">
+          <el-table-column label="模型" min-width="160">
             <template #default="{ row }">
               <div class="request-meta">
                 <strong>{{ row.modelCode }}</strong>
@@ -81,7 +81,7 @@
           <el-table-column label="项目" min-width="160" show-overflow-tooltip>
             <template #default="{ row }">{{ row.projectName || '--' }}</template>
           </el-table-column>
-          <el-table-column label="结果" width="120">
+          <el-table-column label="结果" width="80">
             <template #default="{ row }">
               <AppStatusTag :label="row.successFlag ? '成功' : '失败'" :tone="row.successFlag ? 'success' : 'danger'" />
             </template>

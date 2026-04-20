@@ -45,6 +45,18 @@ class ProviderRoute:
     source: str
 
 
+@dataclass(frozen=True, slots=True)
+class ResolvedModelRoute:
+    model_id: int
+    provider_code: str
+    model_code: str
+    model_name: str
+    support_stream: bool
+    is_database_default: bool
+    is_effective_default: bool
+    route: ProviderRoute
+
+
 class ProviderRegistry:
     def __init__(self, settings=None) -> None:
         self.settings = settings or get_settings()
@@ -198,7 +210,7 @@ class ProviderRegistry:
             model_code=self.settings.resolve_embedding_model_code(provider_code),
             base_url=base_url,
             api_key=api_key,
-            timeout_seconds=self.settings.provider_timeout_seconds,
+            timeout_seconds=self.settings.resolved_embedding_provider_timeout_seconds,
             configured=self.route_configured(provider_code, base_url, api_key),
             source='embedding-config' if self.settings.embedding_provider_code or self.settings.embed_base_url else 'model-default',
         )
@@ -220,6 +232,11 @@ def bootstrap_defaults() -> None:
 
     with SessionLocal() as db:
         gateway_override_enabled = bool(settings.model_provider or settings.model_base_url or settings.model_api_key)
+        existing_model_codes = {
+            item[0]
+            for item in db.execute(select(AiModelConfig.model_code)).all()
+            if item[0]
+        }
         for row in build_default_model_rows(
             deepseek_model=settings.deepseek_model,
             openai_model=settings.openai_model,
@@ -227,8 +244,8 @@ def bootstrap_defaults() -> None:
             vllm_model=settings.vllm_model,
             litellm_model=settings.litellm_model,
         ):
-            existing = db.execute(select(AiModelConfig).where(AiModelConfig.model_code == row['model_code'])).scalar_one_or_none()
-            if existing:
+            model_code = row['model_code']
+            if model_code in existing_model_codes:
                 continue
             enabled = row['enabled']
             if row['provider_code'] == 'DEEPSEEK' and not gateway_override_enabled and not settings.deepseek_api_key:
@@ -238,6 +255,7 @@ def bootstrap_defaults() -> None:
             payload = dict(row)
             payload['enabled'] = enabled
             db.add(AiModelConfig(**payload))
+            existing_model_codes.add(model_code)
 
         for scene, prompt in DEFAULT_SYSTEM_PROMPTS.items():
             code = f'default_{scene}'
@@ -261,7 +279,7 @@ def bootstrap_defaults() -> None:
 
 def list_enabled_models(db: Session) -> list[ModelView]:
     registry = ProviderRegistry()
-    models = db.execute(select(AiModelConfig).where(AiModelConfig.enabled.is_(True))).scalars().all()
+    models = _enabled_models(db)
     models = sorted(models, key=lambda item: _model_sort_key(item, registry))
     effective_default = _select_effective_default_model(models, registry)
     effective_default_code = effective_default.model_code if effective_default is not None else None
@@ -273,6 +291,27 @@ def list_enabled_models(db: Session) -> list[ModelView]:
             is_default=item.model_code == effective_default_code,
             support_stream=item.support_stream,
             max_context_tokens=item.max_context_tokens,
+        )
+        for item in models
+    ]
+
+
+def list_enabled_model_routes(db: Session) -> list[ResolvedModelRoute]:
+    registry = ProviderRegistry()
+    models = _enabled_models(db)
+    models = sorted(models, key=lambda item: _model_sort_key(item, registry))
+    effective_default = _select_effective_default_model(models, registry)
+    effective_default_code = effective_default.model_code if effective_default is not None else None
+    return [
+        ResolvedModelRoute(
+            model_id=item.id,
+            provider_code=item.provider_code,
+            model_code=item.model_code,
+            model_name=item.model_name,
+            support_stream=item.support_stream,
+            is_database_default=item.is_default,
+            is_effective_default=item.model_code == effective_default_code,
+            route=registry.resolve_model_route(item),
         )
         for item in models
     ]

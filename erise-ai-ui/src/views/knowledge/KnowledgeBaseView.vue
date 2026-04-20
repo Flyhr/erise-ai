@@ -166,9 +166,10 @@ import {
   formatDateTime,
   formatFileSize,
   isKnowledgeFailed,
+  isKnowledgeInFlight,
   isOfficeEditableFile,
-  knowledgeReadinessLabel,
-  knowledgeReadinessTone,
+  knowledgeProgressLabel,
+  knowledgeProgressTone,
   normalizeFileTypeLabel,
   resolveErrorMessage,
 } from '@/utils/formatters'
@@ -206,11 +207,8 @@ const assetError = ref('')
 const exportDialogVisible = ref(false)
 const exporting = ref(false)
 const exportTarget = ref<KnowledgeAssetView>()
-const ACTIVE_FILE_STATUSES = new Set(['INIT', 'UPLOADING', 'PENDING', 'PROCESSING'])
-const normalizeFileStatus = (value?: string) => (value || '').trim().toUpperCase()
 const hasActiveFileStatus = (record?: { parseStatus?: string; indexStatus?: string }) =>
-  ACTIVE_FILE_STATUSES.has(normalizeFileStatus(record?.parseStatus)) ||
-  ACTIVE_FILE_STATUSES.has(normalizeFileStatus(record?.indexStatus))
+  isKnowledgeInFlight(record?.parseStatus, record?.indexStatus)
 
 const selectedKnowledgeType = computed<'FILE' | 'DOCUMENT' | 'CONTENT' | undefined>(() => {
   if (activeAssetTab.value === 'files') return 'FILE'
@@ -232,8 +230,8 @@ const assetTypeLabel = (row: KnowledgeAssetView) => {
   return contentTypeLabel(row.itemType)
 }
 
-const assetStatusLabel = (row: KnowledgeAssetView) => knowledgeReadinessLabel(row.parseStatus, row.indexStatus)
-const assetTone = (row: KnowledgeAssetView) => knowledgeReadinessTone(row.parseStatus, row.indexStatus)
+const assetStatusLabel = (row: KnowledgeAssetView) => knowledgeProgressLabel(row.parseStatus, row.indexStatus)
+const assetTone = (row: KnowledgeAssetView) => knowledgeProgressTone(row.parseStatus, row.indexStatus)
 const assetStatusIcon = (row: KnowledgeAssetView) =>
   ({ success: 'check_circle', warning: 'schedule', primary: 'visibility', danger: 'cancel', info: 'edit_note' }[assetTone(row)] ||
     'info') as string
@@ -380,7 +378,7 @@ useVisibleFileStatusPolling({
   isFileActive: (row) => row.assetType === 'FILE' && hasActiveFileStatus(row),
   applyDetail: applyFileDetailToAssetRow,
   onTimeout: () => {
-    ElMessage.warning('文件解析仍在处理中，已暂停自动刷新，请稍后手动刷新查看结果')
+    ElMessage.warning('文件解析耗时较长，系统会继续自动刷新状态。')
   },
 })
 

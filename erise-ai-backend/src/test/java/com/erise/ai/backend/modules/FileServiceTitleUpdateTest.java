@@ -2,6 +2,7 @@ package com.erise.ai.backend.modules;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
@@ -23,6 +24,8 @@ class FileServiceTitleUpdateTest {
     private final AuditLogService auditLogService = mock(AuditLogService.class);
     private final RagKnowledgeService ragKnowledgeService = mock(RagKnowledgeService.class);
     private final StoredTextExtractionSupport storedTextExtractionSupport = mock(StoredTextExtractionSupport.class);
+    private final FileParseStatusSupport fileParseStatusSupport = mock(FileParseStatusSupport.class);
+    private final FileIndexPipelineService fileIndexPipelineService = mock(FileIndexPipelineService.class);
 
     private final FileService fileService = new FileService(
             fileMapper,
@@ -34,7 +37,9 @@ class FileServiceTitleUpdateTest {
             storageClient,
             auditLogService,
             ragKnowledgeService,
-            storedTextExtractionSupport
+            storedTextExtractionSupport,
+            fileParseStatusSupport,
+            fileIndexPipelineService
     );
 
     @Test
@@ -46,6 +51,8 @@ class FileServiceTitleUpdateTest {
         when(fileMapper.selectById(501L)).thenReturn(entity);
         when(fileEditContentMapper.selectOne(any())).thenReturn(storedContent);
         when(projectService.requireAccessibleProject(88L, 9L)).thenReturn(new ProjectEntity());
+        when(fileParseStatusSupport.resolve(anyLong(), any(), any()))
+                .thenReturn(new FileParseStatusView("READY", "READY", null));
 
         InternalFileContextView detail = fileService.internalUpdateTitle(501L, 9L, "测试文件5mb");
 
@@ -64,6 +71,8 @@ class FileServiceTitleUpdateTest {
         when(fileMapper.selectById(501L)).thenReturn(entity);
         when(fileEditContentMapper.selectOne(any())).thenReturn(storedContent);
         when(projectService.requireAccessibleProject(88L, 9L)).thenReturn(new ProjectEntity());
+        when(fileParseStatusSupport.resolve(anyLong(), any(), any()))
+                .thenReturn(new FileParseStatusView("READY", "READY", null));
 
         InternalFileContextView detail = fileService.internalUpdateTitle(501L, 9L, "测试文件5mb.txt");
 

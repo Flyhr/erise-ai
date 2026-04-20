@@ -24,16 +24,20 @@ public class InternalController {
     private final OfficeFileService officeFileService;
     private final AiTempFileService aiTempFileService;
 
-    @PostMapping("/knowledge/retrieve")
-    public ApiResponse<java.util.List<SearchResultView>> retrieveKnowledge(@Valid @RequestBody InternalKnowledgeRequest request) {
-        return ApiResponse.success(searchService.retrieveKnowledge(
-                request.userId(),
-                request.projectScopeIds(),
-                request.attachments(),
-                request.keyword(),
-                request.limit()
-        ));
-    }
+    /*
+     * 废弃说明（2026-04）：
+     * AI 助手检索已经迁移到 Python 侧直接访问 Qdrant dense+sparse 一体化索引，
+     * 不再走 Java 侧的 `/internal/v1/knowledge/retrieve` BM25 检索入口。
+     *
+     * 这里保留注释仅用于回滚排障参考，避免后续继续把聊天检索重新耦合回旧接口。
+     *
+     * 历史签名如下：
+     *
+     * @PostMapping("/knowledge/retrieve")
+     * public ApiResponse<java.util.List<SearchResultView>> retrieveKnowledge(
+     *         @Valid @RequestBody InternalKnowledgeRequest request
+     * ) { ... }
+     */
 
     @GetMapping("/projects/{id}/context")
     public ApiResponse<ProjectDetailView> projectContext(@PathVariable Long id) {
@@ -111,15 +115,15 @@ public class InternalController {
     }
 }
 
-record InternalKnowledgeRequest(@NotNull Long userId,
-                                java.util.List<Long> projectScopeIds,
-                                java.util.List<InternalKnowledgeAttachment> attachments,
-                                @NotBlank String keyword,
-                                int limit) {
-}
-
-record InternalKnowledgeAttachment(@NotBlank String attachmentType, @NotNull Long sourceId, Long sessionId) {
-}
+/*
+ * 废弃说明（2026-04）：
+ * 下面这组 DTO 原本只服务于 Java 内部 BM25 检索入口。
+ * 在 AI 检索迁移到 Qdrant dense+sparse 一体化之后，它们已经没有运行时用途，
+ * 这里只保留文字说明，便于追溯历史接口形态。
+ *
+ * record InternalKnowledgeRequest(...)
+ * record InternalKnowledgeAttachment(...)
+ */
 
 record InternalDocumentTitleUpdateRequest(@NotNull Long actorUserId, @NotBlank String title) {
 }

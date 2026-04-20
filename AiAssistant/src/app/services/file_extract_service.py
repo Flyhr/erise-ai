@@ -4,11 +4,12 @@ import logging
 import re
 from dataclasses import dataclass, field
 from io import BytesIO
+from time import perf_counter
 from typing import Iterable
 
 from src.app.core.exceptions import AiServiceError
 from src.app.extractor import unstructured_adapter
-from src.app.schemas.file_extract import FileCapabilityMatrixView, FileTypeCapabilityView
+from src.app.schemas.file_extract import FileCapabilityMatrixView, FileTypeCapabilityView, ParserRuntimeView
 from src.app.schemas.rag import RagChunkPayload
 from src.app.services.ocr_service import ocr_service
 
@@ -62,6 +63,15 @@ class FileExtractService:
     TARGET_CHUNK_SIZE = 900
     MAX_CHUNK_SIZE = 1200
     OVERLAP_SIZE = 120
+    PLAIN_TEXT_TARGET_CHUNK_SIZE = 8000
+    PLAIN_TEXT_MAX_CHUNK_SIZE = 12000
+    PLAIN_TEXT_OVERLAP_SIZE = 50
+    PLAIN_TEXT_CHUNK_TARGET_MAX = 500
+    PLAIN_TEXT_COARSE_TARGET_CHUNK_SIZE = 12000
+    PLAIN_TEXT_COARSE_MAX_CHUNK_SIZE = 16000
+    MARKDOWN_TARGET_CHUNK_SIZE = 3200
+    MARKDOWN_MAX_CHUNK_SIZE = 4800
+    MARKDOWN_OVERLAP_SIZE = 200
 
     PARAGRAPH_SPLITTER = re.compile(r'\n\s*\n+')
     LINE_SPLITTER = re.compile(r'\n+')
@@ -93,6 +103,8 @@ class FileExtractService:
         file_name: str | None,
         extension: str,
     ) -> PrimaryExtractOutcome | None:
+        if extension in {'txt', 'md', 'markdown'}:
+            return None
         if not unstructured_adapter.supports(extension):
             return None
         last_error: AiServiceError | None = None
@@ -237,13 +249,55 @@ class FileExtractService:
         raise AiServiceError('AI_FILE_UNSUPPORTED', f'Unsupported file type: {extension or "unknown"}', status_code=400)
 
     def _extract_plain_text_file(self, file_bytes: bytes, parser: str) -> FileExtractResult:
+        started_at = perf_counter()
         plain_text = self._decode_text_bytes(file_bytes)
-        return self._result_from_text(plain_text, parser=parser)
+        result = self._result_from_large_text(
+            plain_text,
+            parser=parser,
+            target_chunk_size=self.PLAIN_TEXT_TARGET_CHUNK_SIZE,
+            max_chunk_size=self.PLAIN_TEXT_MAX_CHUNK_SIZE,
+            overlap_size=self.PLAIN_TEXT_OVERLAP_SIZE,
+        )
+        adaptive_profile_used = False
+        if len(result.chunks) > self.PLAIN_TEXT_CHUNK_TARGET_MAX:
+            adaptive_profile_used = True
+            result = self._result_from_large_text(
+                plain_text,
+                parser=parser,
+                target_chunk_size=self.PLAIN_TEXT_COARSE_TARGET_CHUNK_SIZE,
+                max_chunk_size=self.PLAIN_TEXT_COARSE_MAX_CHUNK_SIZE,
+                overlap_size=self.PLAIN_TEXT_OVERLAP_SIZE,
+            )
+        self._log_large_text_result(
+            file_ext='txt',
+            parser=parser,
+            file_size_bytes=len(file_bytes),
+            result=result,
+            duration_ms=int((perf_counter() - started_at) * 1000),
+            adaptive_profile_used=adaptive_profile_used,
+        )
+        return result
 
     def _extract_markdown_file(self, file_bytes: bytes) -> FileExtractResult:
+        started_at = perf_counter()
         markdown = self._decode_text_bytes(file_bytes)
         plain_text = self._strip_markdown(markdown)
-        return self._result_from_text(plain_text, parser='markdown-decoder')
+        result = self._result_from_large_text(
+            plain_text,
+            parser='markdown-decoder',
+            target_chunk_size=self.MARKDOWN_TARGET_CHUNK_SIZE,
+            max_chunk_size=self.MARKDOWN_MAX_CHUNK_SIZE,
+            overlap_size=self.MARKDOWN_OVERLAP_SIZE,
+        )
+        self._log_large_text_result(
+            file_ext='md',
+            parser='markdown-decoder',
+            file_size_bytes=len(file_bytes),
+            result=result,
+            duration_ms=int((perf_counter() - started_at) * 1000),
+            adaptive_profile_used=False,
+        )
+        return result
 
     def _extract_pdf(self, file_bytes: bytes) -> FileExtractResult:
         result = ocr_service.extract_pdf_text(file_bytes)
@@ -385,6 +439,62 @@ class FileExtractService:
             monitoring_tags=list(monitoring_tags or []),
         )
 
+    def _result_from_large_text(
+        self,
+        plain_text: str,
+        *,
+        parser: str,
+        target_chunk_size: int,
+        max_chunk_size: int,
+        overlap_size: int,
+    ) -> FileExtractResult:
+        normalized = self._normalize_text(plain_text)
+        if not normalized:
+            raise AiServiceError('AI_FILE_PARSE_FAILED', 'No readable text content was extracted', status_code=422)
+        chunks = self._chunks_from_large_text(
+            normalized,
+            target_chunk_size=target_chunk_size,
+            max_chunk_size=max_chunk_size,
+            overlap_size=overlap_size,
+        )
+        if not chunks:
+            raise AiServiceError('AI_FILE_PARSE_FAILED', 'No readable text content was chunked', status_code=422)
+        return FileExtractResult(
+            plain_text=normalized,
+            chunks=chunks,
+            parser=parser,
+            used_ocr=False,
+            page_count=0,
+            parse_status=self.PARSE_STATUS_SUCCESS,
+            primary_parser='legacy',
+        )
+
+    def _log_large_text_result(
+        self,
+        *,
+        file_ext: str,
+        parser: str,
+        file_size_bytes: int,
+        result: FileExtractResult,
+        duration_ms: int,
+        adaptive_profile_used: bool,
+    ) -> None:
+        chunk_lengths = [len(chunk.chunk_text) for chunk in result.chunks]
+        average_chunk_chars = int(sum(chunk_lengths) / len(chunk_lengths)) if chunk_lengths else 0
+        logger.info(
+            'file_extract_large_text_complete file_ext=%s parser=%s size_bytes=%s chunk_count=%s avg_chunk_chars=%s '
+            'max_chunk_chars=%s overlap_chars=%s adaptive_profile=%s duration_ms=%s',
+            file_ext,
+            parser,
+            file_size_bytes,
+            len(result.chunks),
+            average_chunk_chars,
+            max(chunk_lengths) if chunk_lengths else 0,
+            self.PLAIN_TEXT_OVERLAP_SIZE if file_ext == 'txt' else self.MARKDOWN_OVERLAP_SIZE,
+            adaptive_profile_used,
+            duration_ms,
+        )
+
     def _classify_primary_error(self, exc: AiServiceError) -> tuple[str, str]:
         normalized = (exc.message or '').lower()
         if exc.error_code == 'AI_FILE_UNAVAILABLE':
@@ -440,9 +550,48 @@ class FileExtractService:
 
     def capability_matrix(self) -> FileCapabilityMatrixView:
         statuses = [self.PARSE_STATUS_SUCCESS, self.PARSE_STATUS_FALLBACK, self.PARSE_STATUS_FAILED]
+        unstructured_status, unstructured_error_code, unstructured_message = unstructured_adapter.runtime_status()
+        parser_runtimes = [
+            ParserRuntimeView(
+                parser_code='unstructured',
+                label='Unstructured 主解析器',
+                status=unstructured_status,
+                error_code=unstructured_error_code,
+                message=unstructured_message,
+                supported_extensions=sorted(unstructured_adapter.SUPPORTED_EXTENSIONS),
+            )
+        ]
+        parser_runtimes.extend([
+            ParserRuntimeView(
+                parser_code='text-decoder',
+                label='纯文本轻量解析器',
+                status='UP',
+                message='Direct plain-text decoding and large-text chunking are available',
+                supported_extensions=['txt'],
+            ),
+            ParserRuntimeView(
+                parser_code='markdown-decoder',
+                label='Markdown 轻量解析器',
+                status='UP',
+                message='Markdown stripping and large-text chunking are available',
+                supported_extensions=['md', 'markdown'],
+            ),
+        ])
+        for parser_code, status, error_code, message in ocr_service.runtime_status():
+            parser_runtimes.append(
+                ParserRuntimeView(
+                    parser_code=parser_code,
+                    label='RapidOCR OCR 引擎' if parser_code == 'rapidocr' else 'PyMuPDF PDF 文本抽取',
+                    status=status,
+                    error_code=error_code,
+                    message=message,
+                    supported_extensions=['pdf'],
+                )
+            )
         return FileCapabilityMatrixView(
-            parser_order=[self.PRIMARY_PARSER, 'legacy'],
+            parser_order=[self.PRIMARY_PARSER, 'legacy', 'text-decoder', 'markdown-decoder'],
             parse_statuses=statuses,
+            parser_runtimes=parser_runtimes,
             file_types=[
                 FileTypeCapabilityView(
                     extension='pdf',
@@ -453,7 +602,7 @@ class FileExtractService:
                     supports_pages=True,
                     parse_statuses=statuses,
                     retry_policy='Retry primary parser for transient 5xx/timeout errors, then fallback to legacy PDF text/OCR parser.',
-                    notes='Fallback preserves page numbers when possible.',
+                    notes='Primary parser uses Unstructured, and fallback uses PyMuPDF plus RapidOCR when native PDF text is insufficient.',
                 ),
                 FileTypeCapabilityView(
                     extension='docx',
@@ -467,24 +616,36 @@ class FileExtractService:
                     notes='Fallback preserves heading-derived section paths.',
                 ),
                 FileTypeCapabilityView(
-                    extension='txt',
-                    label='Plain Text',
+                    extension='doc',
+                    label='Word DOC',
                     primary_parser=self.PRIMARY_PARSER,
-                    fallback_parser='text-decoder',
+                    fallback_parser='olefile',
                     supports_ocr=False,
                     supports_pages=False,
                     parse_statuses=statuses,
-                    retry_policy='Retry primary parser for transient 5xx/timeout errors, then fallback to deterministic text decoding.',
+                    retry_policy='Retry primary parser for transient 5xx/timeout errors, then fallback to legacy OLE text extraction.',
+                    notes='Legacy DOC fallback is best-effort, and complex legacy Office files are still best converted to DOCX.',
+                ),
+                FileTypeCapabilityView(
+                    extension='txt',
+                    label='Plain Text',
+                    primary_parser='text-decoder',
+                    fallback_parser='none',
+                    supports_ocr=False,
+                    supports_pages=False,
+                    parse_statuses=[self.PARSE_STATUS_SUCCESS, self.PARSE_STATUS_FAILED],
+                    retry_policy='Use direct text decoding and large-text chunking without the heavyweight primary parser.',
+                    notes='TXT files bypass Unstructured to keep large text parsing responsive and stable.',
                 ),
                 FileTypeCapabilityView(
                     extension='md',
                     label='Markdown',
-                    primary_parser=self.PRIMARY_PARSER,
-                    fallback_parser='markdown-decoder',
+                    primary_parser='markdown-decoder',
+                    fallback_parser='none',
                     supports_ocr=False,
                     supports_pages=False,
-                    parse_statuses=statuses,
-                    retry_policy='Retry primary parser for transient 5xx/timeout errors, then fallback to markdown stripping.',
+                    parse_statuses=[self.PARSE_STATUS_SUCCESS, self.PARSE_STATUS_FAILED],
+                    retry_policy='Use direct markdown stripping and large-text chunking without the heavyweight primary parser.',
                     notes='`markdown` extension follows the same path as `md`.',
                 ),
             ],
@@ -499,6 +660,47 @@ class FileExtractService:
     def _chunks_from_text(self, plain_text: str, page_no: int | None = None) -> list[RagChunkPayload]:
         blocks = self._merge_heading_blocks(self._build_semantic_blocks(plain_text))
         return self._build_chunks(blocks, page_no=page_no)
+
+    def _chunks_from_large_text(
+        self,
+        plain_text: str,
+        *,
+        page_no: int | None = None,
+        target_chunk_size: int,
+        max_chunk_size: int,
+        overlap_size: int,
+    ) -> list[RagChunkPayload]:
+        normalized = self._normalize_text(plain_text)
+        if not normalized:
+            return []
+        chunks: list[RagChunkPayload] = []
+        start = 0
+        chunk_num = 0
+        text_length = len(normalized)
+        while start < text_length:
+            remaining = text_length - start
+            if remaining <= max_chunk_size:
+                end = text_length
+            else:
+                preferred = min(text_length, start + target_chunk_size)
+                upper_bound = min(text_length, start + max_chunk_size)
+                end = self._find_large_text_split(normalized, preferred, upper_bound)
+            chunk_text = self._normalize_text(normalized[start:end])
+            if chunk_text:
+                chunks.append(
+                    RagChunkPayload(
+                        chunk_num=chunk_num,
+                        chunk_text=chunk_text,
+                        page_no=page_no,
+                        section_path=None,
+                    )
+                )
+                chunk_num += 1
+            if end >= text_length:
+                break
+            next_start = max(start + 1, end - overlap_size)
+            start = self._advance_large_text_start(normalized, next_start)
+        return chunks
 
     def _chunks_from_blocks(self, blocks: list[SemanticBlock], page_no: int | None = None) -> list[RagChunkPayload]:
         merged = self._merge_heading_blocks(blocks)
@@ -687,6 +889,21 @@ class FileExtractService:
             if self._is_boundary_character(value[index - 1]):
                 return index
         return upper_bound
+
+    def _find_large_text_split(self, value: str, preferred: int, upper_bound: int) -> int:
+        lower_bound = max(1, preferred)
+        for index in range(upper_bound, lower_bound - 1, -1):
+            if value[index - 1:index + 1] == '\n\n':
+                return index
+            if self._is_boundary_character(value[index - 1]):
+                return index
+        return upper_bound
+
+    def _advance_large_text_start(self, value: str, start: int) -> int:
+        next_start = max(0, start)
+        while next_start < len(value) and value[next_start].isspace():
+            next_start += 1
+        return next_start
 
     def _overlap_tail(self, text: str) -> str:
         normalized = self._normalize_text(text)

@@ -20,7 +20,7 @@ import org.testcontainers.utility.DockerImageName;
 class FlywayMigrationMySqlTest {
 
     @Test
-    void migratesFreshSchemaThroughV19AndPreservesExpectedColumns() throws SQLException {
+    void migratesFreshSchemaThroughLatestAndPreservesExpectedColumns() throws SQLException {
         Assumptions.assumeTrue(
                 DockerClientFactory.instance().isDockerAvailable(),
                 "Docker is required to run the MySQL Flyway migration regression test"
@@ -38,7 +38,7 @@ class FlywayMigrationMySqlTest {
             flyway.migrate();
 
             assertThat(flyway.info().current()).isNotNull();
-            assertThat(flyway.info().current().getVersion().getVersion()).isEqualTo("19");
+            assertThat(flyway.info().current().getVersion().getVersion()).isEqualTo("21");
 
             try (Connection connection = DriverManager.getConnection(
                     mysql.getJdbcUrl(),
@@ -76,7 +76,26 @@ class FlywayMigrationMySqlTest {
                         .containsKeys("method", "tool_name", "resource_uri", "error_code");
 
                 assertThat(columnDefaultsFor(connection, "n8n_event_log"))
-                        .containsKeys("event_type", "workflow_hint", "target_url", "success_flag");
+                        .containsKeys(
+                                "event_type",
+                                "workflow_hint",
+                                "target_url",
+                                "success_flag",
+                                "workflow_name",
+                                "workflow_version",
+                                "workflow_domain",
+                                "workflow_owner",
+                                "external_execution_id",
+                                "workflow_error_summary",
+                                "workflow_duration_ms",
+                                "delivery_retryable",
+                                "manual_status",
+                                "manual_reason",
+                                "manual_replay_count",
+                                "replayed_from_event_id",
+                                "last_callback_at",
+                                "callback_payload_json"
+                        );
 
                 assertThat(columnDefaultsFor(connection, "automation_webhook_log"))
                         .containsKeys("workflow_code", "event_type", "request_payload_json");
@@ -97,7 +116,7 @@ class FlywayMigrationMySqlTest {
     }
 
     @Test
-    void migratesLegacyAiSchemaThroughV19AndBackfillsMissingColumns() throws SQLException {
+    void migratesLegacyAiSchemaThroughLatestAndBackfillsMissingColumns() throws SQLException {
         Assumptions.assumeTrue(
                 DockerClientFactory.instance().isDockerAvailable(),
                 "Docker is required to run the MySQL Flyway migration regression test"
@@ -188,7 +207,7 @@ class FlywayMigrationMySqlTest {
             flyway.migrate();
 
             assertThat(flyway.info().current()).isNotNull();
-            assertThat(flyway.info().current().getVersion().getVersion()).isEqualTo("19");
+            assertThat(flyway.info().current().getVersion().getVersion()).isEqualTo("21");
 
             try (Connection connection = DriverManager.getConnection(
                     mysql.getJdbcUrl(),
@@ -226,7 +245,26 @@ class FlywayMigrationMySqlTest {
                         .containsKeys("method", "tool_name", "resource_uri", "error_code");
 
                 assertThat(columnDefaultsFor(connection, "n8n_event_log"))
-                        .containsKeys("event_type", "workflow_hint", "target_url", "success_flag");
+                        .containsKeys(
+                                "event_type",
+                                "workflow_hint",
+                                "target_url",
+                                "success_flag",
+                                "workflow_name",
+                                "workflow_version",
+                                "workflow_domain",
+                                "workflow_owner",
+                                "external_execution_id",
+                                "workflow_error_summary",
+                                "workflow_duration_ms",
+                                "delivery_retryable",
+                                "manual_status",
+                                "manual_reason",
+                                "manual_replay_count",
+                                "replayed_from_event_id",
+                                "last_callback_at",
+                                "callback_payload_json"
+                        );
 
                 assertThat(columnDefaultsFor(connection, "automation_webhook_log"))
                         .containsKeys("workflow_code", "event_type", "request_payload_json");

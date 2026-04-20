@@ -38,6 +38,7 @@ public class KnowledgeController {
 class KnowledgeQueryService {
 
     private final JdbcTemplate jdbcTemplate;
+    private final FileParseStatusSupport fileParseStatusSupport;
     private final ProjectService projectService;
 
     PageResponse<KnowledgeAssetView> assets(String type, Long projectId, String keyword, boolean knowledgeOnly, long pageNum, long pageSize) {
@@ -319,8 +320,22 @@ class KnowledgeQueryService {
     }
 
     private KnowledgeAssetView mapAsset(ResultSet rs) throws SQLException {
+        String assetType = rs.getString("asset_type");
+        String parseStatus = rs.getString("parse_status");
+        String indexStatus = rs.getString("index_status");
+        String parseErrorMessage = rs.getString("parse_error_message");
+        if ("FILE".equalsIgnoreCase(assetType)) {
+            FileParseStatusView statusView = fileParseStatusSupport.resolve(
+                    rs.getLong("asset_id"),
+                    parseStatus,
+                    indexStatus
+            );
+            parseStatus = statusView.parseStatus();
+            indexStatus = statusView.indexStatus();
+            parseErrorMessage = statusView.parseErrorMessage();
+        }
         return new KnowledgeAssetView(
-                rs.getString("asset_type"),
+                assetType,
                 rs.getLong("asset_id"),
                 rs.getLong("project_id"),
                 rs.getObject("owner_user_id") == null ? null : rs.getLong("owner_user_id"),
@@ -330,10 +345,10 @@ class KnowledgeQueryService {
                 rs.getString("file_ext"),
                 rs.getString("mime_type"),
                 rs.getObject("file_size") == null ? null : rs.getLong("file_size"),
-                rs.getString("parse_status"),
+                parseStatus,
                 rs.getString("review_status"),
-                rs.getString("index_status"),
-                rs.getString("parse_error_message"),
+                indexStatus,
+                parseErrorMessage,
                 rs.getString("review_comment"),
                 rs.getString("doc_status"),
                 rs.getString("item_type"),

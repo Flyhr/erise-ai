@@ -45,12 +45,14 @@ class EmbeddingService:
         return [self._local_embedding(text) for text in texts]
 
     def _allow_fallback(self) -> bool:
-        return self.settings.embedding_local_fallback_enabled and self.settings.app_env.lower() != 'prod'
+        return self.settings.resolved_embedding_local_fallback_enabled and self.settings.app_env.lower() != 'prod'
 
     def _is_quota_error(self, message: str) -> bool:
         normalized = (message or '').lower()
         return (
             'insufficient_quota' in normalized
+            or 'rate limit exceeded' in normalized
+            or 'litellm rate limit exceeded' in normalized
             or 'quota' in normalized and 'exceed' in normalized
             or 'billing' in normalized and 'inactive' in normalized
             or 'account_balance' in normalized
@@ -91,7 +93,7 @@ class EmbeddingService:
         return vectors
 
     async def _embed_batch(self, route: ProviderRoute, provider, texts: list[str]) -> list[list[float]]:
-        attempts = max(1, self.settings.embedding_max_retries + 1)
+        attempts = max(1, self.settings.resolved_embedding_max_retries + 1)
         for attempt in range(1, attempts + 1):
             try:
                 return await provider.embed(route.model_code, texts)
@@ -106,7 +108,7 @@ class EmbeddingService:
                     ) from exc
                 is_last_attempt = attempt >= attempts
                 if self._is_retryable_error(message) and not is_last_attempt:
-                    wait_seconds = self.settings.retry_backoff_seconds * attempt
+                    wait_seconds = self.settings.resolved_retry_backoff_seconds * attempt
                     logger.warning(
                         'Embedding request failed on attempt %s/%s, retrying in %.1fs: %s',
                         attempt,

@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest'
-import { knowledgeReadinessLabel, pickPreferredAiModel, resolveKnowledgeReadiness, sortAiModelsByPreference } from './formatters'
+import {
+  knowledgeProgressLabel,
+  knowledgeReadinessLabel,
+  pickPreferredAiModel,
+  resolveKnowledgeProgressPhase,
+  resolveKnowledgeReadiness,
+  sortAiModelsByPreference,
+} from './formatters'
 
 describe('formatters', () => {
   it('resolves readiness from parse and index status pairs', () => {
@@ -8,6 +15,14 @@ describe('formatters', () => {
     expect(resolveKnowledgeReadiness('FAILED', 'PENDING')).toBe('failed')
     expect(resolveKnowledgeReadiness('SKIPPED', 'SKIPPED')).toBe('unsupported')
     expect(knowledgeReadinessLabel('PENDING', 'PENDING')).toBe('待解析')
+  })
+
+  it('renders retrying knowledge states with explicit retry labels', () => {
+    expect(resolveKnowledgeProgressPhase('RETRYING', 'PENDING')).toBe('parse_retrying')
+    expect(resolveKnowledgeProgressPhase('SUCCESS', 'RETRYING')).toBe('index_retrying')
+    expect(resolveKnowledgeProgressPhase('TIMEOUT_RETRYING', 'PENDING')).toBe('parse_timeout_retrying')
+    expect(resolveKnowledgeProgressPhase('SUCCESS', 'TIMEOUT_RETRYING')).toBe('index_timeout_retrying')
+    expect(knowledgeProgressLabel('SUCCESS', 'TIMEOUT_RETRYING')).toBe('索引超时，重试中')
   })
 
   it('sorts ai models with default first and provider priority second', () => {

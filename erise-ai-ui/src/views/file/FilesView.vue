@@ -144,7 +144,7 @@ const optimisticUploadedFiles = ref<Record<number, FileView>>({})
 const parsedScopedProjectId = Number(props.id)
 const scopedProjectId = Number.isFinite(parsedScopedProjectId) && parsedScopedProjectId > 0 ? parsedScopedProjectId : undefined
 const selectedProjectId = ref<number | undefined>(scopedProjectId)
-const ACTIVE_FILE_STATUSES = new Set(['INIT', 'UPLOADING', 'PENDING', 'PROCESSING'])
+const ACTIVE_FILE_STATUSES = new Set(['INIT', 'UPLOADING', 'PENDING', 'PROCESSING', 'RETRYING', 'TIMEOUT_RETRYING'])
 const normalizeFileStatus = (value?: string) => (value || '').trim().toUpperCase()
 const hasActiveFileStatus = (record?: { parseStatus?: string; indexStatus?: string }) =>
   ACTIVE_FILE_STATUSES.has(normalizeFileStatus(record?.parseStatus)) ||
@@ -235,6 +235,16 @@ const mergeUploadedFile = (file: FileView) => {
   total.value = Math.max(total.value + 1, files.value.length)
 }
 
+const removeFileFromView = (fileId: number) => {
+  removeOptimisticUploadedFile(fileId)
+  const nextFiles = files.value.filter((item) => item.id !== fileId)
+  if (nextFiles.length === files.value.length) {
+    return
+  }
+  files.value = nextFiles
+  total.value = Math.max(0, total.value - 1)
+}
+
 const load = async () => {
   const page = await getFiles({
     projectId: scopedProjectId || selectedProjectId.value,
@@ -322,7 +332,7 @@ useVisibleFileStatusPolling({
     })
   },
   onTimeout: () => {
-    ElMessage.warning('文件解析仍在处理中，已暂停自动刷新，请稍后手动刷新查看结果')
+    ElMessage.warning('文件解析耗时较长，系统会继续自动刷新状态。')
   },
 })
 
@@ -340,6 +350,7 @@ const removeFileItem = async (id: number, fileName: string) => {
   try {
     await ElMessageBox.confirm(`确定删除文件“${fileName}”吗？`, '删除文件', { type: 'warning' })
     await deleteFile(id)
+    removeFileFromView(id)
     ElMessage.success('文件已删除')
     await load()
     await ensureCurrentPage()

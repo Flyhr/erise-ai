@@ -35,6 +35,47 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4,
       "position": [620, 260]
+    },
+    {
+      "parameters": {
+        "jsCode": "const crypto = require('crypto');\nconst source = $input.first().json.body || {};\nconst meta = source._n8n || {};\nconst callback = {\n  eventLogId: meta.eventLogId,\n  requestId: source.requestId || `approval-failed-${Date.now()}`,\n  idempotencyKey: meta.idempotencyKey || '',\n  workflowCode: 'approval-failed',\n  eventType: 'approval.failed',\n  workflowStatus: 'COMPLETED',\n  workflowName: meta.workflowName || 'approval-failed',\n  workflowVersion: meta.workflowVersion || '2026.04.1',\n  workflowDomain: meta.workflowDomain || 'approval',\n  workflowOwner: meta.workflowOwner || 'platform-ops',\n  externalExecutionId: `n8n-${$execution.id}`,\n  errorCode: null,\n  errorMessage: null,\n  errorSummary: null,\n  processingTimeMs: 0,\n  manualStatus: null,\n  manualReason: null\n};\nconst rawBody = JSON.stringify(callback);\nconst timestamp = String(Math.floor(Date.now() / 1000));\nconst signature = crypto\n  .createHmac('sha256', $env.N8N_WEBHOOK_SECRET)\n  .update([callback.requestId, callback.eventType, callback.workflowCode, timestamp, rawBody].join('\\n'))\n  .digest('hex');\nreturn [{ json: { callback, timestamp, signature } }];"
+      },
+      "id": "BuildWorkflowCallback",
+      "name": "Build Workflow Callback",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [940, 260]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://host.docker.internal:8080/api/v1/automation/webhooks/workflow-status",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-N8N-Webhook-Secret",
+              "value": "={{$env.N8N_WEBHOOK_SECRET}}"
+            },
+            {
+              "name": "X-N8N-Signature",
+              "value": "={{$json.signature}}"
+            },
+            {
+              "name": "X-N8N-Signature-Timestamp",
+              "value": "={{$json.timestamp}}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{$json.callback}}"
+      },
+      "id": "WriteBackWorkflowStatus",
+      "name": "Write Back Workflow Status",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [1240, 260]
     }
   ],
   "connections": {
@@ -43,6 +84,28 @@
         [
           {
             "node": "Approval Failed Notify",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Approval Failed Notify": {
+      "main": [
+        [
+          {
+            "node": "Build Workflow Callback",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Workflow Callback": {
+      "main": [
+        [
+          {
+            "node": "Write Back Workflow Status",
             "type": "main",
             "index": 0
           }

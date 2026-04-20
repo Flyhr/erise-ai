@@ -1,0 +1,55 @@
+{
+  "version": "2026.04.1",
+  "callbackEndpoint": "/api/v1/automation/webhooks/workflow-status",
+  "workflows": [
+    {
+      "workflowHint": "approval-pending",
+      "workflowName": "approval-pending",
+      "domain": "approval",
+      "owner": "platform-ops",
+      "assetFile": "approval-pending.json"
+    },
+    {
+      "workflowHint": "approval-applied",
+      "workflowName": "approval-applied",
+      "domain": "approval",
+      "owner": "platform-ops",
+      "assetFile": "approval-applied.json"
+    },
+    {
+      "workflowHint": "approval-failed",
+      "workflowName": "approval-failed",
+      "domain": "approval",
+      "owner": "platform-ops",
+      "assetFile": "approval-failed.json"
+    },
+    {
+      "workflowHint": "approval-rejected",
+      "workflowName": "approval-rejected",
+      "domain": "approval",
+      "owner": "platform-ops",
+      "assetFile": "approval-rejected.json"
+    },
+    {
+      "workflowHint": "notification-fanout",
+      "workflowName": "notification-fanout",
+      "domain": "notification",
+      "owner": "platform-ops",
+      "assetFile": "notification-fanout.json"
+    },
+    {
+      "workflowHint": "health-inspection-alert",
+      "workflowName": "health-inspection-alert",
+      "domain": "operations",
+      "owner": "platform-ops",
+      "assetFile": "health-inspection-alert.json"
+    },
+    {
+      "workflowHint": "weekly-report-created",
+      "workflowName": "weekly-report-created",
+      "domain": "reporting",
+      "owner": "knowledge-ops",
+      "assetFile": "weekly-report-distribution.json"
+    }
+  ]
+}

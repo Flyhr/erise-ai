@@ -263,9 +263,10 @@ import {
   formatDateTime,
   formatFileSize,
   isKnowledgeFailed,
+  isKnowledgeInFlight,
   isOfficeEditableFile,
-  knowledgeReadinessLabel,
-  knowledgeReadinessTone,
+  knowledgeProgressLabel,
+  knowledgeProgressTone,
   normalizeFileTypeLabel,
   resolveErrorMessage,
 } from '@/utils/formatters'
@@ -307,11 +308,8 @@ const fileInputRef = ref<HTMLInputElement>()
 const form = reactive({ name: '', description: '' })
 const optimisticUploadedFiles = ref<Record<number, FileView>>({})
 
-const ACTIVE_FILE_STATUSES = new Set(['INIT', 'UPLOADING', 'PENDING', 'PROCESSING'])
-const normalizeFileStatus = (value?: string) => (value || '').trim().toUpperCase()
 const hasActiveFileStatus = (record?: { parseStatus?: string; indexStatus?: string }) =>
-  ACTIVE_FILE_STATUSES.has(normalizeFileStatus(record?.parseStatus)) ||
-  ACTIVE_FILE_STATUSES.has(normalizeFileStatus(record?.indexStatus))
+  isKnowledgeInFlight(record?.parseStatus, record?.indexStatus)
 
 const projectSubnavItems: Array<{ key: ProjectAssetTab; label: string }> = [
   { key: 'overview', label: '概览' },
@@ -338,12 +336,12 @@ const assetTypeLabel = (row: KnowledgeAssetView) => {
 const assetStatusLabel = (row: KnowledgeAssetView) =>
   row.assetType === 'DOCUMENT'
     ? documentStatusLabel(row.docStatus)
-    : knowledgeReadinessLabel(row.parseStatus, row.indexStatus)
+    : knowledgeProgressLabel(row.parseStatus, row.indexStatus)
 
 const assetTone = (row: KnowledgeAssetView) =>
   row.assetType === 'DOCUMENT'
     ? documentStatusTone(row.docStatus)
-    : knowledgeReadinessTone(row.parseStatus, row.indexStatus)
+    : knowledgeProgressTone(row.parseStatus, row.indexStatus)
 
 const assetStatusIcon = (row: KnowledgeAssetView) =>
   ({ success: 'check_circle', warning: 'schedule', primary: 'visibility', danger: 'cancel', info: 'edit_note' }[assetTone(row)] || 'info') as string
@@ -530,6 +528,21 @@ const mergeUploadedFile = (file: FileView) => {
   }
 }
 
+const removeFileAssetFromView = (fileId: number) => {
+  removeOptimisticUploadedFile(fileId)
+  const nextAssets = assets.value.filter((row) => !(row.assetType === 'FILE' && row.assetId === fileId))
+  if (nextAssets.length !== assets.value.length) {
+    assets.value = nextAssets
+    total.value = Math.max(0, total.value - 1)
+  }
+  if (project.value) {
+    project.value = {
+      ...project.value,
+      fileCount: Math.max(0, project.value.fileCount - 1),
+    }
+  }
+}
+
 const primeFilesViewWithUpload = (file: FileView) => {
   upsertOptimisticUploadedFile(file)
   const nextRow = toFileAssetRow(file)
@@ -627,7 +640,7 @@ useVisibleFileStatusPolling({
     })
   },
   onTimeout: () => {
-    ElMessage.warning('文件解析仍在处理中，已暂停自动刷新，请稍后手动刷新查看结果')
+    ElMessage.warning('文件解析耗时较长，系统会继续自动刷新状态。')
   },
 })
 
@@ -789,6 +802,7 @@ const deleteAsset = async (row: KnowledgeAssetView) => {
     })
     if (row.assetType === 'FILE') {
       await deleteFile(row.assetId)
+      removeFileAssetFromView(row.assetId)
       ElMessage.success('文件已移入回收文件夹')
     } else if (row.assetType === 'DOCUMENT') {
       await deleteDocument(row.assetId)

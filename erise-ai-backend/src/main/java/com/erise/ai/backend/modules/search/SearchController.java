@@ -9,7 +9,6 @@ import com.erise.ai.backend.common.util.SecurityUtils;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.Comparator;
-import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -120,38 +119,23 @@ class SearchService {
                 .toList();
     }
 
-    List<SearchResultView> retrieveKnowledge(Long userId,
-                                             List<Long> projectScopeIds,
-                                             List<InternalKnowledgeAttachment> attachments,
-                                             String keyword,
-                                             int limit) {
-        String normalizedKeyword = requireKeyword(keyword);
-        int safeLimit = Math.max(limit, 1);
-        List<String> searchTerms = sparseKnowledgeSupport.queryTerms(normalizedKeyword);
-        Set<Long> projectSet = new HashSet<>(projectScopeIds == null ? List.of() : projectScopeIds);
-        List<InternalKnowledgeAttachment> safeAttachments = attachments == null ? List.of() : attachments;
-
-        List<SearchResultView> rawResults = new ArrayList<>();
-        rawResults.addAll(searchSparseKnowledgeForRetrieve(userId, projectSet, safeAttachments, normalizedKeyword, safeLimit));
-        List<SearchResultView> sparseResults = uniqueResults(rawResults, normalizedKeyword, searchTerms)
-                .stream()
-                .limit(safeLimit)
-                .toList();
-        if (!sparseResults.isEmpty()) {
-            return sparseResults;
-        }
-
-        List<SearchResultView> fallbackResults = new ArrayList<>();
-        for (Long projectId : projectSet) {
-            fallbackResults.addAll(searchDocumentKnowledgeFallback(userId, projectId, normalizedKeyword, safeLimit));
-            fallbackResults.addAll(searchContentKnowledgeFallback(userId, projectId, normalizedKeyword, safeLimit));
-        }
-        fallbackResults.addAll(searchTempAttachmentFallback(userId, safeAttachments, normalizedKeyword, safeLimit));
-        return uniqueResults(fallbackResults, normalizedKeyword, searchTerms)
-                .stream()
-                .limit(safeLimit)
-                .toList();
-    }
+    /*
+     * 废弃说明（2026-04）：
+     * AI 助手检索已经迁移到 Python 侧直接查询 Qdrant dense+sparse 一体化索引，
+     * 不再使用本类中那套给聊天检索准备的 Java BM25 入口和兜底链路。
+     *
+     * 为了避免后续误接回旧逻辑，相关方法已经从运行时代码中移除，仅保留下面这段说明：
+     * - retrieveKnowledge(...)
+     * - searchSparseKnowledgeForRetrieve(...)
+     * - searchDocumentKnowledgeFallback(...)
+     * - searchContentKnowledgeFallback(...)
+     * - searchTempAttachmentFallback(...)
+     * - matchKnowledgeScope(...)
+     * - matchesAttachment(...)
+     *
+     * 注意：当前文件里保留下来的 searchSparseKnowledge(...) 仍然服务站内页面搜索，
+     * 它不是 AI 助手检索主链的一部分，所以这里不做删除。
+     */
 
     private List<SearchResultView> searchSparseKnowledge(Long userId, boolean admin, Long projectId, String keyword) {
         return sparseKnowledgeSupport.searchRows(
@@ -165,37 +149,6 @@ class SearchService {
                 .filter(row -> projectId == null || (row.projectId() != null && projectId.equals(row.projectId())))
                 .map(this::toSearchResult)
                 .toList();
-    }
-
-    private List<SearchResultView> searchSparseKnowledgeForRetrieve(Long userId,
-                                                                    Set<Long> projectScopeIds,
-                                                                    List<InternalKnowledgeAttachment> attachments,
-                                                                    String keyword,
-                                                                    int limit) {
-        List<SearchResultView> results = new ArrayList<>();
-        results.addAll(sparseKnowledgeSupport.searchRows(
-                        userId,
-                        true,
-                        SparseKnowledgeSupport.SCOPE_KB,
-                        null,
-                        keyword,
-                        Math.max(limit * 8, 80)
-                ).stream()
-                .filter(row -> matchKnowledgeScope(row, projectScopeIds, attachments))
-                .map(this::toSearchResult)
-                .toList());
-        results.addAll(sparseKnowledgeSupport.searchRows(
-                        userId,
-                        true,
-                        SparseKnowledgeSupport.SCOPE_TEMP,
-                        Set.of("TEMP_FILE"),
-                        keyword,
-                        Math.max(limit * 4, 40)
-                ).stream()
-                .filter(row -> matchKnowledgeScope(row, projectScopeIds, attachments))
-                .map(this::toSearchResult)
-                .toList());
-        return results;
     }
 
     private List<SearchResultView> searchFileTitleFallback(String projectSql, String keyword, int limit) {
@@ -276,137 +229,6 @@ class SearchService {
         );
     }
 
-    private List<SearchResultView> searchDocumentKnowledgeFallback(Long userId, Long projectId, String keyword, int limit) {
-        return jdbcTemplate.query("""
-                        select d.id,
-                               d.project_id,
-                               d.title,
-                               left(c.plain_text, 300) as snippet,
-                               d.updated_at
-                        from ea_document d
-                        left join ea_document_content c on c.document_id = d.id and c.deleted = 0
-                        left join ea_rag_source rs
-                          on rs.scope_type = 'KB'
-                         and rs.source_type = 'DOCUMENT'
-                         and rs.source_id = d.id
-                         and rs.deleted = 0
-                        where d.deleted = 0
-                          and d.owner_user_id = ?
-                          and d.project_id = ?
-                          and d.title like ?
-                          and (rs.id is null or rs.status <> 'READY')
-                        order by d.updated_at desc
-                        limit ?
-                        """,
-                (rs, rowNum) -> new SearchResultView(
-                        "DOCUMENT",
-                        rs.getLong("id"),
-                        rs.getLong("project_id"),
-                        rs.getString("title"),
-                        "DOCUMENT",
-                        rs.getString("snippet"),
-                        rs.getTimestamp("updated_at").toLocalDateTime(),
-                        null,
-                        null,
-                        null,
-                        null,
-                        null,
-                        null,
-                        null,
-                        null
-                ),
-                userId,
-                projectId,
-                "%" + keyword + "%",
-                Math.max(limit, 1)
-        );
-    }
-
-    private List<SearchResultView> searchContentKnowledgeFallback(Long userId, Long projectId, String keyword, int limit) {
-        return jdbcTemplate.query("""
-                        select id, project_id, item_type, title, left(coalesce(summary, ''), 300) as snippet, updated_at
-                        from ea_content_item
-                        where deleted = 0
-                          and owner_user_id = ?
-                          and project_id = ?
-                          and title like ?
-                        order by updated_at desc
-                        limit ?
-                        """,
-                (rs, rowNum) -> new SearchResultView(
-                        rs.getString("item_type"),
-                        rs.getLong("id"),
-                        rs.getLong("project_id"),
-                        rs.getString("title"),
-                        rs.getString("item_type"),
-                        rs.getString("snippet"),
-                        rs.getTimestamp("updated_at").toLocalDateTime(),
-                        null,
-                        null,
-                        null,
-                        null,
-                        null,
-                        null,
-                        null,
-                        null
-                ),
-                userId,
-                projectId,
-                "%" + keyword + "%",
-                Math.max(limit, 1)
-        );
-    }
-
-    private List<SearchResultView> searchTempAttachmentFallback(Long userId,
-                                                                List<InternalKnowledgeAttachment> attachments,
-                                                                String keyword,
-                                                                int limit) {
-        List<InternalKnowledgeAttachment> tempAttachments = attachments.stream()
-                .filter(item -> item != null && "TEMP_FILE".equalsIgnoreCase(item.attachmentType()))
-                .toList();
-        if (tempAttachments.isEmpty()) {
-            return List.of();
-        }
-        List<SearchResultView> results = new ArrayList<>();
-        for (InternalKnowledgeAttachment attachment : tempAttachments) {
-            results.addAll(jdbcTemplate.query("""
-                            select id, project_id, session_id, file_name, mime_type, file_size, updated_at
-                            from ea_ai_temp_file
-                            where deleted = 0
-                              and owner_user_id = ?
-                              and id = ?
-                              and file_name like ?
-                              and (? is null or session_id = ?)
-                            limit ?
-                            """,
-                    (rs, rowNum) -> new SearchResultView(
-                            "TEMP_FILE",
-                            rs.getLong("id"),
-                            rs.getObject("project_id") == null ? null : rs.getLong("project_id"),
-                            rs.getString("file_name"),
-                            rs.getString("mime_type"),
-                            null,
-                            rs.getTimestamp("updated_at").toLocalDateTime(),
-                            null,
-                            null,
-                            null,
-                            rs.getObject("file_size") == null ? null : rs.getLong("file_size"),
-                            null,
-                            null,
-                            null,
-                            null
-                    ),
-                    userId,
-                    attachment.sourceId(),
-                    "%" + keyword + "%",
-                    attachment.sessionId(),
-                    attachment.sessionId(),
-                    Math.max(limit, 1)
-            ));
-        }
-        return results;
-    }
-
     private SearchResultView toSearchResult(SparseSearchRow row) {
         return new SearchResultView(
                 row.sourceType(),
@@ -425,36 +247,6 @@ class SearchService {
                 row.indexStatus(),
                 row.docStatus()
         );
-    }
-
-    private boolean matchKnowledgeScope(SparseSearchRow row,
-                                        Set<Long> projectScopeIds,
-                                        List<InternalKnowledgeAttachment> attachments) {
-        if (!attachments.isEmpty() && matchesAttachment(row.sourceType(), row.sourceId(), row.sessionId(), attachments)) {
-            return true;
-        }
-        if (SparseKnowledgeSupport.SCOPE_KB.equalsIgnoreCase(row.scopeType())) {
-            return projectScopeIds.isEmpty() || (row.projectId() != null && projectScopeIds.contains(row.projectId()));
-        }
-        return false;
-    }
-
-    private boolean matchesAttachment(String sourceType,
-                                      Long sourceId,
-                                      Long sessionId,
-                                      List<InternalKnowledgeAttachment> attachments) {
-        return attachments.stream().anyMatch(attachment -> {
-            if (attachment == null || attachment.attachmentType() == null || attachment.sourceId() == null) {
-                return false;
-            }
-            if (!attachment.attachmentType().equalsIgnoreCase(sourceType)) {
-                return false;
-            }
-            if (!attachment.sourceId().equals(sourceId)) {
-                return false;
-            }
-            return attachment.sessionId() == null || attachment.sessionId().equals(sessionId);
-        });
     }
 
     private Comparator<SearchResultView> searchResultComparator(String keyword, List<String> searchTerms) {

@@ -1,0 +1,57 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper
+  PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+  "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.erise.ai.backend.modules.RagChunkMapper">
+
+  <insert id="batchInsert">
+    insert into ea_rag_chunk (
+      rag_source_id,
+      owner_user_id,
+      project_id,
+      session_id,
+      source_type,
+      source_id,
+      chunk_num,
+      chunk_text,
+      page_no,
+      section_path,
+      vector_collection,
+      vector_point_id,
+      embedding_model_code,
+      embedding_version,
+      embedding_dimension,
+      created_by,
+      created_at,
+      updated_by,
+      updated_at,
+      deleted
+    )
+    values
+    <foreach collection="items" item="item" separator=",">
+      (
+        #{item.ragSourceId},
+        #{item.ownerUserId},
+        #{item.projectId},
+        #{item.sessionId},
+        #{item.sourceType},
+        #{item.sourceId},
+        #{item.chunkNum},
+        #{item.chunkText},
+        #{item.pageNo},
+        #{item.sectionPath},
+        #{item.vectorCollection},
+        #{item.vectorPointId},
+        #{item.embeddingModelCode},
+        #{item.embeddingVersion},
+        #{item.embeddingDimension},
+        #{item.createdBy},
+        current_timestamp(6),
+        #{item.updatedBy},
+        current_timestamp(6),
+        0
+      )
+    </foreach>
+  </insert>
+
+</mapper>

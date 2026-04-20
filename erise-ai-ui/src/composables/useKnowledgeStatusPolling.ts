@@ -6,7 +6,7 @@ interface KnowledgeStatusRecord {
 }
 
 const trackedKnowledgeRecordKeys = ref<string[]>([])
-const ACTIVE_STATUSES = new Set(['INIT', 'UPLOADING', 'PENDING', 'PROCESSING'])
+const ACTIVE_STATUSES = new Set(['INIT', 'UPLOADING', 'PENDING', 'PROCESSING', 'RETRYING', 'TIMEOUT_RETRYING'])
 
 const normalizeStatus = (value?: string) => (value || '').trim().toUpperCase()
 

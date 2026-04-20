@@ -60,6 +60,7 @@ class WorkspaceService {
     private final AuditLogService auditLogService;
     private final FileService fileService;
     private final DocumentService documentService;
+    private final FileParseStatusSupport fileParseStatusSupport;
 
     PageResponse<WorkspaceRecentItemView> recent(String mode, String assetType, long pageNum, long pageSize) {
         var currentUser = SecurityUtils.currentUser();
@@ -208,8 +209,22 @@ class WorkspaceService {
     }
 
     private WorkspaceRecentItemView mapRecent(ResultSet rs, AuditRecentRow row) throws SQLException {
+        String assetType = rs.getString("asset_type");
+        String parseStatus = rs.getString("parse_status");
+        String indexStatus = rs.getString("index_status");
+        String parseErrorMessage = rs.getString("parse_error_message");
+        if ("FILE".equalsIgnoreCase(assetType)) {
+            FileParseStatusView statusView = fileParseStatusSupport.resolve(
+                    rs.getLong("asset_id"),
+                    parseStatus,
+                    indexStatus
+            );
+            parseStatus = statusView.parseStatus();
+            indexStatus = statusView.indexStatus();
+            parseErrorMessage = statusView.parseErrorMessage();
+        }
         return new WorkspaceRecentItemView(
-                rs.getString("asset_type"),
+                assetType,
                 rs.getLong("asset_id"),
                 rs.getLong("project_id"),
                 rs.getString("title"),
@@ -220,9 +235,9 @@ class WorkspaceService {
                 rs.getString("mime_type"),
                 rs.getObject("file_size") == null ? null : rs.getLong("file_size"),
                 rs.getString("doc_status"),
-                rs.getString("parse_status"),
-                rs.getString("index_status"),
-                rs.getString("parse_error_message"));
+                parseStatus,
+                indexStatus,
+                parseErrorMessage);
     }
 }
 

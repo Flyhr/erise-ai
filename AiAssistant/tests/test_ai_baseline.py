@@ -76,7 +76,86 @@ class AiBaselineApiTest(unittest.TestCase):
         reset_database()
 
     def test_health_and_model_list(self) -> None:
-        with patch('src.app.api.v1.health.Redis.from_url', return_value=FakeRedisClient()):
+        provider_summary = type('ProviderSummary', (), {
+            'model_dump': lambda self, by_alias=True: {
+                'status': 'UP',
+                'routes': [
+                    {
+                        'role': 'chat',
+                        'providerCode': 'OPENAI',
+                        'modelCode': 'gpt-4.1-mini',
+                        'baseUrl': 'https://api.openai.com/v1',
+                        'configured': True,
+                        'status': 'UP',
+                        'latencyMs': 12,
+                    },
+                    {
+                        'role': 'embedding',
+                        'providerCode': 'OPENAI',
+                        'modelCode': 'text-embedding-3-small',
+                        'baseUrl': 'https://api.openai.com/v1',
+                        'configured': True,
+                        'status': 'UP',
+                        'latencyMs': 8,
+                    },
+                ],
+            }
+        })()
+        provider_inventory = type('ProviderInventory', (), {
+            'model_dump': lambda self, by_alias=True: {
+                'status': 'UP',
+                'generatedAt': '2026-04-19T00:00:00',
+                'defaultProviderCode': 'OPENAI',
+                'defaultModelCode': 'gpt-4.1-mini',
+                'effectiveRoutes': [
+                    {
+                        'role': 'chat',
+                        'providerCode': 'OPENAI',
+                        'modelCode': 'gpt-4.1-mini',
+                        'modelName': 'GPT-4.1 mini',
+                        'baseUrl': 'https://api.openai.com/v1',
+                        'endpointUrl': 'https://api.openai.com/v1/chat/completions',
+                        'probeUrl': 'https://api.openai.com/v1/models',
+                        'configured': True,
+                        'status': 'UP',
+                        'timeoutSeconds': 60,
+                        'source': 'database',
+                        'latencyMs': 12,
+                        'isDefault': True,
+                        'isEffective': True,
+                        'recentRequestCount24h': 8,
+                        'recentErrorCount24h': 0,
+                        'recentErrorCodes': [],
+                    }
+                ],
+                'enabledRoutes': [
+                    {
+                        'role': 'chat',
+                        'providerCode': 'OPENAI',
+                        'modelCode': 'gpt-4.1-mini',
+                        'modelName': 'GPT-4.1 mini',
+                        'baseUrl': 'https://api.openai.com/v1',
+                        'endpointUrl': 'https://api.openai.com/v1/chat/completions',
+                        'probeUrl': 'https://api.openai.com/v1/models',
+                        'configured': True,
+                        'status': 'UP',
+                        'timeoutSeconds': 60,
+                        'source': 'database',
+                        'latencyMs': 12,
+                        'isDefault': True,
+                        'isEffective': True,
+                        'recentRequestCount24h': 8,
+                        'recentErrorCount24h': 0,
+                        'recentErrorCodes': [],
+                    }
+                ],
+            }
+        })()
+        with (
+            patch('src.app.api.v1.health.Redis.from_url', return_value=FakeRedisClient()),
+            patch('src.app.api.v1.health.model_health_service.check', new=AsyncMock(return_value=provider_summary)),
+            patch('src.app.api.v1.providers.model_health_service.provider_health', new=AsyncMock(return_value=provider_inventory)),
+        ):
             with TestClient(app) as client:
                 health = client.get('/internal/ai/chat/health')
                 self.assertEqual(200, health.status_code, health.text)
@@ -84,6 +163,7 @@ class AiBaselineApiTest(unittest.TestCase):
                 self.assertEqual(0, payload['code'], payload)
                 self.assertEqual('UP', payload['data']['database'], payload)
                 self.assertEqual('UP', payload['data']['redis'], payload)
+                self.assertEqual('UP', payload['data']['providers']['status'], payload)
 
                 models = client.get('/internal/ai/chat/models', headers=request_headers('models-list'))
                 self.assertEqual(200, models.status_code, models.text)
@@ -112,6 +192,12 @@ class AiBaselineApiTest(unittest.TestCase):
                 health_data = model_health.json()['data']
                 self.assertEqual('UP', health_data['status'])
                 self.assertEqual('chat', health_data['routes'][0]['role'])
+
+                providers = client.get('/internal/ai/chat/providers/health', headers=request_headers('providers-health'))
+                self.assertEqual(200, providers.status_code, providers.text)
+                provider_data = providers.json()['data']
+                self.assertEqual('OPENAI', provider_data['defaultProviderCode'])
+                self.assertEqual('gpt-4.1-mini', provider_data['defaultModelCode'])
 
     def test_session_create_message_query_and_chat_completion_logs_request_fields(self) -> None:
         with TestClient(app) as client:

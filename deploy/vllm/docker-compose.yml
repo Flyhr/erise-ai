@@ -1,3 +1,7 @@
+# Official production AI overlay.
+# Combine this file with the root docker-compose.yml.
+# Root docker-compose.yml alone is only the base production stack, not the official AI route.
+# Keep DEFAULT_MODEL_CODE, VLLM_MODEL_CODE, and VLLM_SERVED_MODEL_NAME aligned.
 services:
   vllm:
     image: vllm/vllm-openai:${VLLM_IMAGE_TAG:-v0.8.5}
@@ -96,8 +100,8 @@ services:
       MODEL_API_KEY: ${VLLM_API_KEY:-}
       VLLM_BASE_URL: http://vllm:8000/v1
       VLLM_API_KEY: ${VLLM_API_KEY:-}
-      VLLM_MODEL: ${VLLM_MODEL_CODE:-Qwen/Qwen2.5-7B-Instruct}
-      DEFAULT_MODEL_CODE: ${VLLM_MODEL_CODE:-Qwen/Qwen2.5-7B-Instruct}
+      VLLM_MODEL: ${VLLM_MODEL_CODE:-qwen3:1.7b}
+      DEFAULT_MODEL_CODE: ${VLLM_MODEL_CODE:-qwen3:1.7b}
       EMBEDDING_PROVIDER_CODE: VLLM
       EMBED_BASE_URL: http://vllm-embed:8001/v1
       EMBEDDING_MODEL: ${VLLM_EMBED_SERVED_MODEL_NAME:-text-embedding-3-small}

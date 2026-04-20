@@ -8,6 +8,7 @@ import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.time.Duration;
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.List;
 import org.slf4j.Logger;
@@ -102,6 +103,98 @@ public class CloudAiClient {
 
     public List<ModelResponse> models(CurrentUser user, String requestId) {
         return get(user, properties.getCloud().getBaseUrl() + "/internal/ai/chat/models", requestId, new TypeReference<List<ModelResponse>>() { });
+    }
+
+    public AiServiceHealthResponse serviceHealth(CurrentUser user, String requestId) {
+        return get(
+                user,
+                properties.getCloud().getBaseUrl() + "/internal/ai/chat/health?includeProviders=true",
+                requestId,
+                new TypeReference<AiServiceHealthResponse>() { }
+        );
+    }
+
+    public AiProviderHealthInventoryResponse providerHealth(CurrentUser user, String requestId) {
+        return get(
+                user,
+                properties.getCloud().getBaseUrl() + "/internal/ai/chat/providers/health",
+                requestId,
+                new TypeReference<AiProviderHealthInventoryResponse>() { }
+        );
+    }
+
+    public FileCapabilityMatrixResponse fileCapabilities(CurrentUser user, String requestId) {
+        return get(
+                user,
+                properties.getCloud().getBaseUrl() + "/internal/ai/chat/files/capabilities",
+                requestId,
+                new TypeReference<FileCapabilityMatrixResponse>() { }
+        );
+    }
+
+    public N8nEventSummaryResponse n8nEventSummary(CurrentUser user, int hours, String requestId) {
+        String url = UriComponentsBuilder.fromHttpUrl(properties.getCloud().getBaseUrl() + "/internal/ai/chat/n8n/events/summary")
+                .queryParam("hours", hours)
+                .toUriString();
+        return get(user, url, requestId, new TypeReference<N8nEventSummaryResponse>() { });
+    }
+
+    public PageResult<N8nEventResponse> n8nEvents(CurrentUser user,
+                                                  int pageNum,
+                                                  int pageSize,
+                                                  String q,
+                                                  String deliveryStatus,
+                                                  String workflowStatus,
+                                                  String manualStatus,
+                                                  String eventType,
+                                                  LocalDate createdDate,
+                                                  String requestId) {
+        UriComponentsBuilder builder = UriComponentsBuilder
+                .fromHttpUrl(properties.getCloud().getBaseUrl() + "/internal/ai/chat/n8n/events")
+                .queryParam("pageNum", pageNum)
+                .queryParam("pageSize", pageSize);
+        if (q != null && !q.isBlank()) {
+            builder.queryParam("q", q);
+        }
+        if (deliveryStatus != null && !deliveryStatus.isBlank()) {
+            builder.queryParam("deliveryStatus", deliveryStatus);
+        }
+        if (workflowStatus != null && !workflowStatus.isBlank()) {
+            builder.queryParam("workflowStatus", workflowStatus);
+        }
+        if (manualStatus != null && !manualStatus.isBlank()) {
+            builder.queryParam("manualStatus", manualStatus);
+        }
+        if (eventType != null && !eventType.isBlank()) {
+            builder.queryParam("eventType", eventType);
+        }
+        if (createdDate != null) {
+            builder.queryParam("createdDate", createdDate);
+        }
+        return get(user, builder.toUriString(), requestId, new TypeReference<PageResult<N8nEventResponse>>() { });
+    }
+
+    public N8nEventDetailResponse n8nEventDetail(CurrentUser user, Long eventId, String requestId) {
+        return get(
+                user,
+                properties.getCloud().getBaseUrl() + "/internal/ai/chat/n8n/events/" + eventId,
+                requestId,
+                new TypeReference<N8nEventDetailResponse>() { }
+        );
+    }
+
+    public N8nRetryResponse retryN8nEvent(CurrentUser user, Long eventId, String requestId) {
+        return post(user, "/internal/ai/chat/n8n/events/" + eventId + "/retry", null, requestId, N8nRetryResponse.class);
+    }
+
+    public N8nEventResponse manualHandoffN8nEvent(CurrentUser user, Long eventId, String reason, String requestId) {
+        return post(
+                user,
+                "/internal/ai/chat/n8n/events/" + eventId + "/manual-handoff",
+                new N8nManualHandoffRequest(reason),
+                requestId,
+                N8nEventResponse.class
+        );
     }
 
     public ResponseEntity<String> mcpProxy(String authorization, String requestId, String body) {
@@ -383,6 +476,7 @@ public class CloudAiClient {
             Long sourceId,
             String sourceName,
             List<RagChunkRequest> chunks,
+            Integer previousChunkCount,
             LocalDateTime updatedAt
     ) {
     }
@@ -548,5 +642,182 @@ public class CloudAiClient {
     }
 
     public record ModelResponse(String providerCode, String modelCode, String modelName, boolean isDefault, boolean supportStream, Integer maxContextTokens) {
+    }
+
+    public record AiServiceHealthResponse(
+            String service,
+            String status,
+            String database,
+            String redis,
+            ModelHealthResponse providers
+    ) {
+    }
+
+    public record ModelHealthResponse(
+            String status,
+            List<ProviderHealthResponse> routes
+    ) {
+    }
+
+    public record ProviderHealthResponse(
+            String role,
+            String providerCode,
+            String modelCode,
+            String baseUrl,
+            Boolean configured,
+            String status,
+            Integer latencyMs,
+            String errorCode,
+            String message
+    ) {
+    }
+
+    public record AiProviderHealthInventoryResponse(
+            String status,
+            LocalDateTime generatedAt,
+            String defaultProviderCode,
+            String defaultModelCode,
+            List<ProviderRouteHealthResponse> effectiveRoutes,
+            List<ProviderRouteHealthResponse> enabledRoutes
+    ) {
+    }
+
+    public record ProviderRouteHealthResponse(
+            String role,
+            String providerCode,
+            String modelCode,
+            String modelName,
+            String baseUrl,
+            String endpointUrl,
+            String probeUrl,
+            Boolean configured,
+            String status,
+            Integer timeoutSeconds,
+            String source,
+            Integer latencyMs,
+            String errorCode,
+            String message,
+            Boolean isDefault,
+            Boolean isEffective,
+            Integer recentRequestCount24h,
+            Integer recentErrorCount24h,
+            List<ProviderRecentErrorResponse> recentErrorCodes
+    ) {
+    }
+
+    public record ProviderRecentErrorResponse(
+            String errorCode,
+            Integer count,
+            LocalDateTime lastSeenAt
+    ) {
+    }
+
+    public record FileCapabilityMatrixResponse(
+            List<String> parserOrder,
+            List<String> parseStatuses,
+            List<ParserRuntimeResponse> parserRuntimes,
+            List<FileTypeCapabilityResponse> fileTypes
+    ) {
+    }
+
+    public record ParserRuntimeResponse(
+            String parserCode,
+            String label,
+            String status,
+            String errorCode,
+            String message,
+            List<String> supportedExtensions
+    ) {
+    }
+
+    public record FileTypeCapabilityResponse(
+            String extension,
+            String label,
+            String primaryParser,
+            String fallbackParser,
+            Boolean supportsOcr,
+            Boolean supportsPages,
+            List<String> parseStatuses,
+            String retryPolicy,
+            String notes
+    ) {
+    }
+
+    public record N8nEventResponse(
+            Long id,
+            String requestId,
+            String eventType,
+            String workflowHint,
+            Long approvalId,
+            Long sessionId,
+            Long userId,
+            Long projectId,
+            String targetUrl,
+            String deliveryStatus,
+            String workflowStatus,
+            String workflowName,
+            String workflowVersion,
+            String workflowDomain,
+            String workflowOwner,
+            String externalExecutionId,
+            String workflowErrorSummary,
+            Integer workflowDurationMs,
+            Boolean deliveryRetryable,
+            String manualStatus,
+            String manualReason,
+            Integer manualReplayCount,
+            Long replayedFromEventId,
+            LocalDateTime lastCallbackAt,
+            Integer statusCode,
+            Boolean successFlag,
+            String errorCode,
+            String errorMessage,
+            Integer attemptCount,
+            Integer maxAttempts,
+            String idempotencyKey,
+            String callbackPayloadJson,
+            LocalDateTime createdAt,
+            LocalDateTime updatedAt
+    ) {
+    }
+
+    public record N8nErrorMetricResponse(
+            String errorCode,
+            Integer count
+    ) {
+    }
+
+    public record N8nEventSummaryResponse(
+            Integer windowHours,
+            Integer totalEvents,
+            Integer deliveredCount,
+            Integer failedCount,
+            Integer pendingCount,
+            Integer skippedCount,
+            Integer workflowFailedCount,
+            Integer workflowRunningCount,
+            Integer manualPendingCount,
+            Integer retryableFailedCount,
+            Double successRate,
+            N8nEventResponse latestFailure,
+            List<N8nErrorMetricResponse> topErrorCodes
+    ) {
+    }
+
+    public record N8nEventDetailResponse(
+            N8nEventResponse event,
+            N8nEventResponse sourceEvent,
+            List<N8nEventResponse> replayEvents
+    ) {
+    }
+
+    public record N8nRetryResponse(
+            Boolean retried,
+            Long sourceEventId,
+            N8nEventResponse event
+    ) {
+    }
+
+    public record N8nManualHandoffRequest(String reason) {
     }
 }

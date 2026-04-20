@@ -35,6 +35,7 @@ class RagIndexUpsertRequest(CamelModel):
     task_id: str | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
     chunks: list[RagChunkPayload] = Field(default_factory=list)
+    previous_chunk_count: int | None = None
     updated_at: datetime | None = None
 
 

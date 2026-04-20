@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, patch
 from src.app.api.deps import RequestContext
 from src.app.schemas.chat import AttachmentContext, ChatCompletionRequest, ChatContext
 from src.app.schemas.rag import RagQueryHit
-from src.app.services.rag_service import rag_service
+from src.app.services.rag_service import PrivateRetrievalResult, rag_service
 from src.app.services.web_search_service import WebSearchHit
 
 
@@ -22,6 +22,10 @@ def _hit(source_type: str, source_id: int, score: float, title: str = '测试资
     )
 
 
+def _private_result(*hits: RagQueryHit, used_tools: list[str] | None = None) -> PrivateRetrievalResult:
+    return PrivateRetrievalResult(hits=list(hits), used_tools=used_tools or ['hybrid_retrieval:balanced'])
+
+
 class RagRetrievalPriorityTest(unittest.IsolatedAsyncioTestCase):
     def _context(self) -> RequestContext:
         return RequestContext(user_id=1, org_id=7, request_id='priority-test')
@@ -31,7 +35,7 @@ class RagRetrievalPriorityTest(unittest.IsolatedAsyncioTestCase):
 
         async def private_hits(request, *_args):
             calls.append(request)
-            return [_hit('DOCUMENT', 101, 0.92, '引用文档')]
+            return _private_result(_hit('DOCUMENT', 101, 0.92, '引用文档'))
 
         request = ChatCompletionRequest(
             message='请总结这份引用文档',
@@ -65,8 +69,8 @@ class RagRetrievalPriorityTest(unittest.IsolatedAsyncioTestCase):
         async def private_hits(request, *_args):
             calls.append(request)
             if request.context.attachments:
-                return [_hit('DOCUMENT', 101, 0.42, '弱引用文档')]
-            return [_hit('FILE', 202, 0.9, '项目文件')]
+                return _private_result(_hit('DOCUMENT', 101, 0.42, '弱引用文档'))
+            return _private_result(_hit('FILE', 202, 0.9, '项目文件'))
 
         request = ChatCompletionRequest(
             message='项目方案里如何定义交付流程？',
@@ -96,7 +100,7 @@ class RagRetrievalPriorityTest(unittest.IsolatedAsyncioTestCase):
 
     async def test_web_search_runs_after_weak_private_sources(self) -> None:
         async def private_hits(*_args):
-            return [_hit('FILE', 202, 0.35, '弱项目文件')]
+            return _private_result(_hit('FILE', 202, 0.35, '弱项目文件'))
 
         request = ChatCompletionRequest(
             message='补充最新行业背景',
@@ -133,7 +137,7 @@ class RagRetrievalPriorityTest(unittest.IsolatedAsyncioTestCase):
             query_rewrite_enabled=False,
         )
 
-        with patch.object(rag_service, '_private_hits', new=AsyncMock(return_value=[])):
+        with patch.object(rag_service, '_private_hits', new=AsyncMock(return_value=PrivateRetrievalResult(hits=[], used_tools=[]))):
             decision = await rag_service.query(request, self._context())
 
         self.assertEqual('GENERAL_KNOWLEDGE', decision.answer_source)

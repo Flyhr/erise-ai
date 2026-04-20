@@ -98,14 +98,12 @@
 
 <script setup lang="ts">
 import { computed, nextTick, onMounted, reactive, ref, watch } from 'vue'
-import { useRouter } from 'vue-router'
 import { ElMessage, type FormInstance, type FormRules } from 'element-plus'
 import { getCaptcha, register } from '@/api/auth'
 import { useAuthStore } from '@/stores/auth'
 import { resolveErrorMessage } from '@/utils/formatters'
 import ThirdPartyLogin from '@/components/common/ThirdPartyLogin.vue'
 
-const router = useRouter()
 const authStore = useAuthStore()
 
 const mode = ref<'login' | 'register'>('login')
@@ -248,7 +246,9 @@ const submit = async () => {
       authStore.applySession(session)
       ElMessage.success('注册成功')
     }
-    await router.push(authStore.isAdmin ? '/admin' : '/workspace')
+    // Force a fresh app bootstrap after auth so stale dev-module caches
+    // cannot break the first post-login lazy route load.
+    window.location.assign(authStore.isAdmin ? '/admin' : '/workspace')
   } catch (error) {
     errorText.value = mapAuthErrorMessage(error)
   } finally {

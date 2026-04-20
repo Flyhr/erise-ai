@@ -85,45 +85,112 @@ export const uploadStatusLabel = (status?: string) => ({
 }[status || ''] || status || '未知')
 
 export type KnowledgeReadiness = 'ready' | 'pending' | 'processing' | 'failed' | 'unsupported'
+export type KnowledgeProgressPhase =
+  | 'pending'
+  | 'parsing'
+  | 'parsed'
+  | 'indexing'
+  | 'parse_retrying'
+  | 'index_retrying'
+  | 'parse_timeout_retrying'
+  | 'index_timeout_retrying'
+  | 'completed'
+  | 'failed'
+  | 'unsupported'
 
 const READY_STATUSES = new Set(['READY', 'SUCCESS', 'INDEXED', 'COMPLETED'])
 const PROCESSING_STATUSES = new Set(['PROCESSING'])
 const PENDING_STATUSES = new Set(['INIT', 'PENDING', 'UPLOADING'])
 const FAILED_STATUSES = new Set(['FAILED', 'DELETED', 'NEEDS_REPAIR'])
 const UNSUPPORTED_STATUSES = new Set(['SKIPPED', 'UNSUPPORTED'])
+const RETRYING_STATUS = 'RETRYING'
+const TIMEOUT_RETRYING_STATUS = 'TIMEOUT_RETRYING'
 
 const normalizeStatus = (status?: string) => (status || '').trim().toUpperCase()
 
-export const resolveKnowledgeReadiness = (parseStatus?: string, indexStatus?: string): KnowledgeReadiness => {
+const resolveKnowledgePhaseByStatus = (parseStatus?: string, indexStatus?: string): KnowledgeProgressPhase => {
   const parse = normalizeStatus(parseStatus)
   const index = normalizeStatus(indexStatus)
-  const statuses = [parse, index].filter(Boolean)
 
-  if (!statuses.length) {
+  if (!parse && !index) {
     return 'pending'
   }
-  if (statuses.some((status) => FAILED_STATUSES.has(status))) {
+  if (parse === TIMEOUT_RETRYING_STATUS) {
+    return 'parse_timeout_retrying'
+  }
+  if (index === TIMEOUT_RETRYING_STATUS) {
+    return 'index_timeout_retrying'
+  }
+  if (parse === RETRYING_STATUS) {
+    return 'parse_retrying'
+  }
+  if (index === RETRYING_STATUS) {
+    return 'index_retrying'
+  }
+  if ([parse, index].some((status) => FAILED_STATUSES.has(status))) {
     return 'failed'
   }
-  if (statuses.some((status) => PROCESSING_STATUSES.has(status))) {
-    return 'processing'
+  if (PROCESSING_STATUSES.has(parse)) {
+    return 'parsing'
   }
-  if (statuses.some((status) => READY_STATUSES.has(status))) {
-    return 'ready'
+  if (READY_STATUSES.has(parse)) {
+    if (PROCESSING_STATUSES.has(index)) {
+      return 'indexing'
+    }
+    if (!index || PENDING_STATUSES.has(index)) {
+      return 'parsed'
+    }
+    if (READY_STATUSES.has(index)) {
+      return 'completed'
+    }
   }
-  if (statuses.every((status) => UNSUPPORTED_STATUSES.has(status))) {
+  if (UNSUPPORTED_STATUSES.has(parse)) {
+    if (PROCESSING_STATUSES.has(index)) {
+      return 'indexing'
+    }
+    if (READY_STATUSES.has(index)) {
+      return 'completed'
+    }
+    if (!index || PENDING_STATUSES.has(index) || UNSUPPORTED_STATUSES.has(index)) {
+      return 'unsupported'
+    }
+  }
+  if (PROCESSING_STATUSES.has(index)) {
+    return 'indexing'
+  }
+  if (READY_STATUSES.has(index) && !parse) {
+    return 'completed'
+  }
+  if ([parse, index].filter(Boolean).every((status) => UNSUPPORTED_STATUSES.has(status))) {
     return 'unsupported'
   }
-  if (statuses.some((status) => PENDING_STATUSES.has(status) || !status)) {
+  return 'pending'
+}
+
+export const resolveKnowledgePhase = (parseStatus?: string, indexStatus?: string): KnowledgeProgressPhase =>
+  resolveKnowledgePhaseByStatus(parseStatus, indexStatus)
+
+export const resolveKnowledgeReadiness = (parseStatus?: string, indexStatus?: string): KnowledgeReadiness => {
+  const phase = resolveKnowledgeProgressPhase(parseStatus, indexStatus)
+  if (phase === 'completed') {
+    return 'ready'
+  }
+  if (phase === 'failed') {
+    return 'failed'
+  }
+  if (phase === 'unsupported') {
+    return 'unsupported'
+  }
+  if (phase === 'pending') {
     return 'pending'
   }
-  return 'pending'
+  return 'processing'
 }
 
 export const knowledgeReadinessLabel = (parseStatus?: string, indexStatus?: string) => ({
   ready: '可引用',
   pending: '待解析',
-  processing: '解析中',
+  processing: '处理中',
   failed: '解析失败',
   unsupported: '不可引用',
 }[resolveKnowledgeReadiness(parseStatus, indexStatus)])
@@ -141,6 +208,52 @@ export const isKnowledgeReady = (parseStatus?: string, indexStatus?: string) =>
 
 export const isKnowledgeFailed = (parseStatus?: string, indexStatus?: string) =>
   resolveKnowledgeReadiness(parseStatus, indexStatus) === 'failed'
+
+export const resolveKnowledgeProgressPhase = (parseStatus?: string, indexStatus?: string): KnowledgeProgressPhase =>
+  resolveKnowledgePhaseByStatus(parseStatus, indexStatus)
+
+export const knowledgeProgressLabel = (parseStatus?: string, indexStatus?: string) => ({
+  pending: '待解析',
+  parsing: '解析中',
+  parsed: '已解析',
+  indexing: '索引中',
+  parse_retrying: '解析重试中',
+  index_retrying: '索引重试中',
+  parse_timeout_retrying: '解析超时，重试中',
+  index_timeout_retrying: '索引超时，重试中',
+  completed: '已完成',
+  failed: '解析失败',
+  unsupported: '不可引用',
+}[resolveKnowledgeProgressPhase(parseStatus, indexStatus)])
+
+export const knowledgeProgressTone = (parseStatus?: string, indexStatus?: string) => ({
+  pending: 'warning',
+  parsing: 'primary',
+  parsed: 'info',
+  indexing: 'primary',
+  parse_retrying: 'warning',
+  index_retrying: 'warning',
+  parse_timeout_retrying: 'warning',
+  index_timeout_retrying: 'warning',
+  completed: 'success',
+  failed: 'danger',
+  unsupported: 'info',
+}[resolveKnowledgeProgressPhase(parseStatus, indexStatus)] || 'info') as 'primary' | 'success' | 'warning' | 'danger' | 'info'
+
+export const isKnowledgeCompleted = (parseStatus?: string, indexStatus?: string) =>
+  resolveKnowledgeProgressPhase(parseStatus, indexStatus) === 'completed'
+
+export const isKnowledgeInFlight = (parseStatus?: string, indexStatus?: string) =>
+  [
+    'pending',
+    'parsing',
+    'parsed',
+    'indexing',
+    'parse_retrying',
+    'index_retrying',
+    'parse_timeout_retrying',
+    'index_timeout_retrying',
+  ].includes(resolveKnowledgeProgressPhase(parseStatus, indexStatus))
 
 const AI_PROVIDER_ORDER: Record<string, number> = {
   DEEPSEEK: 0,

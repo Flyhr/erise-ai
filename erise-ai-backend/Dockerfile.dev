@@ -1,3 +1,7 @@
+# 废弃说明：
+# 历史开发态 Dockerfile 已废弃。
+# 现在统一使用 `erise-ai-backend/Dockerfile` 作为唯一官方镜像构建入口。
+
 FROM maven:3.9.11-eclipse-temurin-21
 
 WORKDIR /workspace

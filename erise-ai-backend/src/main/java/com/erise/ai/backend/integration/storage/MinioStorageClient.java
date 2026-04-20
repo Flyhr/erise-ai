@@ -12,6 +12,7 @@ import io.minio.MinioClient;
 import io.minio.PutObjectArgs;
 import io.minio.RemoveObjectArgs;
 import io.minio.StatObjectArgs;
+import java.io.ByteArrayInputStream;
 import java.io.InputStream;
 import org.springframework.stereotype.Component;
 import org.springframework.web.multipart.MultipartFile;
@@ -33,14 +34,15 @@ public class MinioStorageClient {
 
     public void putObject(String objectKey, MultipartFile file) {
         try (InputStream inputStream = file.getInputStream()) {
-            minioClient.putObject(
-                    PutObjectArgs.builder()
-                            .bucket(properties.getStorage().getBucket())
-                            .object(objectKey)
-                            .stream(inputStream, file.getSize(), -1)
-                            .contentType(file.getContentType())
-                            .build()
-            );
+            putObject(objectKey, inputStream, file.getSize(), file.getContentType());
+        } catch (Exception exception) {
+            throw new BizException(ErrorCodes.FILE_ERROR, "Failed to upload file: " + exception.getMessage());
+        }
+    }
+
+    public void putObject(String objectKey, byte[] bytes, String contentType) {
+        try (InputStream inputStream = new ByteArrayInputStream(bytes == null ? new byte[0] : bytes)) {
+            putObject(objectKey, inputStream, bytes == null ? 0 : bytes.length, contentType);
         } catch (Exception exception) {
             throw new BizException(ErrorCodes.FILE_ERROR, "Failed to upload file: " + exception.getMessage());
         }
@@ -111,6 +113,17 @@ public class MinioStorageClient {
 
     public String bucket() {
         return properties.getStorage().getBucket();
+    }
+
+    private void putObject(String objectKey, InputStream inputStream, long size, String contentType) throws Exception {
+        minioClient.putObject(
+                PutObjectArgs.builder()
+                        .bucket(properties.getStorage().getBucket())
+                        .object(objectKey)
+                        .stream(inputStream, size, -1)
+                        .contentType(contentType)
+                        .build()
+        );
     }
 
     private void ensureBucketExists() {

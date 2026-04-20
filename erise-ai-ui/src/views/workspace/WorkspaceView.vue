@@ -205,9 +205,10 @@ import {
   documentStatusTone,
   formatDateTime,
   formatFileSize,
+  isKnowledgeInFlight,
   isOfficeEditableFile,
-  knowledgeReadinessLabel,
-  knowledgeReadinessTone,
+  knowledgeProgressLabel,
+  knowledgeProgressTone,
   normalizeFileTypeLabel,
   resolveErrorMessage,
 } from '@/utils/formatters'
@@ -226,11 +227,8 @@ const pageNum = ref<number>(1)
 const pageSize = 10
 const totalItems = ref<number>(0)
 
-const ACTIVE_FILE_STATUSES = new Set(['INIT', 'UPLOADING', 'PENDING', 'PROCESSING'])
-const normalizeFileStatus = (value?: string) => (value || '').trim().toUpperCase()
 const hasActiveFileStatus = (record?: { parseStatus?: string; indexStatus?: string }) =>
-  ACTIVE_FILE_STATUSES.has(normalizeFileStatus(record?.parseStatus)) ||
-  ACTIVE_FILE_STATUSES.has(normalizeFileStatus(record?.indexStatus))
+  isKnowledgeInFlight(record?.parseStatus, record?.indexStatus)
 
 const projectLookup = computed(() => new Map(projects.value.map((project) => [project.id, project.name])))
 const totalFiles = computed(() => projects.value.reduce((sum, project) => sum + project.fileCount, 0))
@@ -281,10 +279,10 @@ const getFileIcon = (file: WorkspaceRecentItemView) => {
 }
 
 const getFileStatusLabel = (file: WorkspaceRecentItemView) =>
-  knowledgeReadinessLabel(file.parseStatus, file.indexStatus)
+  knowledgeProgressLabel(file.parseStatus, file.indexStatus)
 
 const getFileStatusTone = (file: WorkspaceRecentItemView) =>
-  knowledgeReadinessTone(file.parseStatus, file.indexStatus)
+  knowledgeProgressTone(file.parseStatus, file.indexStatus)
 
 const getFileStatusIcon = (file: WorkspaceRecentItemView) =>
   ({ success: 'check_circle', warning: 'schedule', primary: 'visibility', danger: 'cancel', info: 'edit_note' }[getFileStatusTone(file)] ||
@@ -348,14 +346,27 @@ const switchRecentMode = async (mode: 'viewed' | 'edited') => {
 }
 
 const load = async () => {
+  const [projectResult, sessionResult] = await Promise.allSettled([
+    getProjects({ pageNum: 1, pageSize: 8 }),
+    getSessions(),
+  ])
+
+  if (projectResult.status === 'fulfilled') {
+    projectTotal.value = projectResult.value.total
+    projects.value = projectResult.value.records
+  } else {
+    ElMessage.error(resolveErrorMessage(projectResult.reason, '工作台数据加载失败，请稍后重试'))
+    return
+  }
+
+  if (sessionResult.status === 'fulfilled') {
+    sessions.value = sessionResult.value.slice(0, 6)
+  } else {
+    sessions.value = []
+    ElMessage.warning(resolveErrorMessage(sessionResult.reason, 'AI 会话暂时不可用，工作台已降级显示'))
+  }
+
   try {
-    const [projectPage, aiSessions] = await Promise.all([
-      getProjects({ pageNum: 1, pageSize: 8 }),
-      getSessions(),
-    ])
-    projectTotal.value = projectPage.total
-    projects.value = projectPage.records
-    sessions.value = aiSessions.slice(0, 6)
     await loadRecent(1)
   } catch (error) {
     ElMessage.error(resolveErrorMessage(error, '工作台数据加载失败，请稍后重试'))

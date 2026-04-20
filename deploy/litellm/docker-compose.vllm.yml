@@ -1,3 +1,9 @@
+# Unified production gateway overlay.
+# Layer this on top of docker-compose.yml + deploy/vllm/docker-compose.yml.
+# LiteLLM is the single AI ingress for cloud and fans out to DeepSeek API,
+# OpenAI API, and the local vLLM deployment.
+# Keep LITELLM_MODEL and DEFAULT_MODEL_CODE aligned with
+# deploy/litellm/litellm.vllm.yaml:model_name.
 services:
   litellm:
     image: ghcr.io/berriai/litellm:main-stable
@@ -5,6 +11,12 @@ services:
     restart: unless-stopped
     profiles: ["litellm"]
     command: ["--config", "/app/config.yaml", "--port", "4000", "--num_workers", "1"]
+    environment:
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_BASE_URL: ${OPENAI_BASE_URL:-https://api.openai.com/v1}
+      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
+      DEEPSEEK_BASE_URL: ${DEEPSEEK_BASE_URL:-https://api.deepseek.com/v1}
+      LITELLM_API_KEY: ${LITELLM_API_KEY:-}
     volumes:
       - ./deploy/litellm/litellm.vllm.yaml:/app/config.yaml:ro
     depends_on:
@@ -32,6 +44,8 @@ services:
       MODEL_API_KEY: ${LITELLM_API_KEY:-}
       LITELLM_BASE_URL: http://litellm:4000/v1
       LITELLM_API_KEY: ${LITELLM_API_KEY:-}
+      LITELLM_MODEL: ${LITELLM_MODEL:-deepseek-chat}
+      DEFAULT_MODEL_CODE: ${LITELLM_MODEL:-deepseek-chat}
       EMBEDDING_PROVIDER_CODE: LITELLM
       EMBED_BASE_URL: http://litellm:4000/v1
       EMBEDDING_MODEL: ${EMBEDDING_MODEL:-text-embedding-3-small}

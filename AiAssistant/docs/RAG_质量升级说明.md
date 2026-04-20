@@ -2,156 +2,188 @@
 
 ## 目标
 
-本轮 P1 把 Erise-AI 的 RAG 能力从“能检索”升级为“可控、可评测、可解释”。
+本轮升级将 Erise-AI 的 RAG 链路从“可检索”推进到“可调优、可解释、可重建”。
 
-重点改动：
+本次已经落地的重点包括：
 
-1. 新增 Query Rewrite / Query Expansion 模块。
-2. 新增强引用守卫（Strict Citation Guard），当私有资料证据不足时直接降级回答，不允许伪造“依据某文档”。
-3. 新增答案-引用一致性校验，用于离线评测和请求日志观测。
-4. 新增离线评测脚本与最小样例数据。
+1. 查询改写从纯规则增强为“规则 + LLM”双层方案
+2. 检索从“Qdrant dense + Java 侧 BM25”演进为“Qdrant dense+sparse 一体化存储”
+3. 召回融合权重支持按查询类型动态切换
+4. 排序从本地 reranker 扩展为“LLM 重排序优先，cross-encoder 回退”
+5. 旧的 Java 内部 AI 检索入口退役，并补充废弃说明
+6. 支持在测试环境中直接强制重建旧的 dense-only collection
 
-## 核心实现
+## 当前架构
 
-### 1. Query Rewrite / Query Expansion
+### 1. 查询前处理
 
-新增服务：
+入口：
 
 - `src/app/services/query_rewrite_service.py`
+- `src/app/services/retrieval_llm_service.py`
 
-能力：
+当前行为：
 
-- 清洗口语化问法和冗余前缀
-- 将“这份文档 / 这个附件 / 发送给你的文件”等泛指表达收敛成更稳定的检索词
-- 自动补充摘要、概述、主要内容、步骤、处理流程等扩展词
-- 对 OCR / PDF / TXT / DOCX / RAG 等领域词做扩展
+- 保留用户原始问题不变
+- 检索侧先做规则清洗、意图识别、关键词聚焦
+- 如果 LLM 可用，再补充：
+  - 问题意图
+  - 更完整的专业检索语句
+  - 关键词扩展
+  - 语义扩展
+  - 检索策略画像 `BALANCED / KEYWORD_HEAVY / VECTOR_HEAVY`
 
-接入点：
+### 2. 索引存储
+
+入口：
+
+- `src/app/services/rag_service.py`
+- `src/app/services/sparse_vector_service.py`
+
+当前 Qdrant collection 结构：
+
+- dense 向量名：`dense`
+- sparse 向量名：`sparse`
+
+每个 chunk 写入时会同时包含：
+
+- dense embedding
+- sparse term vector
+- 统一 payload 元数据
+
+关键 payload 字段：
+
+- `source_type`
+- `source_id`
+- `source_name`
+- `source_url`
+- `source_version`
+- `chunk_num`
+- `chunk_id`
+- `chunk_hash`
+- `task_id`
+- `metadata`
+- `page_no`
+- `section_path`
+
+### 3. 召回与排序
+
+当前召回链路：
+
+1. dense 检索
+2. sparse 检索
+3. 按权重做融合
+4. 进入 LLM 重排序
+5. 如果 LLM 重排序不可用，则回退到 cross-encoder
+6. 如果本地 reranker 也不可用，则回退到保守归一化排序
+
+当前默认权重：
+
+- 平衡查询：`0.7 dense + 0.3 sparse`
+- 报错 / 日志 / 代码类查询：`0.5 dense + 0.5 sparse`
+
+## 与旧方案的区别
+
+### 已废弃的旧链路
+
+以下链路已经不再服务 AI 助手主检索：
+
+- Python -> Java `/internal/v1/knowledge/retrieve`
+- Java 内部 AI 专用 BM25 召回入口
+
+相关历史文件仍保留，但已在文件顶部或代码块中添加中文废弃说明，用于：
+
+- 回滚排障
+- 历史接口追溯
+- 避免团队误接回旧链路
+
+### 仍保留的 Java 稀疏能力
+
+`erise-ai-backend` 中的 `SparseKnowledgeSupport` 没有删除，原因是：
+
+- 它仍被工作台页面搜索复用
+- 它对 AI 主检索已经废弃
+- 它对页面搜索暂时仍然有效
+
+## 旧 collection 自动迁移策略
+
+当前策略已经调整为：
+
+- 如果检测到 Qdrant collection 是旧的 dense-only 结构
+- 且当前环境里的历史数据被视为可丢弃测试数据
+- 系统将直接删除并按新的 dense+sparse 结构重建 collection
+
+对应代码：
 
 - `src/app/services/rag_service.py`
 
-当前会把原始问句、重写问句和扩展问句一起参与：
+这个行为用于开发 / 测试环境快速完成索引层升级，不再要求手工保留旧测试数据。
 
-- 向量检索
-- 关键词检索
-- 联网回退查询
+## 全量重建结果
 
-### 2. 严格引用模式
+最近一次本地实跑结果：
 
-新增服务：
+- 启动环境：`docker compose --env-file .env -f docker-compose.yml up -d`
+- 删除旧测试 collection
+- 对现有文件资产重新触发索引链
 
-- `src/app/services/citation_guard_service.py`
+执行结果：
 
-规则：
+- collection：`kb_chunks_ollama_dev`
+- dense 维度：`768`
+- sparse modifier：`idf`
+- 当前点数：`2231`
 
-- 当回答来源为 `PRIVATE_KNOWLEDGE` 且证据不足时，直接降级
-- 当前默认判定依据包括：
-  - 私有引用条数不足
-  - 检索置信度过低
-  - 命中片段质量不足
+补充说明：
 
-降级后不会继续调用模型生成“像是有依据”的回答，而是返回谨慎说明，并附上目前仅能确认的相关片段。
+- 上述结果来自当时的本地测试配置
+- 统一环境后的官方默认 collection 名称应以 `.env` / `.env.example` 中的 `QDRANT_KB_COLLECTION` 为准
 
-### 3. 答案-引用一致性校验
+文件资产重建结果：
 
-新增能力：
+- `createFile.txt` -> `SUCCESS`
+- `郝源毕业设计说明书-草稿2.docx` -> `SUCCESS`
+- `txt_sample_file_5MB.txt` -> `SUCCESS`
+- `pdf_sample_file_25MB.pdf` -> `SUCCESS`
 
-- 对回答内容做 token 级覆盖率计算
-- 检测是否存在“根据文档 / 依据附件 / 文档显示”一类强依据表述
-- 输出一致性结果：
-  - `coverageRatio`
-  - `consistencyPassed`
-  - `claimDetected`
-  - `reason`
+说明：
 
-当前阶段：
+- 其中 PDF 大文件重建过程中出现过一次 MySQL `Lock wait timeout exceeded`
+- 后端自动重试后最终成功
 
-- 一致性校验会进入请求日志的响应负载
-- 一致性校验会进入离线评测结果
-- 为避免前台噪音，目前不会把一致性提醒直接展示成用户报错
+## 验证命令
 
-## 可观测性
-
-`chat_service` 现会把以下 RAG 质量信息写入 `ai_request_log.response_payload_json`：
-
-- `rewrittenQueries`
-- `rewriteHints`
-- `evidenceGuard`
-- `consistencyCheck`
-
-结合 P0 中新增的统一日志字段，可以直接追踪：
-
-- 这次请求是否用了 query rewrite / query expansion
-- 为什么触发了弱证据降级
-- 答案和引用的覆盖率有多高
-
-## 离线评测
-
-新增脚本：
-
-- `scripts/rag_eval.py`
-
-新增样例数据：
-
-- `scripts/eval_data/rag_eval_minimal.json`
-
-当前输出指标：
-
-- `hitRateAt1`
-- `hitRateAtTopK`
-- `averageCitationCoverage`
-- `weakEvidenceRatio`
-
-## 运行命令
-
-### Python 回归测试
+### Python 全量回归
 
 ```bash
 cd D:\EriseAi\AiAssistant
 python -m unittest discover -s tests -v
 ```
 
-### 阶段 smoke
-
-```bash
-cd D:\EriseAi\AiAssistant
-python scripts\ai_stage_smoke.py
-```
-
-### 离线评测
-
-```bash
-cd D:\EriseAi\AiAssistant
-python scripts\rag_eval.py
-```
-
-### Java backend 测试
+### Java 编译验证
 
 ```bash
 cd D:\EriseAi\erise-ai-backend
-mvn -gs ..\.mvn-settings.xml -s ..\.mvn-settings.xml test
+mvn -gs ..\.mvn-settings.xml -s ..\.mvn-settings.xml -DskipTests compile
 ```
 
-## 评测结果示例
+### 查看 Qdrant collection 结构
 
-基于最小样例数据的一次本地运行结果：
+```powershell
+Invoke-RestMethod -Headers @{ 'api-key' = 'dev-qdrant-key' } `
+  http://localhost:6333/collections/kb_chunks_ollama_dev | ConvertTo-Json -Depth 12
+```
 
-- `hitRateAt1 = 1.0`
-- `hitRateAtTopK = 1.0`
-- `averageCitationCoverage = 0.7619`
-- `weakEvidenceRatio = 0.0`
+### 查看 collection 点数
 
-## 备注
+```powershell
+Invoke-RestMethod -Headers @{ 'api-key' = 'dev-qdrant-key' } `
+  http://localhost:6333/collections/kb_chunks_ollama_dev/points/count `
+  -Method Post -ContentType 'application/json' -Body '{}' | ConvertTo-Json -Depth 8
+```
 
-本轮没有大改现有接口路径，主要变更集中在：
+## 后续建议
 
-- `rag_service`
-- `chat_service`
-- 新增 rewrite / citation guard 服务
-- 新增离线评测脚本与样例数据
-
-后续如果进入下一阶段，可以继续把：
-
-- 一致性校验结果接入后台看板
-- 严格引用与 Query Rewrite 做成用户可调策略
-- 评测集扩展成真实业务样本
+1. 如果要彻底统一检索体系，可以继续把页面搜索也迁移到 Qdrant sparse/dense 统一方案。
+2. 可以为大文件索引任务增加更显式的数据库锁冲突重试与任务恢复提示。
+3. 可以继续扩大离线评测集，覆盖更多“口语化问题 -> 专业检索语句”的真实业务样本。

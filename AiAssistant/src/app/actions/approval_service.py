@@ -26,13 +26,6 @@ APPROVAL_STATUS_APPLIED = 'APPLIED'
 APPROVAL_STATUS_REJECTED = 'REJECTED'
 APPROVAL_STATUS_FAILED = 'FAILED'
 
-APPROVAL_WORKFLOW_STATUS = {
-    APPROVAL_STATUS_PENDING: 'WAITING_FOR_REVIEW',
-    APPROVAL_STATUS_APPLIED: 'COMPLETED',
-    APPROVAL_STATUS_REJECTED: 'REJECTED',
-    APPROVAL_STATUS_FAILED: 'FAILED',
-}
-
 
 def _json_dumps(value: object | None) -> str | None:
     if value is None:
@@ -83,7 +76,7 @@ class ApprovalService:
             'targetType': approval.target_type,
             'targetId': approval.target_id,
             'approvalStatus': approval.status,
-            'workflowExecutionStatus': APPROVAL_WORKFLOW_STATUS.get(approval.status, 'UNKNOWN'),
+            'workflowExecutionStatus': n8n_event_service.WORKFLOW_PENDING,
             'workflowMode': 'WEBHOOK',
             'workflowEngine': 'N8N',
             'eventType': event_type,
@@ -132,7 +125,7 @@ class ApprovalService:
             session_id=approval.session_id,
             user_id=approval.initiated_user_id,
             project_id=approval.project_id,
-            workflow_status=APPROVAL_WORKFLOW_STATUS[APPROVAL_STATUS_PENDING],
+            workflow_status=n8n_event_service.WORKFLOW_PENDING,
             idempotency_key=f'approval:{approval.id}:pending',
         )
         self._audit(
@@ -255,7 +248,7 @@ class ApprovalService:
                 session_id=approval.session_id,
                 user_id=approval.initiated_user_id,
                 project_id=approval.project_id,
-                workflow_status=APPROVAL_WORKFLOW_STATUS[APPROVAL_STATUS_APPLIED],
+                workflow_status=n8n_event_service.WORKFLOW_PENDING,
                 idempotency_key=f'approval:{approval.id}:applied',
             )
             self._audit(
@@ -287,7 +280,7 @@ class ApprovalService:
                 session_id=approval.session_id,
                 user_id=approval.initiated_user_id,
                 project_id=approval.project_id,
-                workflow_status=APPROVAL_WORKFLOW_STATUS[APPROVAL_STATUS_FAILED],
+                workflow_status=n8n_event_service.WORKFLOW_PENDING,
                 idempotency_key=f'approval:{approval.id}:failed',
             )
             self._audit(
@@ -326,7 +319,7 @@ class ApprovalService:
             session_id=approval.session_id,
             user_id=approval.initiated_user_id,
             project_id=approval.project_id,
-            workflow_status=APPROVAL_WORKFLOW_STATUS[APPROVAL_STATUS_REJECTED],
+            workflow_status=n8n_event_service.WORKFLOW_PENDING,
             idempotency_key=f'approval:{approval.id}:rejected',
         )
         self._audit(

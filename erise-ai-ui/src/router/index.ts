@@ -30,6 +30,8 @@ const AdminUsersView = () => import("@/views/admin/AdminUsersView.vue");
 const AdminTasksView = () => import("@/views/admin/AdminTasksView.vue");
 const AdminAuditLogsView = () => import("@/views/admin/AdminAuditLogsView.vue");
 const AdminModelsView = () => import("@/views/admin/AdminModelsView.vue");
+const AdminAiInfrastructureView = () =>
+  import("@/views/admin/AdminAiInfrastructureView.vue");
 const AdminAiPromptsView = () => import("@/views/admin/AdminAiPromptsView.vue");
 const AdminAiRequestLogsView = () =>
   import("@/views/admin/AdminAiRequestLogsView.vue");
@@ -288,6 +290,13 @@ const router = createRouter({
           },
         },
         {
+          path: "ai/infrastructure",
+          component: AdminAiInfrastructureView,
+          meta: {
+            title: "AI 基础设施",
+          },
+        },
+        {
           path: "ai/models",
           component: AdminModelsView,
           meta: {
@@ -314,7 +323,6 @@ const router = createRouter({
           component: AdminAiFeedbackView,
           meta: {
             title: "用户反馈",
-            description: "查看用户对 AI 回复的点赞、点踩与备注。",
           },
         },
         {
@@ -322,7 +330,6 @@ const router = createRouter({
           component: AdminAiIndexTasksView,
           meta: {
             title: "索引任务",
-            description: "查看索引任务状态、失败原因与重试入口。",
           },
         },
         {

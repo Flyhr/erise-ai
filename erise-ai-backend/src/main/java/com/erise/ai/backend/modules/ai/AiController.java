@@ -15,10 +15,13 @@ import java.io.IOException;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import lombok.RequiredArgsConstructor;
 import org.slf4j.MDC;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.MediaType;
 import org.springframework.http.codec.ServerSentEvent;
@@ -103,6 +106,7 @@ class AiService {
     private final CloudAiClient cloudAiClient;
     private final AuditLogService auditLogService;
     private final ObjectMapper objectMapper;
+    private final JdbcTemplate jdbcTemplate;
 
     AiChatResponse chat(AiChatRequest request) {
         CurrentUser currentUser = SecurityUtils.currentUser();
@@ -211,8 +215,17 @@ class AiService {
 
     List<AiModelView> models() {
         CurrentUser currentUser = SecurityUtils.currentUser();
-        return cloudAiClient.models(currentUser, requestId()).stream()
-                .map(item -> new AiModelView(item.providerCode(), item.modelCode(), item.modelName(), item.isDefault(), item.supportStream(), item.maxContextTokens()))
+        List<CloudAiClient.ModelResponse> cloudModels = cloudAiClient.models(currentUser, requestId());
+        Map<String, EnabledModelConfig> enabledConfigs = loadEnabledModelConfigs();
+        if (enabledConfigs.isEmpty()) {
+            return cloudModels.stream()
+                    .map(item -> new AiModelView(item.providerCode(), item.modelCode(), item.modelName(), item.isDefault(), item.supportStream(), item.maxContextTokens()))
+                    .toList();
+        }
+        Set<String> seen = new HashSet<>();
+        return cloudModels.stream()
+                .map(model -> toEnabledAiModelView(model, enabledConfigs.get(modelIdentity(model.providerCode(), model.modelCode()))))
+                .filter(item -> item != null && seen.add(modelIdentity(item.providerCode(), item.modelCode())))
                 .toList();
     }
 
@@ -439,6 +452,50 @@ class AiService {
         } catch (IOException ignored) {
         }
     }
+
+    private Map<String, EnabledModelConfig> loadEnabledModelConfigs() {
+        List<EnabledModelConfig> records = jdbcTemplate.query("""
+                        select model_code, model_name, provider_code, is_default, support_stream, max_context_tokens, priority_no
+                        from ai_model_config
+                        where enabled = 1
+                        order by is_default desc, priority_no asc, id asc
+                        """,
+                (rs, rowNum) -> new EnabledModelConfig(
+                        rs.getString("provider_code"),
+                        rs.getString("model_code"),
+                        rs.getString("model_name"),
+                        rs.getBoolean("is_default"),
+                        rs.getBoolean("support_stream"),
+                        rs.getObject("max_context_tokens", Integer.class)
+                ));
+        Map<String, EnabledModelConfig> result = new HashMap<>();
+        for (EnabledModelConfig record : records) {
+            result.put(modelIdentity(record.providerCode(), record.modelCode()), record);
+        }
+        return result;
+    }
+
+    private AiModelView toEnabledAiModelView(CloudAiClient.ModelResponse model, EnabledModelConfig config) {
+        if (config == null) {
+            return null;
+        }
+        String modelName = config.modelName() == null || config.modelName().isBlank() ? model.modelName() : config.modelName();
+        Integer maxContextTokens = config.maxContextTokens() != null ? config.maxContextTokens() : model.maxContextTokens();
+        return new AiModelView(
+                config.providerCode(),
+                config.modelCode(),
+                modelName,
+                config.isDefault(),
+                config.supportStream(),
+                maxContextTokens
+        );
+    }
+
+    private String modelIdentity(String providerCode, String modelCode) {
+        String normalizedProvider = providerCode == null ? "" : providerCode.trim().toUpperCase();
+        String normalizedModel = modelCode == null ? "" : modelCode.trim();
+        return normalizedProvider + ":" + normalizedModel;
+    }
 }
 
 record AiChatRequest(Long projectId,
@@ -510,6 +567,16 @@ record AiSessionDetailView(Long id, Long projectId, String title, List<AiMessage
 }
 
 record AiModelView(String providerCode, String modelCode, String modelName, boolean isDefault, boolean supportStream, Integer maxContextTokens) {
+}
+
+record EnabledModelConfig(
+        String providerCode,
+        String modelCode,
+        String modelName,
+        boolean isDefault,
+        boolean supportStream,
+        Integer maxContextTokens
+) {
 }
 
 record ResolvedChatContext(Long projectId, List<CloudAiClient.AttachmentRef> attachments) {

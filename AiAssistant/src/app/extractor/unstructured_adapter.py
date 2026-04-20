@@ -16,7 +16,7 @@ class UnstructuredExtractResult:
 
 
 class UnstructuredAdapter:
-    SUPPORTED_EXTENSIONS = {'doc', 'docx', 'md', 'markdown', 'pdf', 'txt'}
+    SUPPORTED_EXTENSIONS = {'doc', 'docx', 'pdf'}
     RUNTIME_DEPENDENCY_HINTS = {
         'libmagic': 'Install the libmagic runtime package in the container image.',
         'magic': 'Install the libmagic runtime package in the container image.',
@@ -29,6 +29,13 @@ class UnstructuredAdapter:
 
     def supports(self, extension: str) -> bool:
         return extension in self.SUPPORTED_EXTENSIONS
+
+    def runtime_status(self) -> tuple[str, str | None, str | None]:
+        try:
+            self._load_partition()
+        except AiServiceError as exc:
+            return 'DOWN', exc.error_code, exc.message
+        return 'UP', None, 'Unstructured primary parser is available'
 
     def extract(
         self,

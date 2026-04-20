@@ -16,6 +16,7 @@ import java.util.ArrayList;
 import java.util.List;
 import lombok.Data;
 import lombok.RequiredArgsConstructor;
+import org.apache.ibatis.annotations.Param;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -34,6 +35,7 @@ class RagKnowledgeService {
     private static final String TASK_TYPE_INDEX = "INDEX";
     private static final String TASK_TYPE_DELETE = "DELETE";
     private static final int MAX_CHUNKS_PER_SOURCE = 5000;
+    private static final int RAG_CHUNK_INSERT_BATCH_SIZE = 500;
 
     private final RagSourceMapper ragSourceMapper;
     private final RagChunkMapper ragChunkMapper;
@@ -97,6 +99,26 @@ class RagKnowledgeService {
     }
 
     @Transactional(noRollbackFor = Exception.class)
+    VectorSyncResult upsertKbSourceVectorOnly(Long ownerUserId,
+                                              Long projectId,
+                                              String sourceType,
+                                              Long sourceId,
+                                              String sourceTitle,
+                                              List<ChunkInput> chunks) {
+        return upsertSourceVectorOnly(SCOPE_KB, ownerUserId, projectId, 0L, sourceType, sourceId, sourceTitle, chunks);
+    }
+
+    @Transactional(noRollbackFor = Exception.class)
+    void syncKbSourceMetadata(Long ownerUserId,
+                              Long projectId,
+                              String sourceType,
+                              Long sourceId,
+                              String sourceTitle,
+                              List<ChunkInput> chunks) {
+        syncSourceMetadata(SCOPE_KB, ownerUserId, projectId, 0L, sourceType, sourceId, sourceTitle, chunks);
+    }
+
+    @Transactional(noRollbackFor = Exception.class)
     void updateKbSourceTitle(Long ownerUserId,
                              Long projectId,
                              String sourceType,
@@ -145,7 +167,22 @@ class RagKnowledgeService {
                                List<ChunkInput> chunks) {
         Long normalizedSessionId = normalizeSessionId(sessionId);
         List<ChunkInput> normalizedChunks = normalizeChunks(chunks);
-        RagSourceEntity source = upsertSource(scopeType, ownerUserId, projectId, normalizedSessionId, sourceType, sourceId, sourceTitle);
+        RagSourceEntity existingSource = findSource(scopeType, ownerUserId, sourceType, sourceId, normalizedSessionId);
+        Integer previousChunkCount = existingSource == null ? 0 : existingSource.getChunkCount();
+        boolean keepExistingReadyDuringReindex = existingSource != null
+                && STATUS_READY.equalsIgnoreCase(existingSource.getStatus())
+                && existingSource.getChunkCount() != null
+                && existingSource.getChunkCount() > 0;
+        RagSourceEntity source = upsertSource(
+                scopeType,
+                ownerUserId,
+                projectId,
+                normalizedSessionId,
+                sourceType,
+                sourceId,
+                sourceTitle,
+                keepExistingReadyDuringReindex
+        );
         RagTaskEntity task = createTask(source, ownerUserId, projectId, sessionId, sourceType, sourceId, TASK_TYPE_INDEX);
         try {
             CloudAiClient.RagIndexUpsertResponse response = cloudAiClient.upsertRagIndex(
@@ -166,6 +203,7 @@ class RagKnowledgeService {
                                             item.sectionPath()
                                     ))
                                     .toList(),
+                            previousChunkCount == null ? 0 : previousChunkCount,
                             LocalDateTime.now()
                     ),
                     requestId(scopeType, sourceType, sourceId)
@@ -195,9 +233,9 @@ class RagKnowledgeService {
                 entity.setEmbeddingDimension(response == null ? null : response.embeddingDimension());
                 entity.setCreatedBy(ownerUserId);
                 entity.setUpdatedBy(ownerUserId);
-                ragChunkMapper.insert(entity);
                 insertedChunks.add(entity);
             }
+            batchInsertChunks(insertedChunks);
             sparseKnowledgeSupport.rebuildSourceIndex(source, insertedChunks, ownerUserId);
 
             source.setStatus(STATUS_READY);
@@ -218,7 +256,7 @@ class RagKnowledgeService {
             ragTaskMapper.updateById(task);
         } catch (Exception exception) {
             hardDeleteChunks(source.getId());
-            source.setStatus(STATUS_FAILED);
+            source.setStatus(keepExistingReadyDuringReindex ? STATUS_READY : STATUS_FAILED);
             source.setChunkCount(0);
             source.setLastError(trimError(exception.getMessage()));
             source.setUpdatedBy(ownerUserId);
@@ -230,6 +268,130 @@ class RagKnowledgeService {
             ragTaskMapper.updateById(task);
             throw exception;
         }
+    }
+
+    private VectorSyncResult upsertSourceVectorOnly(String scopeType,
+                                                    Long ownerUserId,
+                                                    Long projectId,
+                                                    Long sessionId,
+                                                    String sourceType,
+                                                    Long sourceId,
+                                                    String sourceTitle,
+                                                    List<ChunkInput> chunks) {
+        Long normalizedSessionId = normalizeSessionId(sessionId);
+        List<ChunkInput> normalizedChunks = normalizeChunks(chunks);
+        RagSourceEntity existingSource = findSource(scopeType, ownerUserId, sourceType, sourceId, normalizedSessionId);
+        Integer previousChunkCount = existingSource == null ? 0 : existingSource.getChunkCount();
+        boolean keepExistingReadyDuringReindex = existingSource != null
+                && STATUS_READY.equalsIgnoreCase(existingSource.getStatus())
+                && existingSource.getChunkCount() != null
+                && existingSource.getChunkCount() > 0;
+        RagSourceEntity source = upsertSource(
+                scopeType,
+                ownerUserId,
+                projectId,
+                normalizedSessionId,
+                sourceType,
+                sourceId,
+                sourceTitle,
+                keepExistingReadyDuringReindex
+        );
+        try {
+            CloudAiClient.RagIndexUpsertResponse response = cloudAiClient.upsertRagIndex(
+                    ownerUserId,
+                    new CloudAiClient.RagIndexUpsertRequest(
+                            ownerUserId,
+                            scopeType,
+                            projectId,
+                            normalizedSessionId,
+                            sourceType,
+                            sourceId,
+                            sourceTitle,
+                            normalizedChunks.stream()
+                                    .map(item -> new CloudAiClient.RagChunkRequest(
+                                            item.chunkIndex(),
+                                            item.chunkText(),
+                                            item.pageNo(),
+                                            item.sectionPath()
+                                    ))
+                                    .toList(),
+                            previousChunkCount == null ? 0 : previousChunkCount,
+                            LocalDateTime.now()
+                    ),
+                    requestId(scopeType, sourceType, sourceId)
+            );
+            source.setStatus(STATUS_READY);
+            source.setChunkCount(normalizedChunks.size());
+            source.setLastError(null);
+            source.setLastIndexedAt(LocalDateTime.now());
+            source.setContentHash(contentHash(normalizedChunks));
+            source.setEmbeddingModelCode(response == null ? null : response.embeddingModelCode());
+            source.setEmbeddingVersion(response == null ? null : response.embeddingVersion());
+            source.setEmbeddingDimension(response == null ? null : response.embeddingDimension());
+            source.setUpdatedBy(ownerUserId);
+            ragSourceMapper.updateById(source);
+            return new VectorSyncResult(
+                    source.getId(),
+                    normalizedChunks.size(),
+                    response == null || response.collectionName() == null ? defaultCollection(scopeType) : response.collectionName(),
+                    response == null ? null : response.embeddingModelCode(),
+                    response == null ? null : response.embeddingVersion(),
+                    response == null ? null : response.embeddingDimension(),
+                    previousChunkCount == null ? 0 : previousChunkCount
+            );
+        } catch (Exception exception) {
+            source.setStatus(keepExistingReadyDuringReindex ? STATUS_READY : STATUS_FAILED);
+            source.setLastError(trimError(exception.getMessage()));
+            source.setUpdatedBy(ownerUserId);
+            ragSourceMapper.updateById(source);
+            throw exception;
+        }
+    }
+
+    private void syncSourceMetadata(String scopeType,
+                                    Long ownerUserId,
+                                    Long projectId,
+                                    Long sessionId,
+                                    String sourceType,
+                                    Long sourceId,
+                                    String sourceTitle,
+                                    List<ChunkInput> chunks) {
+        Long normalizedSessionId = normalizeSessionId(sessionId);
+        List<ChunkInput> normalizedChunks = normalizeChunks(chunks);
+        RagSourceEntity source = findSource(scopeType, ownerUserId, sourceType, sourceId, normalizedSessionId);
+        if (source == null) {
+            return;
+        }
+        source.setProjectId(projectId);
+        source.setSourceTitle(sourceTitle);
+        source.setUpdatedBy(ownerUserId);
+        ragSourceMapper.updateById(source);
+
+        hardDeleteChunks(source.getId());
+        List<RagChunkEntity> insertedChunks = new ArrayList<>();
+        for (ChunkInput chunk : normalizedChunks) {
+            RagChunkEntity entity = new RagChunkEntity();
+            entity.setRagSourceId(source.getId());
+            entity.setOwnerUserId(ownerUserId);
+            entity.setProjectId(projectId);
+            entity.setSessionId(normalizedSessionId);
+            entity.setSourceType(sourceType);
+            entity.setSourceId(sourceId);
+            entity.setChunkNum(chunk.chunkIndex());
+            entity.setChunkText(chunk.chunkText());
+            entity.setPageNo(chunk.pageNo());
+            entity.setSectionPath(chunk.sectionPath());
+            entity.setVectorCollection(defaultCollection(scopeType));
+            entity.setVectorPointId(pointId(scopeType, sourceType, sourceId, normalizedSessionId, chunk.chunkIndex()));
+            entity.setEmbeddingModelCode(source.getEmbeddingModelCode());
+            entity.setEmbeddingVersion(source.getEmbeddingVersion());
+            entity.setEmbeddingDimension(source.getEmbeddingDimension());
+            entity.setCreatedBy(ownerUserId);
+            entity.setUpdatedBy(ownerUserId);
+            insertedChunks.add(entity);
+        }
+        batchInsertChunks(insertedChunks);
+        sparseKnowledgeSupport.rebuildSourceIndex(source, insertedChunks, ownerUserId);
     }
 
     private void deleteSource(String scopeType,
@@ -289,7 +451,8 @@ class RagKnowledgeService {
                                          Long sessionId,
                                          String sourceType,
                                          Long sourceId,
-                                         String sourceTitle) {
+                                         String sourceTitle,
+                                         boolean keepExistingReadyDuringReindex) {
         Long normalizedSessionId = normalizeSessionId(sessionId);
         RagSourceEntity source = findSource(scopeType, ownerUserId, sourceType, sourceId, normalizedSessionId);
         if (source == null) {
@@ -303,7 +466,9 @@ class RagKnowledgeService {
         }
         source.setProjectId(projectId);
         source.setSourceTitle(sourceTitle);
-        source.setStatus(STATUS_PROCESSING);
+        if (!keepExistingReadyDuringReindex || source.getId() == null) {
+            source.setStatus(STATUS_PROCESSING);
+        }
         source.setLastError(null);
         source.setUpdatedBy(ownerUserId);
         if (source.getId() == null) {
@@ -319,6 +484,16 @@ class RagKnowledgeService {
             return;
         }
         jdbcTemplate.update("delete from ea_rag_chunk where rag_source_id = ?", ragSourceId);
+    }
+
+    private void batchInsertChunks(List<RagChunkEntity> chunks) {
+        if (chunks == null || chunks.isEmpty()) {
+            return;
+        }
+        for (int start = 0; start < chunks.size(); start += RAG_CHUNK_INSERT_BATCH_SIZE) {
+            List<RagChunkEntity> batch = chunks.subList(start, Math.min(start + RAG_CHUNK_INSERT_BATCH_SIZE, chunks.size()));
+            ragChunkMapper.batchInsert(batch);
+        }
     }
 
     private RagTaskEntity createTask(RagSourceEntity source,
@@ -432,6 +607,17 @@ class RagKnowledgeService {
     record ChunkInput(int chunkIndex, String chunkText, Integer pageNo, String sectionPath) {
     }
 
+    record VectorSyncResult(
+            Long ragSourceId,
+            Integer chunkCount,
+            String collectionName,
+            String embeddingModelCode,
+            String embeddingVersion,
+            Integer embeddingDimension,
+            Integer previousChunkCount
+    ) {
+    }
+
     record KnowledgeSyncStatusView(String parseStatus, String indexStatus, String errorMessage) {
     }
 }
@@ -440,6 +626,8 @@ interface RagSourceMapper extends BaseMapper<RagSourceEntity> {
 }
 
 interface RagChunkMapper extends BaseMapper<RagChunkEntity> {
+
+    int batchInsert(@Param("items") List<RagChunkEntity> items);
 }
 
 interface RagTaskMapper extends BaseMapper<RagTaskEntity> {

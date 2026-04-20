@@ -104,6 +104,7 @@ const navItems = [
   { index: '/admin', label: '仪表盘', icon: DataAnalysis },
   { index: '/admin/users', label: '用户管理', icon: User },
   { index: '/admin/project-files', label: '项目文件', icon: Files },
+  { index: '/admin/ai/infrastructure', label: 'AI 基础设施', icon: Cpu },
   { index: '/admin/ai/models', label: '模型配置', icon: Cpu },
   { index: '/admin/ai/prompts', label: 'Prompt 模板', icon: CollectionTag },
   { index: '/admin/ai/request-logs', label: '请求日志', icon: Histogram },
@@ -126,6 +127,7 @@ const activeNavIndex = computed(() => {
   if (route.path.startsWith('/admin/ai/models') || route.path === '/admin/models' || route.path === '/admin/ai-models') {
     return '/admin/ai/models'
   }
+  if (route.path.startsWith('/admin/ai/infrastructure')) return '/admin/ai/infrastructure'
   if (route.path.startsWith('/admin/ai/prompts')) return '/admin/ai/prompts'
   if (route.path.startsWith('/admin/ai/request-logs')) return '/admin/ai/request-logs'
   if (route.path.startsWith('/admin/ai/feedback')) return '/admin/ai/feedback'
